@@ -5,10 +5,12 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true },
+    ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true, selectedSealId: null },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
+    relicInventory: [],
+    shopCatalog: { unlockedItemIds: [], discoveredAt: {} },
     monsters: [],
     images: {},
     logs: [],
@@ -36,8 +38,112 @@ function createDefaultVisitorProfiles() {
     exp: safeFiniteNumber(profile?.exp, 0, 0),
     favor: safeFiniteNumber(profile?.favor, 0, 0),
     visits: clampInteger(profile?.visits, 0, Number.MAX_SAFE_INTEGER, 0),
-    unlocked: safeFiniteNumber(profile?.unlockedAtKnownness, 0, 0) <= CONFIG.knownness.initial
+    unlocked: safeFiniteNumber(profile?.unlockedAtKnownness, 0, 0) <= CONFIG.knownness.initial,
+    equipment: normalizeEquipment(profile?.equipment),
+    gearBudget: safeFiniteNumber(profile?.gearBudget, 0, 0)
   }));
+}
+
+function normalizeEquipment(equipment) {
+  return {
+    weapon: getItemDef(equipment?.weapon)?.id ?? null,
+    armor: getItemDef(equipment?.armor)?.id ?? null,
+    accessory: getItemDef(equipment?.accessory)?.id ?? null
+  };
+}
+
+function normalizeRelicInventory(inventory) {
+  if (!Array.isArray(inventory)) return [];
+  const counts = new Map();
+  for (const entry of inventory) {
+    const itemId = String(entry?.itemId ?? entry?.id ?? '');
+    if (!getItemDef(itemId)) continue;
+    const count = clampInteger(entry?.count, 1, Number.MAX_SAFE_INTEGER, 1);
+    counts.set(itemId, (counts.get(itemId) ?? 0) + count);
+  }
+  return [...counts.entries()].map(([itemId, count]) => ({ itemId, count }));
+}
+
+function normalizeShopCatalog(catalog, relicInventory = []) {
+  const ids = new Set(Array.isArray(catalog?.unlockedItemIds) ? catalog.unlockedItemIds.filter(id => getItemDef(id)).map(String) : []);
+  for (const relic of relicInventory ?? []) if (getItemDef(relic?.itemId)) ids.add(String(relic.itemId));
+  const discoveredAt = {};
+  for (const id of ids) discoveredAt[id] = safeFiniteNumber(catalog?.discoveredAt?.[id], Date.now(), 0);
+  return { unlockedItemIds: [...ids], discoveredAt };
+}
+
+function getItemDef(itemId) {
+  const id = String(itemId ?? '');
+  return CONFIG.ITEMS?.[id] ?? null;
+}
+
+function getEquippedItem(seal, slot) {
+  return getItemDef(seal?.equipment?.[slot]);
+}
+
+function getSealEffectiveStats(seal) {
+  const baseAttack = safeFiniteNumber(seal?.attack, CONFIG.seal.attack, 0);
+  const baseDefense = safeFiniteNumber(seal?.defense, CONFIG.seal.defense, 0);
+  const baseMaxHp = safeFiniteNumber(seal?.maxHp, CONFIG.seal.maxHp, 1);
+  const items = ['weapon', 'armor', 'accessory'].map(slot => getEquippedItem(seal, slot)).filter(Boolean);
+  return items.reduce((stats, item) => ({
+    attack: stats.attack + safeFiniteNumber(item?.attackBonus, 0, 0),
+    defense: stats.defense + safeFiniteNumber(item?.defenseBonus, 0, 0),
+    maxHp: stats.maxHp + safeFiniteNumber(item?.hpBonus, 0, 0)
+  }), { attack: baseAttack, defense: baseDefense, maxHp: baseMaxHp });
+}
+
+function getEquipmentScoreForSeal(seal, itemDef) {
+  if (!seal || !itemDef) return 0;
+  return safeFiniteNumber(itemDef.attackBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_ATTACK_WEIGHT + safeFiniteNumber(itemDef.defenseBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_DEFENSE_WEIGHT + safeFiniteNumber(itemDef.hpBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_HP_WEIGHT + safeFiniteNumber(itemDef.favorBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_FAVOR_WEIGHT;
+}
+
+function isEquipmentUpgradeForSeal(seal, itemDef) {
+  if (!seal || !itemDef) return false;
+  const slot = itemDef.type;
+  if (!['weapon', 'armor', 'accessory'].includes(slot)) return false;
+  const current = getEquippedItem(seal, slot);
+  return getEquipmentScoreForSeal(seal, itemDef) > getEquipmentScoreForSeal(seal, current);
+}
+
+function facilitySellsItem(facility, itemDef) {
+  if (!facility || !isFacilityUsable(facility) || !itemDef) return false;
+  if (facility.type === 'blacksmith') return ['weapon', 'armor'].includes(itemDef.type);
+  if (facility.type === 'restaurant') return itemDef.type === 'accessory';
+  return itemDef.shopType === facility.type;
+}
+
+function chooseBestAffordableEquipmentUpgrade(seal, facility) {
+  const ids = gameState.shopCatalog?.unlockedItemIds ?? [];
+  const budget = safeFiniteNumber(seal?.gearBudget, 0, 0);
+  const candidates = ids.map(getItemDef).filter(item => item && facilitySellsItem(facility, item) && safeFiniteNumber(item.price, 0, 0) <= budget && isEquipmentUpgradeForSeal(seal, item));
+  candidates.sort((a, b) => (getEquipmentScoreForSeal(seal, b) - getEquipmentScoreForSeal(seal, a)) || (safeFiniteNumber(a.price, 0, 0) - safeFiniteNumber(b.price, 0, 0)));
+  return candidates[0] ?? null;
+}
+
+function buyAndEquipItem(seal, itemId, facility) {
+  const item = getItemDef(itemId);
+  if (!seal || !item || !facilitySellsItem(facility, item) || !isEquipmentUpgradeForSeal(seal, item)) return false;
+  const price = safeFiniteNumber(item.price, 0, 0);
+  if (safeFiniteNumber(seal.gearBudget, 0, 0) < price) return false;
+  seal.gearBudget -= price;
+  seal.equipment = normalizeEquipment({ ...seal.equipment, [item.type]: item.id });
+  addPlayerIncome(price);
+  addFavor(seal, safeFiniteNumber(item.favorBonus, 0, 0));
+  logMessage(`${seal.name}が${CONFIG.facilities[facility.type]?.label ?? '店'}で${item.name}を購入しました。`);
+  return true;
+}
+
+function addRelicItem(itemId, count = 1) {
+  const item = getItemDef(itemId);
+  if (!item) return false;
+  gameState.relicInventory = normalizeRelicInventory(gameState.relicInventory);
+  const existing = gameState.relicInventory.find(entry => entry?.itemId === item.id);
+  if (existing) existing.count = clampInteger(existing.count, 0, Number.MAX_SAFE_INTEGER, 0) + clampInteger(count, 1, Number.MAX_SAFE_INTEGER, 1);
+  else gameState.relicInventory.push({ itemId: item.id, count: clampInteger(count, 1, Number.MAX_SAFE_INTEGER, 1) });
+  const catalog = gameState.shopCatalog = normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory);
+  if (!catalog.unlockedItemIds.includes(item.id)) { catalog.unlockedItemIds.push(item.id); catalog.discoveredAt[item.id] = Date.now(); }
+  return true;
 }
 
 function cloneSerializable(value, fallback) {
@@ -134,6 +240,8 @@ function normalizeSeal(s, index) {
     attack: safeFiniteNumber(s?.attack, CONFIG.seal.attack, 0),
     defense: safeFiniteNumber(s?.defense, CONFIG.seal.defense, 0),
     carriedG: safeFiniteNumber(s?.carriedG, 0, 0),
+    gearBudget: safeFiniteNumber(s?.gearBudget, 0, 0),
+    equipment: normalizeEquipment(s?.equipment),
     exp: safeFiniteNumber(s?.exp, 0, 0),
     level: clampInteger(s?.level, 1, Number.MAX_SAFE_INTEGER, 1),
     favor: safeFiniteNumber(s?.favor, 0, 0),
@@ -183,7 +291,9 @@ function normalizeVisitorProfiles(profiles) {
       exp: safeFiniteNumber(loaded?.exp, defaultProfile.exp, 0),
       favor: safeFiniteNumber(loaded?.favor, defaultProfile.favor, 0),
       visits: clampInteger(loaded?.visits, 0, Number.MAX_SAFE_INTEGER, defaultProfile.visits),
-      unlocked: loaded?.unlocked === true || defaultProfile.unlocked
+      unlocked: loaded?.unlocked === true || defaultProfile.unlocked,
+      equipment: normalizeEquipment(loaded?.equipment ?? defaultProfile.equipment),
+      gearBudget: safeFiniteNumber(loaded?.gearBudget, defaultProfile.gearBudget, 0)
     };
   });
 }
@@ -240,6 +350,9 @@ function initGame(residentName) {
   gameState.world.nextObjectId = 1;
   gameState.monsters = [];
   gameState.visitorProfiles = createDefaultVisitorProfiles();
+  gameState.relicInventory = [];
+  gameState.shopCatalog = { unlockedItemIds: [], discoveredAt: {} };
+  gameState.ui.selectedSealId = null;
   gameState.logs = [];
   gameState.village.knownness = CONFIG.knownness.initial;
   gameState.village.clearCount = 0;
@@ -598,7 +711,8 @@ function estimatePathCostBetweenPoints(from, to, reason = 'facility') {
 function getBestFacilityForSeal(seal, preferredTypes) {
   if (!seal) return null;
   const types = (Array.isArray(preferredTypes) && preferredTypes.length > 0 ? preferredTypes : Object.keys(CONFIG.facilities ?? {})).map(String);
-  const hpRatio = seal.maxHp > 0 ? seal.hp / seal.maxHp : 0;
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
   const scored = [];
   types.forEach((type, typeIndex) => {
     for (const facility of getUsableFacilitiesByType(type)) {
@@ -627,7 +741,10 @@ function getBestFacilityForSeal(seal, preferredTypes) {
 function chooseInnForSeal(seal) { return getBestFacilityForSeal(seal, ['inn']); }
 function chooseSpendingFacilityForSeal(seal) { return getBestFacilityForSeal(seal, ['restaurant', 'blacksmith']); }
 function chooseFacilityAfterHunt(seal) {
-  const hpRatio = seal?.maxHp > 0 ? seal.hp / seal.maxHp : 0;
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
+  const blacksmith = getBestFacilityForSeal(seal, ['blacksmith']);
+  if (blacksmith && chooseBestAffordableEquipmentUpgrade(seal, blacksmith)) return blacksmith;
   if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseInnForSeal(seal) ?? chooseSpendingFacilityForSeal(seal);
   if (seal?.carriedG >= (CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) {
     return getBestFacilityForSeal(seal, ['inn', 'restaurant', 'blacksmith']);
@@ -650,7 +767,7 @@ function createResidentSeal(name) {
   return normalizeSeal({
     id: 'resident-seal', name: String(name || gameState.residentName || CONFIG.resident.defaultName), type: 'resident', personality: 'balanced', assetKey: 'seals.resident', facing: 'left', x: safe.x, y: safe.y,
     hp: CONFIG.seal.maxHp, maxHp: CONFIG.seal.maxHp, attack: CONFIG.seal.attack, defense: CONFIG.seal.defense,
-    carriedG: CONFIG.seal.startG, exp: 0, level: 1, favor: 0, state: 'choosingHuntArea', visits: 0
+    carriedG: CONFIG.seal.startG, gearBudget: 0, equipment: { weapon: null, armor: null, accessory: null }, exp: 0, level: 1, favor: 0, state: 'choosingHuntArea', visits: 0
   }, 0);
 }
 

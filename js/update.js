@@ -10,6 +10,7 @@ function update(deltaMs) {
   updateCalendar(safeDeltaMs);
   updateSpawner(dt);
   updateSeals(dt);
+  clearMissingSelectedSeal();
   removeDefeatedMonsters();
   updateAutoSave(safeDeltaMs);
   gameState.timers.ui += dt;
@@ -17,6 +18,10 @@ function update(deltaMs) {
     gameState.ui.needsHudUpdate = true;
     gameState.timers.ui = 0;
   }
+}
+
+function clearMissingSelectedSeal() {
+  if (gameState.ui?.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === gameState.ui.selectedSealId)) gameState.ui.selectedSealId = null;
 }
 
 function updateCalendar(deltaMs) {
@@ -43,9 +48,28 @@ function runMonthlyResults() {
     gameState.calendar.year = previousYear + 1;
   }
   unlockKnownVisitors();
+  maybeAddMonthlyRelicDrop(hunts);
   logMessage(`${previousYear}年${previousMonth}月の月末結果: 狩猟${hunts}回 / 知名度+${reward} / 収入${income}G。`);
   gameState.stats.monthlyHunts = 0;
   gameState.stats.monthlyPlayerIncome = 0;
+}
+
+
+function maybeAddMonthlyRelicDrop(hunts) {
+  const threshold = clampInteger(CONFIG.EQUIPMENT?.MONTHLY_DROP_HUNT_THRESHOLD, 1, Number.MAX_SAFE_INTEGER, 3);
+  if (clampInteger(hunts, 0, Number.MAX_SAFE_INTEGER, 0) < threshold) return;
+  const table = CONFIG.EQUIPMENT?.monthlyDropTable ?? [];
+  const index = Math.floor(Math.random() * Math.max(1, table.length));
+  const item = getItemDef(table[index]);
+  if (!item) return;
+  const knownBefore = (gameState.shopCatalog?.unlockedItemIds ?? []).includes(item.id);
+  addRelicItem(item.id, 1);
+  if (knownBefore) {
+    gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + CONFIG.knownness.duplicateRelicReward;
+    logMessage(`月末の調査で${item.name}を追加発見しました（知名度+${CONFIG.knownness.duplicateRelicReward}）。`);
+  } else {
+    logMessage(`月末の調査で${item.name}を発見し、店の商品として解放しました。`);
+  }
 }
 
 function addPlayerIncome(amount) {
@@ -161,6 +185,8 @@ function spawnVisitorFromProfile(profile) {
     attack: safeFiniteNumber(base.attack, CONFIG.seal.attack, 0) + Math.max(0, profile.level - 1) * CONFIG.seal.levelAttackGain,
     defense: safeFiniteNumber(base.defense, CONFIG.seal.defense, 0),
     carriedG: 0,
+    gearBudget: safeFiniteNumber(profile.gearBudget, 0, 0),
+    equipment: normalizeEquipment(profile.equipment),
     exp: profile.exp,
     level: profile.level,
     favor: profile.favor,
@@ -186,6 +212,8 @@ function writeBackVisitorProfile(seal) {
   profile.level = clampInteger(seal.level, 1, Number.MAX_SAFE_INTEGER, profile.level);
   profile.exp = safeFiniteNumber(seal.exp, profile.exp, 0);
   profile.favor = safeFiniteNumber(seal.favor, profile.favor, 0);
+  profile.equipment = normalizeEquipment(seal.equipment);
+  profile.gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0);
   profile.visits = Math.max(clampInteger(profile.visits, 0, Number.MAX_SAFE_INTEGER, 0), clampInteger(seal.visits, 0, Number.MAX_SAFE_INTEGER, 0));
   profile.personality = String(seal.personality || profile.personality || 'balanced');
   profile.baseStats = profile.baseStats ?? { maxHp: seal.maxHp, attack: seal.attack, defense: seal.defense };
@@ -201,7 +229,8 @@ function shouldContinueHunting(seal) {
 
 function shouldReturnFromHunt(seal) {
   const personality = getPersonalityConfig(seal);
-  const hpRatio = seal?.maxHp > 0 ? seal.hp / seal.maxHp : 0;
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
   if (hpRatio <= personality.emergencyHpRatio) return true;
   const huntCount = clampInteger(seal?.huntCountThisTrip, 0, Number.MAX_SAFE_INTEGER, 0);
   if (huntCount >= personality.maxHuntsPerTrip) return true;
@@ -226,7 +255,7 @@ function updateSeals(dt) {
     if (seal.type === 'visitor') seal.visitTimerMs = safeFiniteNumber(seal.visitTimerMs, 0, 0) + dt * 1000;
     if (seal.state === 'fallen') { updateFallen(seal, dt); continue; }
     const fallen = findFallenForRescue(seal);
-    if (fallen && !seal.rescueTargetId && seal.hp > seal.maxHp * CONFIG.seal.lowHpRatio) {
+    if (fallen && !seal.rescueTargetId && seal.hp > getSealEffectiveStats(seal).maxHp * CONFIG.seal.lowHpRatio) {
       seal.state = 'rescuing'; seal.rescueTargetId = fallen.id; seal.target = { x: fallen.x, y: fallen.y }; logMessage(`${seal.name}が${fallen.name}を救助に向かいました。`);
     }
     switch (seal.state) {
@@ -250,8 +279,8 @@ function updateSeals(dt) {
 }
 
 function updateFallen(seal, dt) {
-  seal.hp = Math.min(seal.maxHp, seal.hp + CONFIG.seal.fallenRecoveryPerSecond * dt);
-  if (seal.hp >= seal.maxHp * CONFIG.seal.standHpRatio && !isBeingCarried(seal.id)) {
+  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, seal.hp + CONFIG.seal.fallenRecoveryPerSecond * dt);
+  if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.standHpRatio && !isBeingCarried(seal.id)) {
     seal.state = 'returningFromHunt';
     buildRouteToVillage(seal);
     logMessage(`${seal.name}が自力で起き上がりました。`);
@@ -345,10 +374,12 @@ function updateFighting(seal, dt) {
   seal.combatTimer += dt; seal.monsterTimer += dt;
   if (seal.combatTimer >= CONFIG.combat.sealAttackSeconds) {
     seal.combatTimer = 0;
-    monster.hp -= Math.max(CONFIG.combat.minDamage, seal.attack - monster.defense);
+    monster.hp -= Math.max(CONFIG.combat.minDamage, getSealEffectiveStats(seal).attack - monster.defense);
     if (monster.hp <= 0) {
       seal.exp += CONFIG.monster.rewardExp;
-      seal.carriedG += CONFIG.monster.rewardG;
+      const gearShare = Math.floor(CONFIG.monster.rewardG * CONFIG.EQUIPMENT.GEAR_BUDGET_RATE);
+      seal.gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0) + gearShare;
+      seal.carriedG += CONFIG.monster.rewardG - gearShare;
       addFavor(seal, CONFIG.seal.favorDefeat);
       seal.huntCountThisTrip = clampInteger(seal.huntCountThisTrip, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
       if (seal.type === 'visitor') seal.huntsThisVisit = clampInteger(seal.huntsThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
@@ -363,7 +394,7 @@ function updateFighting(seal, dt) {
   }
   if (seal.monsterTimer >= CONFIG.combat.monsterAttackSeconds) {
     seal.monsterTimer = 0;
-    seal.hp -= Math.max(CONFIG.combat.minDamage, monster.attack - seal.defense);
+    seal.hp -= Math.max(CONFIG.combat.minDamage, monster.attack - getSealEffectiveStats(seal).defense);
     if (seal.hp <= 0) { seal.hp = 0; monster.assignedSealId = null; seal.state = 'fallen'; seal.targetId = null; seal.rescueTargetId = null; logMessage(`${seal.name}が倒れました。`); }
   }
 }
@@ -407,6 +438,13 @@ function updateUsingFacility(seal, dt) {
   if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
   seal.actionTimer -= dt;
   if (seal.actionTimer > 0) return;
+  const upgrade = chooseBestAffordableEquipmentUpgrade(seal, facility);
+  if (upgrade && buyAndEquipItem(seal, upgrade.id, facility)) {
+    seal.facilityUseCounts[facility.type] = (seal.facilityUseCounts?.[facility.type] ?? 0) + 1;
+    if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+    afterVillageActivity(seal);
+    return;
+  }
   const base = CONFIG.facilities[facility.type]?.spendPerVisit ?? 0;
   const spent = Math.min(seal.carriedG, Math.round(base * (1 + facilityBonus(facility))));
   seal.carriedG -= spent;
@@ -424,9 +462,9 @@ function updateResting(seal, dt) {
   const inn = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (!inn || !isFacilityUsable(inn)) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
   const bonus = facilityBonus(inn);
-  seal.hp = Math.min(seal.maxHp, seal.hp + CONFIG.facilities.inn.healPerSecond * (1 + bonus) * dt);
+  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, seal.hp + CONFIG.facilities.inn.healPerSecond * (1 + bonus) * dt);
   seal.actionTimer -= dt;
-  if (seal.hp >= seal.maxHp * CONFIG.seal.restTargetRatio && seal.actionTimer <= 0) {
+  if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.restTargetRatio && seal.actionTimer <= 0) {
     const fee = Math.min(seal.carriedG, CONFIG.facilities.inn.fee);
     seal.carriedG -= fee;
     addPlayerIncome(fee);
@@ -441,7 +479,8 @@ function updateResting(seal, dt) {
 
 function handleNoUsableFacility(seal) {
   if (seal?.type === 'visitor') { afterVillageActivity(seal); return; }
-  const hpRatio = seal.maxHp > 0 ? seal.hp / seal.maxHp : 0;
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
   if (hpRatio <= CONFIG.seal.lowHpRatio) {
     seal.wanderTimer = CONFIG.seal.wanderSeconds;
     setSealDestination(seal, villageWanderPoint(), 'village-wander');
@@ -454,7 +493,8 @@ function handleNoUsableFacility(seal) {
 function visitorShouldLeave(seal) {
   if (seal?.type !== 'visitor') return false;
   const personality = getPersonalityConfig(seal);
-  const hpRatio = seal.maxHp > 0 ? seal.hp / seal.maxHp : 0;
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
   if (hpRatio <= personality.emergencyHpRatio) return true;
   const stayedMin = safeFiniteNumber(seal.visitTimerMs, 0, 0) >= safeFiniteNumber(seal.minStayMs, CONFIG.visitor.minStayMs, 0);
   const reachedMax = safeFiniteNumber(seal.visitTimerMs, 0, 0) >= safeFiniteNumber(seal.maxStayMs, CONFIG.visitor.maxStayMs, 0);
@@ -494,6 +534,7 @@ function persistAndRemoveVisitor(seal) {
   writeBackVisitorProfile(seal);
   logMessage(`${seal.name}が南の入口から帰りました。`);
   gameState.seals = (gameState.seals ?? []).filter(item => item?.id !== seal.id);
+  if (gameState.ui?.selectedSealId === seal.id) gameState.ui.selectedSealId = null;
 }
 
 function updateIdle(seal, dt) {
@@ -554,11 +595,11 @@ function updateCarrying(seal, dt) {
     const paidByRescuer = Math.min(seal.carriedG, fee - paidByFallen);
     seal.carriedG -= paidByRescuer;
     addPlayerIncome(paidByFallen + paidByRescuer);
-    fallen.hp = Math.min(fallen.maxHp, fallen.maxHp * CONFIG.seal.restTargetRatio);
+    fallen.hp = Math.min(getSealEffectiveStats(fallen).maxHp, getSealEffectiveStats(fallen).maxHp * CONFIG.seal.restTargetRatio);
     addFavor(fallen, CONFIG.seal.favorRescued);
     logMessage(`宿代${paidByFallen + paidByRescuer}G支払い、${fallen.name}を救助しました。`);
   } else {
-    fallen.hp = Math.max(fallen.hp, fallen.maxHp * CONFIG.seal.standHpRatio);
+    fallen.hp = Math.max(fallen.hp, getSealEffectiveStats(fallen).maxHp * CONFIG.seal.standHpRatio);
     addFavor(fallen, CONFIG.seal.favorRescued);
     logMessage(`${fallen.name}を安全地点へ運びました。`);
   }
