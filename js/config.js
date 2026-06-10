@@ -33,11 +33,30 @@ const CONFIG = Object.freeze({
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
-  SAVE_VERSION: 8,
+  SAVE_VERSION: 9,
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
-  sealStates: { arrivingFromSea: 'arrivingFromSea', choosingArrivalAction: 'choosingArrivalAction', movingToFacility: 'movingToFacility', usingFacility: 'usingFacility', choosingHuntArea: 'choosingHuntArea', movingToHuntArea: 'movingToHuntArea', hunting: 'hunting', movingToMonster: 'movingToMonster', fighting: 'fighting', returningFromHunt: 'returningFromHunt', choosingPostHuntFacility: 'choosingPostHuntFacility', leavingToSea: 'leavingToSea', idle: 'idle', fallen: 'fallen', rescuing: 'rescuing', carryingFallenSeal: 'carryingFallenSeal', arriving: 'arriving', movingToHuntExit: 'movingToHuntExit', choosingFacility: 'choosingFacility', leaving: 'leaving' },
+  dungeon: {
+    spawnIntervalMs: 90000,
+    initialSpawnDelayMs: 18000,
+    maxActive: 2,
+    clickRadius: 26,
+    completedDisplayMs: 10000,
+    spawnAttempts: 40,
+    minDistanceFromVillageTiles: 4,
+    participant: { min: 1, max: 3, clearFavor: 2, allowUnlockedProfileRecruit: true, personalityBonus: { brave: 16, balanced: 8, cautious: 2 }, activeSealBonus: 12, residentBonus: 6 },
+    areas: { coast: { id: 'coast', label: '外の冒険エリア coast', bounds: { x: 34, y: 5, w: 16, h: 24 }, types: ['tidal_cave'] } },
+    types: {
+      tidal_cave: { id: 'tidal_cave', name: '潮騒の洞窟', durationMs: 24000, expiresInMs: 180000, recruitCost: 40, difficulty: 36, enemyTypes: ['crab'], dropTableId: 'coast_relics', rewards: { g: 95, exp: 32, knownness: 8 } }
+    },
+    dropTables: { coast_relics: [
+      { itemId: 'driftwood_spear', count: 1, weight: 4 },
+      { itemId: 'shell_armor', count: 1, weight: 3 },
+      { itemId: 'lucky_pearl', count: 1, weight: 2 }
+    ] }
+  },
+  sealStates: { questing: 'questing', arrivingFromSea: 'arrivingFromSea', choosingArrivalAction: 'choosingArrivalAction', movingToFacility: 'movingToFacility', usingFacility: 'usingFacility', choosingHuntArea: 'choosingHuntArea', movingToHuntArea: 'movingToHuntArea', hunting: 'hunting', movingToMonster: 'movingToMonster', fighting: 'fighting', returningFromHunt: 'returningFromHunt', choosingPostHuntFacility: 'choosingPostHuntFacility', leavingToSea: 'leavingToSea', idle: 'idle', fallen: 'fallen', rescuing: 'rescuing', carryingFallenSeal: 'carryingFallenSeal', arriving: 'arriving', movingToHuntExit: 'movingToHuntExit', choosingFacility: 'choosingFacility', leaving: 'leaving' },
   CALENDAR: { WEEK_DURATION_MS: 12000, WEEKS_PER_MONTH: 4, MONTHS_PER_YEAR: 12 },
   TIME: { SPEED_OPTIONS: [0, 1, 2, 4], DEFAULT_SCALE: 1 },
   ASSETS: { paths: {

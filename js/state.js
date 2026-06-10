@@ -5,16 +5,17 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true, selectedSealId: null },
+    ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true, selectedSealId: null, selectedDungeonId: null },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
     relicInventory: [],
     shopCatalog: { unlockedItemIds: [], discoveredAt: {} },
     monsters: [],
+    dungeons: [],
     images: {},
     logs: [],
-    timers: { spawn: 0, monsterSpawn: 0, visitorSpawn: 0, ui: 0 },
+    timers: { spawn: 0, monsterSpawn: 0, visitorSpawn: 0, dungeonSpawnMs: 0, ui: 0 },
     time: { timeScale: CONFIG.TIME.DEFAULT_SCALE },
     save: { autoSaveTimerMs: 0, lastSavedAt: null, statusText: '' },
     village: { knownness: CONFIG.knownness.initial, clearCount: 0 },
@@ -40,7 +41,9 @@ function createDefaultVisitorProfiles() {
     visits: clampInteger(profile?.visits, 0, Number.MAX_SAFE_INTEGER, 0),
     unlocked: safeFiniteNumber(profile?.unlockedAtKnownness, 0, 0) <= CONFIG.knownness.initial,
     equipment: normalizeEquipment(profile?.equipment),
-    gearBudget: safeFiniteNumber(profile?.gearBudget, 0, 0)
+    gearBudget: safeFiniteNumber(profile?.gearBudget, 0, 0),
+    dungeonRuns: clampInteger(profile?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0),
+    dungeonClears: clampInteger(profile?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0)
   }));
 }
 
@@ -297,7 +300,9 @@ function normalizeSeal(s, index) {
     lastTransitionLogKey: s?.lastTransitionLogKey ? String(s.lastTransitionLogKey) : '',
     path: [],
     pathTargetKey: null,
-    warnedPathFallback: s?.warnedPathFallback === true
+    warnedPathFallback: s?.warnedPathFallback === true,
+    questingReturnState: s?.questingReturnState ? String(s.questingReturnState) : null,
+    questingDungeonId: s?.questingDungeonId ? String(s.questingDungeonId) : null
   };
 }
 
@@ -321,7 +326,9 @@ function normalizeVisitorProfiles(profiles) {
       visits: clampInteger(loaded?.visits, 0, Number.MAX_SAFE_INTEGER, defaultProfile.visits),
       unlocked: loaded?.unlocked === true || defaultProfile.unlocked,
       equipment: normalizeEquipment(loaded?.equipment ?? defaultProfile.equipment),
-      gearBudget: safeFiniteNumber(loaded?.gearBudget, defaultProfile.gearBudget, 0)
+      gearBudget: safeFiniteNumber(loaded?.gearBudget, defaultProfile.gearBudget, 0),
+      dungeonRuns: clampInteger(loaded?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, defaultProfile.dungeonRuns ?? 0),
+      dungeonClears: clampInteger(loaded?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, defaultProfile.dungeonClears ?? 0)
     };
   });
 }
@@ -336,6 +343,81 @@ function assetKeyForVisitorProfile(profileId) {
   if (id.includes('tategoto')) return 'seals.tategoto';
   if (id.includes('goma')) return 'seals.goma';
   return 'seals.resident';
+}
+
+
+function normalizeDungeons(dungeons) {
+  if (!Array.isArray(dungeons)) return [];
+  const states = ['available', 'running', 'completed', 'expired'];
+  return dungeons.map((dungeon, index) => {
+    const type = getDungeonTypeDef(dungeon?.type);
+    const area = getDungeonAreaDef(dungeon?.areaId);
+    if (!type || !area) return null;
+    const point = isValidDungeonWorldPoint(dungeon?.x, dungeon?.y, area.id) ? { x: safeFiniteNumber(dungeon.x, 0), y: safeFiniteNumber(dungeon.y, 0) } : findDungeonSpawnPoint(area.id);
+    if (!point) return null;
+    const state = states.includes(dungeon?.state) ? dungeon.state : 'available';
+    const rewardPreview = getDungeonRewardPreview({ type: type.id, dropTableId: type.dropTableId });
+    return {
+      id: String(dungeon?.id || `dungeon-${Date.now()}-${index}`),
+      type: type.id,
+      name: String(dungeon?.name || type.name),
+      areaId: area.id,
+      x: safeFiniteNumber(point.x, 0),
+      y: safeFiniteNumber(point.y, 0),
+      state,
+      expiresInMs: safeFiniteNumber(dungeon?.expiresInMs, type.expiresInMs, 0),
+      progressMs: safeFiniteNumber(dungeon?.progressMs, 0, 0),
+      durationMs: safeFiniteNumber(dungeon?.durationMs, type.durationMs, 1),
+      recruitCost: safeFiniteNumber(dungeon?.recruitCost, type.recruitCost, 0),
+      participantIds: normalizeDungeonParticipantIds(dungeon?.participantIds),
+      rewardPreview,
+      enemyRefs: Array.isArray(dungeon?.enemyRefs) ? dungeon.enemyRefs.map(String) : [],
+      enemyTypes: Array.isArray(dungeon?.enemyTypes) ? dungeon.enemyTypes.map(String) : (type.enemyTypes ?? []).map(String),
+      dropTableId: String(dungeon?.dropTableId || type.dropTableId || ''),
+      completedDisplayMs: safeFiniteNumber(dungeon?.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0)
+    };
+  }).filter(Boolean);
+}
+
+function normalizeDungeonParticipantIds(ids) {
+  if (!Array.isArray(ids)) return [];
+  return ids.map(participant => typeof participant === 'object' ? {
+    kind: String(participant?.kind ?? ''),
+    id: String(participant?.id ?? ''),
+    sealId: participant?.sealId ? String(participant.sealId) : null,
+    profileId: participant?.profileId ? String(participant.profileId) : null,
+    name: String(participant?.name ?? '')
+  } : { kind: 'seal', id: String(participant), sealId: String(participant), profileId: null, name: '' }).filter(participant => participant.id);
+}
+
+function getDungeonTypeDef(typeId) { return CONFIG.dungeon?.types?.[String(typeId ?? '')] ?? null; }
+function getDungeonAreaDef(areaId) { return CONFIG.dungeon?.areas?.[String(areaId ?? '')] ?? null; }
+
+function isValidDungeonWorldPoint(x, y, areaId) {
+  const gx = Math.floor(safeFiniteNumber(x, -1) / CONFIG.world.tile);
+  const gy = Math.floor(safeFiniteNumber(y, -1) / CONFIG.world.tile);
+  const area = getDungeonAreaDef(areaId);
+  return !!area && inRect(gx, gy, area.bounds?.x ?? 0, area.bounds?.y ?? 0, area.bounds?.w ?? 0, area.bounds?.h ?? 0) && !isNearVillageTile(gx, gy) && isPassableTile(gx, gy);
+}
+
+function isNearVillageTile(gx, gy) {
+  const minDistance = safeFiniteNumber(CONFIG.dungeon?.minDistanceFromVillageTiles, 0, 0);
+  const cx = CONFIG.expansion.startX + CONFIG.expansion.startW / 2;
+  const cy = CONFIG.expansion.startY + CONFIG.expansion.startH / 2;
+  return distance(gx, gy, cx, cy) < minDistance;
+}
+
+function findDungeonSpawnPoint(areaId) {
+  const area = getDungeonAreaDef(areaId);
+  const attempts = clampInteger(CONFIG.dungeon?.spawnAttempts, 1, Number.MAX_SAFE_INTEGER, 20);
+  if (!area) return null;
+  for (let i = 0; i < attempts; i += 1) {
+    const gx = Math.floor(randomRange(area.bounds.x, area.bounds.x + area.bounds.w));
+    const gy = Math.floor(randomRange(area.bounds.y, area.bounds.y + area.bounds.h));
+    const point = gridToWorld(gx, gy);
+    if (isValidDungeonWorldPoint(point.x, point.y, area.id)) return point;
+  }
+  return null;
 }
 
 function normalizeMonsters(monsters) {
@@ -379,8 +461,10 @@ function initGame(residentName) {
   gameState.monsters = [];
   gameState.visitorProfiles = createDefaultVisitorProfiles();
   gameState.relicInventory = [];
+  gameState.dungeons = [];
   gameState.shopCatalog = { unlockedItemIds: [], discoveredAt: {} };
   gameState.ui.selectedSealId = null;
+  gameState.ui.selectedDungeonId = null;
   gameState.logs = [];
   gameState.village.knownness = CONFIG.knownness.initial;
   gameState.village.clearCount = 0;
@@ -395,6 +479,7 @@ function initGame(residentName) {
   gameState.timers.spawn = 0;
   gameState.timers.monsterSpawn = 0;
   gameState.timers.visitorSpawn = 0;
+  gameState.timers.dungeonSpawnMs = 0;
   gameState.timers.ui = 0;
   gameState.save.autoSaveTimerMs = 0;
   gameState.save.lastSavedAt = null;
