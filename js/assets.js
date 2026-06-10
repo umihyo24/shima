@@ -5,7 +5,7 @@ function createImage(key) {
   const cached = gameState.images?.[assetKey];
   if (cached) return cached;
   const path = CONFIG.ASSETS?.paths?.[assetKey];
-  const record = { key: assetKey, path: path ?? '', img: null, status: path ? 'loading' : 'failed', loaded: false, failed: !path };
+  const record = { key: assetKey, path: path ?? '', img: null, status: path ? 'loading' : 'failed', loaded: false, failed: !path, fallbackTried: false };
   if (!path) {
     gameState.images[assetKey] = record;
     return record;
@@ -13,10 +13,27 @@ function createImage(key) {
   const img = new Image();
   record.img = img;
   img.onload = () => { record.status = 'loaded'; record.loaded = true; record.failed = false; };
-  img.onerror = () => { record.status = 'failed'; record.loaded = false; record.failed = true; };
+  img.onerror = () => {
+    const fallbackPath = getRelativeAssetFallbackPath(record.path);
+    if (!record.fallbackTried && fallbackPath && fallbackPath !== img.src) {
+      record.fallbackTried = true;
+      record.path = fallbackPath;
+      img.src = fallbackPath;
+      return;
+    }
+    record.status = 'failed';
+    record.loaded = false;
+    record.failed = true;
+  };
   img.src = path;
   gameState.images[assetKey] = record;
   return record;
+}
+
+function getRelativeAssetFallbackPath(path) {
+  const raw = String(path || '');
+  if (!raw.startsWith('/assets/')) return '';
+  return raw.slice(1);
 }
 
 function initializeAssetRegistry() {
