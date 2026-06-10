@@ -16,6 +16,7 @@ function render() {
   ctx.save();
   ctx.scale(devicePixelRatioClamped(), devicePixelRatioClamped());
   drawMinimap();
+  drawKnownnessGoalPanel();
   ctx.restore();
 }
 
@@ -43,7 +44,6 @@ function drawWorld() {
   drawExpansionBoundary();
   drawLabel('島エリア（緑=建設可 / 濃緑=未開拓）', CONFIG.world.islandX * CONFIG.world.tile + 10, CONFIG.world.islandY * CONFIG.world.tile + 24, '#123');
   drawLabel('外の冒険エリア：coast（カニ出現）', CONFIG.world.coastX * CONFIG.world.tile + 10, CONFIG.world.coastY * CONFIG.world.tile + 24, '#e8fbff');
-  const safe = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY); drawFlag(safe.x, safe.y);
 }
 
 function drawOpenCorridors() {
@@ -233,7 +233,6 @@ function drawFallbackMonster(context, monster, x, y, w, h, options = {}) {
   context.restore();
 }
 
-function drawFlag(x, y) { ctx.fillStyle = '#73451d'; ctx.fillRect(x - 3, y - 28, 6, 38); ctx.fillStyle = '#2a7bd1'; ctx.fillRect(x + 3, y - 28, 24, 16); ctx.fillStyle = '#ffd24d'; ctx.fillText('S', x + 9, y - 16); }
 function drawHpBar(x, y, w, ratio, color) { ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(x, y, w, 6); ctx.fillStyle = color; ctx.fillRect(x, y, Math.max(0, Math.min(1, ratio ?? 0)) * w, 6); ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.strokeRect(x, y, w, 6); }
 function drawLabel(text, x, y, color) { ctx.font = CONFIG.render.bigFont; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(text, x + 1, y + 1); ctx.fillStyle = color; ctx.fillText(text, x, y); }
 
@@ -250,6 +249,40 @@ function drawMinimap() {
   ctx.strokeStyle = '#fff'; ctx.strokeRect(x + (gameState.camera.x - canvas.clientWidth / (2 * gameState.camera.zoom)) * sx, y + (gameState.camera.y - canvas.clientHeight / (2 * gameState.camera.zoom)) * sy, canvas.clientWidth / gameState.camera.zoom * sx, canvas.clientHeight / gameState.camera.zoom * sy);
 }
 
+
+function drawKnownnessGoalPanel() {
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  const nextGoal = getNextKnownnessGoal();
+  const nextUnlock = getNextUnlockProfile();
+  const width = CONFIG.KNOWNNESS?.PANEL_WIDTH ?? 210;
+  const height = CONFIG.KNOWNNESS?.PANEL_HEIGHT ?? 74;
+  const margin = CONFIG.KNOWNNESS?.PANEL_MARGIN ?? 18;
+  const x = canvas.clientWidth - width - margin;
+  const y = canvas.clientHeight - height - margin;
+  const denom = Math.max(1, nextGoal);
+  const ratio = nextGoal > knownness ? knownness / denom : 1;
+  ctx.save();
+  ctx.fillStyle = 'rgba(10, 32, 42, 0.78)';
+  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.roundRect?.(x, y, width, height, 12);
+  if (ctx.roundRect) { ctx.fill(); ctx.stroke(); } else { ctx.fillRect(x, y, width, height); ctx.strokeRect(x, y, width, height); }
+  ctx.fillStyle = '#f7fbff';
+  ctx.font = 'bold 15px system-ui';
+  ctx.fillText(`知名度 ${Math.floor(knownness)} / ${Math.floor(nextGoal)}`, x + 14, y + 24);
+  ctx.fillStyle = 'rgba(255,255,255,0.22)';
+  ctx.fillRect(x + 14, y + 34, width - 28, 10);
+  ctx.fillStyle = '#6ee7a8';
+  ctx.fillRect(x + 14, y + 34, Math.max(0, Math.min(1, ratio)) * (width - 28), 10);
+  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
+  ctx.strokeRect(x + 14, y + 34, width - 28, 10);
+  ctx.fillStyle = '#d7f7ff';
+  ctx.font = '13px system-ui';
+  ctx.fillText(nextUnlock ? `次: ${nextUnlock.name}` : '次: 全員解放済み', x + 14, y + 62);
+  ctx.restore();
+}
+
 function getResidentSeal() { return (gameState.seals ?? []).find(seal => seal?.type === 'resident') ?? null; }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>\"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;' }[char] ?? char)); }
 
@@ -259,9 +292,9 @@ function updateHud() {
   const visitors = (gameState.seals ?? []).filter(s => s?.type === 'visitor');
   const nextVisitor = Math.max(0, CONFIG.visitor.spawnInterval - safeFiniteNumber(gameState.timers?.visitorSpawn, 0, 0));
   const resident = getResidentSeal();
-  const tategoto = getVisitorProfileById(CONFIG.knownness.unlockTargetId);
-  const tategotoUnlocked = safeFiniteNumber(gameState.village?.knownness, 0, 0) >= safeFiniteNumber(tategoto?.unlockedAtKnownness, 0, 0);
-  statsEl.innerHTML = `<b>${Math.floor(gameState.player?.g ?? 0)} G</b><br>知名度: ${Math.floor(safeFiniteNumber(gameState.village?.knownness, 0, 0))}<br><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><br>今月の狩猟: ${gameState.stats?.monthlyHunts ?? 0}<br>訪問者: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>次の訪問者目安: ${nextVisitor.toFixed(0)}秒<br>タテゴト: ${tategotoUnlocked ? '解放' : `未解放(${Math.floor(safeFiniteNumber(tategoto?.unlockedAtKnownness, 0, 0))})`}<br>住民: ${escapeHtml(resident?.name ?? gameState.residentName)}<br>速度: ${formatSpeedLabel(gameState.time?.timeScale)} / ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${getClearingCost()}G / 入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<br>最終保存: ${lastSaved}<br>保存状態: ${escapeHtml(saveText)}<div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>')}</div>`;
+  const nextUnlock = getNextUnlockProfile();
+  const unlockText = nextUnlock ? `次の訪問者: ${escapeHtml(nextUnlock.name)}(${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))})` : '訪問者解放: すべて解放';
+  statsEl.innerHTML = `<b>${Math.floor(gameState.player?.g ?? 0)} G</b><br>知名度: ${Math.floor(safeFiniteNumber(gameState.village?.knownness, 0, 0))}<br><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><br>今月の狩猟: ${gameState.stats?.monthlyHunts ?? 0}<br>訪問者: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>次の訪問者目安: ${nextVisitor.toFixed(0)}秒<br>${unlockText}<br>住民: ${escapeHtml(resident?.name ?? gameState.residentName)}<br>速度: ${formatSpeedLabel(gameState.time?.timeScale)} / ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${getClearingCost()}G / 入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<br>最終保存: ${lastSaved}<br>保存状態: ${escapeHtml(saveText)}<div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>')}</div>`;
   const selected = (gameState.seals ?? []).find(seal => seal?.id === gameState.ui?.selectedSealId) ?? null;
   sealCardsEl.innerHTML = selected ? renderSelectedSealPanel(selected) : '<div class="panel sealCard emptySealCard">あざらしをクリックすると詳細を表示します。</div>';
   updateToolButtons();

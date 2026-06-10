@@ -58,12 +58,12 @@ function runMonthlyResults() {
 function maybeAddMonthlyRelicDrop(hunts) {
   const threshold = clampInteger(CONFIG.EQUIPMENT?.MONTHLY_DROP_HUNT_THRESHOLD, 1, Number.MAX_SAFE_INTEGER, 3);
   if (clampInteger(hunts, 0, Number.MAX_SAFE_INTEGER, 0) < threshold) return;
-  const table = CONFIG.EQUIPMENT?.monthlyDropTable ?? [];
+  const table = CONFIG.EQUIPMENT?.MONTHLY_DROP_TABLE ?? CONFIG.EQUIPMENT?.monthlyDropTable ?? [];
   const index = Math.floor(Math.random() * Math.max(1, table.length));
   const item = getItemDef(table[index]);
   if (!item) return;
   const knownBefore = (gameState.shopCatalog?.unlockedItemIds ?? []).includes(item.id);
-  addRelicItem(item.id, 1);
+  addRelicItem(item.id, 1, '月末調査');
   if (knownBefore) {
     gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + CONFIG.knownness.duplicateRelicReward;
     logMessage(`月末の調査で${item.name}を追加発見しました（知名度+${CONFIG.knownness.duplicateRelicReward}）。`);
@@ -76,15 +76,6 @@ function addPlayerIncome(amount) {
   const value = safeFiniteNumber(amount, 0, 0);
   gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) + value;
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0) + value;
-}
-
-function unlockKnownVisitors() {
-  const knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0);
-  for (const profile of gameState.visitorProfiles ?? []) {
-    if (!profile || profile.unlocked || knownness < safeFiniteNumber(profile.unlockedAtKnownness, 0, 0)) continue;
-    profile.unlocked = true;
-    logMessage(`${profile.name}が村を知りました。`);
-  }
 }
 
 function updateCamera(dt) {
@@ -283,8 +274,7 @@ function updateSeals(dt) {
 function updateFallen(seal, dt) {
   seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, seal.hp + CONFIG.seal.fallenRecoveryPerSecond * dt);
   if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.standHpRatio && !isBeingCarried(seal.id)) {
-    seal.currentAction = '村へ戻っています'; seal.state = 'returningFromHunt';
-    buildRouteToVillage(seal);
+    seal.currentAction = '帰還後の行き先を選んでいます'; seal.state = 'returningFromHunt'; choosePostHuntAction(seal);
     logMessage(`${seal.name}が自力で起き上がりました。`);
   }
 }
@@ -344,10 +334,9 @@ function updateChoosingArrivalAction(seal) {
   const choice = chooseArrivalActionForVisitor(seal);
   if (choice?.type === 'facility' && choice.facility) {
     const facility = (gameState.world.objects ?? []).find(o => o?.id === choice.facility.id);
-    if (facility && isFacilityUsable(facility) && setSealDestination(seal, facilityInteractionPoint(facility), 'facility')) {
-      seal.targetId = facility.id;
-      seal.currentAction = choice.action ?? '施設へ向かいます';
-      seal.state = 'movingToFacility';
+    const purpose = facility?.type === 'inn' ? 'heal' : (chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend');
+    if (facility && routeSealDirectlyToFacility(seal, facility.id, purpose)) {
+      seal.currentAction = choice.action ?? seal.currentAction;
       seal.choosingTicks = 0;
       return;
     }
@@ -410,8 +399,9 @@ function updateHunting(seal, dt) {
 }
 
 function sendSealBackThroughHuntCorridor(seal) {
-  if (!buildRouteToVillage(seal)) { warnNoHuntCorridor(seal); return; }
-  seal.currentAction = '村へ戻っています'; seal.state = 'returningFromHunt';
+  seal.currentAction = '帰還後の行き先を選んでいます';
+  seal.state = 'returningFromHunt';
+  choosePostHuntAction(seal);
 }
 
 function claimNearestMonster(seal, areaId = null) {
@@ -469,9 +459,8 @@ function updateFighting(seal, dt) {
 }
 
 function updateReturningFromHunt(seal, dt) {
-  if (!seal?.target || !Array.isArray(seal.path) || seal.path.length <= 0) {
-    if (!buildRouteToVillage(seal)) { warnNoHuntCorridor(seal); return; }
-  }
+  clearLegacyReturnTarget(seal);
+  if (!seal?.target || !Array.isArray(seal.path) || seal.path.length <= 0) { choosePostHuntAction(seal); return; }
   updateSealMovement(seal, dt * 1000);
 }
 
@@ -484,9 +473,7 @@ function updateChoosingFacility(seal, dt) {
   }
   const facility = chooseFacilityAfterHunt(seal);
   if (!facility) { handleNoUsableFacility(seal); return; }
-  seal.targetId = facility.id;
-  if (!setSealDestination(seal, facilityInteractionPoint(facility), 'facility')) { seal.targetId = null; handleNoUsableFacility(seal); return; }
-  seal.state = 'movingToFacility';
+  if (!routeSealDirectlyToFacility(seal, facility.id, facility.type === 'inn' ? 'heal' : (chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend'))) { handleNoUsableFacility(seal); return; }
 }
 
 function updateChoosingPostHuntFacility(seal, dt) {
@@ -497,6 +484,8 @@ function updateChoosingPostHuntFacility(seal, dt) {
 function updateMovingToFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
+  const validPurpose = facility.type === 'inn' ? 'heal' : (chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend');
+  if (!isFacilityStillValidTarget(seal, seal.targetId, validPurpose)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const target = facilityInteractionPoint(facility);
   if (!setSealDestination(seal, target, 'facility')) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   updateSealMovement(seal, dt * 1000);
@@ -510,12 +499,13 @@ function updateMovingToFacility(seal, dt) {
 function updateUsingFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (facility?.type === 'inn') { updateResting(seal, dt); return; }
-  if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
+  if (!facility || !isFacilityStillValidTarget(seal, seal.targetId, 'spend')) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   seal.actionTimer -= dt;
   if (seal.actionTimer > 0) return;
   const upgrade = chooseBestAffordableEquipmentUpgrade(seal, facility);
   if (upgrade && buyAndEquipItem(seal, upgrade.id, facility)) {
     seal.facilityUseCounts[facility.type] = (seal.facilityUseCounts?.[facility.type] ?? 0) + 1;
+    seal.lastFacilityId = facility.id;
     if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
     afterVillageActivity(seal);
     return;
@@ -525,6 +515,7 @@ function updateUsingFacility(seal, dt) {
   seal.carriedG -= spent;
   addPlayerIncome(spent);
   seal.facilityUseCounts[facility.type] = (seal.facilityUseCounts?.[facility.type] ?? 0) + 1;
+  seal.lastFacilityId = facility.id;
   if (facility.type === 'restaurant') seal.mealCountSinceInn += 1;
   if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
   if (facility.type === 'blacksmith' && Math.random() < CONFIG.seal.blacksmithAttackChance) seal.attack += CONFIG.seal.blacksmithAttackGain;
@@ -544,6 +535,7 @@ function updateResting(seal, dt) {
     seal.carriedG -= fee;
     addPlayerIncome(fee);
     seal.facilityUseCounts.inn = (seal.facilityUseCounts?.inn ?? 0) + 1;
+    seal.lastFacilityId = inn.id;
     seal.mealCountSinceInn = 0;
     if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
     addFavor(seal, CONFIG.seal.favorFacilityUse);

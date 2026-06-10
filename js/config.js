@@ -33,7 +33,7 @@ const CONFIG = Object.freeze({
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
-  SAVE_VERSION: 7,
+  SAVE_VERSION: 8,
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
@@ -51,7 +51,8 @@ const CONFIG = Object.freeze({
     'cards.facility_neutral_blacksmith_idle': '/assets/cards/facility_neutral_blacksmith_idle.png'
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
-  knownness: { initial: 0, huntRewardPerMonthlyHunt: 4, monthlyBaseReward: 2, satisfyingVisitReward: 3, duplicateRelicReward: 1, unlockTargetId: 'visitor-tategoto' },
+  KNOWNNESS: { UNLOCK_THRESHOLDS: [100, 200, 300, 400, 500], PANEL_WIDTH: 210, PANEL_HEIGHT: 74, PANEL_MARGIN: 18 },
+  knownness: { initial: 0, huntRewardPerMonthlyHunt: 4, monthlyBaseReward: 2, satisfyingVisitReward: 3, duplicateRelicReward: 1 },
   movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, waterCost: 3, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['rescue', 'carry'] },
   timing: { targetFps: 60, maxDt: 0.05, uiMs: 120 },
   placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75 },
@@ -92,7 +93,7 @@ const CONFIG = Object.freeze({
     { id: 'visitor-tategoto', name: 'タテゴト', personality: 'brave', unlockedAtKnownness: 100, baseStats: { maxHp: 145, attack: 20, defense: 5 }, favor: 0, visits: 0, level: 1, exp: 0 }
   ] },
   personalities: { cautious: { label: '慎重', returnHpRatio: 0.50, emergencyHpRatio: 0.25, preferredMinHunts: 1, maxHuntsPerTrip: 2, returnChance: 0.45 }, balanced: { label: '普通', returnHpRatio: 0.35, emergencyHpRatio: 0.20, preferredMinHunts: 2, maxHuntsPerTrip: 3, returnChance: 0.30 }, brave: { label: '勇敢', returnHpRatio: 0.25, emergencyHpRatio: 0.12, preferredMinHunts: 3, maxHuntsPerTrip: 5, returnChance: 0.18 } },
-  EQUIPMENT: { GEAR_BUDGET_RATE: 0.35, MONTHLY_DROP_HUNT_THRESHOLD: 3, SCORE_ATTACK_WEIGHT: 4, SCORE_DEFENSE_WEIGHT: 3, SCORE_HP_WEIGHT: 0.4, SCORE_FAVOR_WEIGHT: 1, monthlyDropTable: ['driftwood_spear', 'shell_armor', 'lucky_pearl'] },
+  EQUIPMENT: { GEAR_BUDGET_RATE: 0.35, MONTHLY_DROP_HUNT_THRESHOLD: 3, SCORE_ATTACK_WEIGHT: 4, SCORE_DEFENSE_WEIGHT: 3, SCORE_HP_WEIGHT: 0.4, SCORE_FAVOR_WEIGHT: 1, FACILITY_DISTANCE_WEIGHT: 1, FACILITY_BONUS_WEIGHT: 36, RECENT_USAGE_PENALTY: 18, RANDOM_TIEBREAKER: 4, FACILITY_BASE_SCORE: 1000, FACILITY_HEAL_WEIGHT: 140, FACILITY_FOOD_HP_WEIGHT: 20, FACILITY_SPEND_G_WEIGHT: 0.15, FACILITY_FOOD_G_WEIGHT: 0.2, FACILITY_EQUIPMENT_GEAR_WEIGHT: 0.12, MONTHLY_DROP_TABLE: ['driftwood_spear', 'shell_armor', 'lucky_pearl'], monthlyDropTable: ['driftwood_spear', 'shell_armor', 'lucky_pearl'] },
   ITEMS: {
     driftwood_spear: { id: 'driftwood_spear', name: '流木の槍', type: 'weapon', price: 90, attackBonus: 6, defenseBonus: 0, hpBonus: 0, favorBonus: 1, shopType: 'blacksmith', tier: 1 },
     shell_armor: { id: 'shell_armor', name: '貝殻のよろい', type: 'armor', price: 120, attackBonus: 0, defenseBonus: 4, hpBonus: 14, favorBonus: 1, shopType: 'blacksmith', tier: 1 },
