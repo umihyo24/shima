@@ -8,7 +8,6 @@ function render() {
   ctx.translate(-gameState.camera.x, -gameState.camera.y);
   drawWorld();
   drawRoads();
-  drawGates();
   drawObjects();
   drawMonsters();
   drawSeals();
@@ -53,12 +52,12 @@ function drawOpenCorridors() {
   ctx.lineWidth = CONFIG.world.tile * (CONFIG.map.corridorWidth * 2 + 1);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  for (const line of CONFIG.map.protectedCorridors ?? []) {
-    const start = gridToWorld(line.from?.x, line.from?.y);
-    const end = gridToWorld(line.to?.x, line.to?.y);
+  for (const route of [getEntryCorridor(), ...(CONFIG.ROUTES?.huntingCorridors ?? [])]) {
+    const points = (route?.waypoints ?? []).map(routeWaypointToWorld).filter(Boolean);
+    if (points.length < 2) continue;
     ctx.beginPath();
-    ctx.moveTo(start.x, start.y);
-    ctx.lineTo(end.x, end.y);
+    ctx.moveTo(points[0].x, points[0].y);
+    for (const point of points.slice(1)) ctx.lineTo(point.x, point.y);
     ctx.stroke();
   }
   ctx.restore();
@@ -98,31 +97,6 @@ function drawRoads() {
   }
 }
 
-
-function drawGates() {
-  const entry = gameState.gates?.entryGate;
-  if (entry) drawGateMarker(gatePointToWorld(entry), '入口', '#ffe27a');
-  for (const gate of gameState.gates?.huntGates ?? []) {
-    drawGateMarker(gatePointToWorld(gate?.village), '狩猟道標', '#9df7ff');
-    drawGateMarker(gatePointToWorld(gate?.outside), gate?.areaId ?? '外', '#7aff9d');
-  }
-}
-
-function drawGateMarker(point, label, color) {
-  if (!point) return;
-  ctx.save();
-  ctx.fillStyle = color;
-  ctx.strokeStyle = 'rgba(0,0,0,.55)';
-  ctx.lineWidth = 3 / gameState.camera.zoom;
-  ctx.beginPath();
-  ctx.moveTo(point.x, point.y - 18);
-  ctx.lineTo(point.x + 16, point.y + 12);
-  ctx.lineTo(point.x - 16, point.y + 12);
-  ctx.closePath();
-  ctx.fill(); ctx.stroke();
-  drawLabel(label, point.x - 22, point.y - 24, color);
-  ctx.restore();
-}
 
 function drawObjects() {
   for (const o of gameState.world.objects) {
@@ -286,5 +260,5 @@ function updateHud() {
   }).join('');
   updateToolButtons();
 }
-function stateLabel(state) { return ({ arriving:'到着', choosingHuntGate:'狩猟門選択', movingToHuntGate:'狩猟門へ移動', hunting:'狩猟探索', movingToMonster:'カニへ移動', fighting:'戦闘中', returningFromHunt:'狩猟門へ帰還', choosingFacility:'施設選択', movingToFacility:'施設へ移動', usingFacility:'施設利用中', leaving:'帰宅中', resting:'休憩中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
+function stateLabel(state) { return ({ arriving:'到着', choosingHuntArea:'狩猟先選択', movingToHuntExit:'狩猟通路へ移動', hunting:'狩猟探索', movingToMonster:'カニへ移動', fighting:'戦闘中', returningFromHunt:'村へ帰還', choosingFacility:'施設選択', movingToFacility:'施設へ移動', usingFacility:'施設利用中', leaving:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
 
