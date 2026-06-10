@@ -118,8 +118,8 @@ function validateLoadedGameState(data) {
   if (!state.player || !Number.isFinite(state.player?.g)) return false;
   if (!state.world || !Array.isArray(state.world?.tiles) || state.world.tiles.length <= 0) return false;
   if (!Array.isArray(state.world?.roads)) return false;
-  if (!Array.isArray(state.world?.facilities)) return false;
-  if (!Array.isArray(state.world?.decorations)) return false;
+  if (!Array.isArray(state.world?.facilities) && !Array.isArray(state.world?.objects)) return false;
+  if (state.world?.decorations !== undefined && !Array.isArray(state.world.decorations)) return false;
   if (!Array.isArray(state.seals) || !Array.isArray(state.monsters)) return false;
   return true;
 }
@@ -140,7 +140,7 @@ function applyLoadedGameState(data) {
   gameState.world.tiles = data?.version < 4 ? generateInitialMap() : normalizeTiles(loaded.world?.tiles);
   protectOpenCorridors(gameState.world);
   gameState.world.roads = normalizeRoads(loaded.world?.roads);
-  gameState.world.objects = normalizeObjects([...(loaded.world?.facilities ?? []), ...(loaded.world?.decorations ?? [])]);
+  gameState.world.objects = normalizeObjects([...(loaded.world?.facilities ?? []), ...(loaded.world?.decorations ?? []), ...(loaded.world?.objects ?? [])]);
   gameState.world.nextObjectId = Math.max(nextObjectNumber(gameState.world.objects), clampInteger(loaded.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1));
   gameState.seals = normalizeSeals(loaded.seals);
   enforceSingleResidentSeal();
@@ -149,6 +149,7 @@ function applyLoadedGameState(data) {
   gameState.relicInventory = normalizeRelicInventory([...(loaded.relicInventory ?? []), ...legacyInventory]);
   gameState.shopCatalog = normalizeShopCatalog(loaded.shopCatalog, gameState.relicInventory);
   gameState.village.knownness = safeFiniteNumber(loaded.village?.knownness, CONFIG.knownness.initial, 0);
+  unlockKnownVisitors();
   gameState.village.clearCount = clampInteger(loaded.village?.clearCount, 0, Number.MAX_SAFE_INTEGER, 0);
   gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(Number(loaded.time?.timeScale)) ? Number(loaded.time.timeScale) : CONFIG.TIME.DEFAULT_SCALE;
   gameState.calendar.year = clampInteger(loaded.calendar?.year, 1, Number.MAX_SAFE_INTEGER, Math.max(1, Math.ceil(clampInteger(loaded.calendar?.month, 1, Number.MAX_SAFE_INTEGER, 1) / CONFIG.CALENDAR.MONTHS_PER_YEAR)));

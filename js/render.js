@@ -153,7 +153,8 @@ function drawSeals() {
       ctx.stroke();
     }
     drawSpriteFacing(ctx, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), seal.x - w / 2, seal.y - h / 2, w, h, seal.facing, (context, x, y, width, height, options) => drawFallbackSeal(context, seal, x, y, width, height, options));
-    drawHpBar(seal.x - 22, seal.y - 29, 44, seal.hp / seal.maxHp, '#5fe45e');
+    const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+    drawHpBar(seal.x - 22, seal.y - 29, 44, safeFiniteNumber(seal.hp, 0, 0) / Math.max(1, effectiveMaxHp), '#5fe45e');
     drawLabel(seal?.type === 'resident' ? '住' : '訪', seal.x - 10, seal.y - 38, seal?.type === 'resident' ? '#ffd98a' : '#aef3ff');
   }
 }

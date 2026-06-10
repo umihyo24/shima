@@ -728,7 +728,8 @@ function getBestFacilityForSeal(seal, preferredTypes) {
   types.forEach((type, typeIndex) => {
     for (const facility of getUsableFacilitiesByType(type)) {
       if (type === 'inn' && seal.carriedG < (CONFIG.facilities.inn?.fee ?? 0) && hpRatio > CONFIG.seal.innHpThreshold) continue;
-      if (type !== 'inn' && seal.carriedG <= 0) continue;
+      const hasAffordableUpgrade = chooseBestAffordableEquipmentUpgrade(seal, facility) !== null;
+      if (type !== 'inn' && seal.carriedG <= 0 && !hasAffordableUpgrade) continue;
       const target = facilityInteractionPoint(facility);
       const pathCost = estimatePathCostBetweenPoints({ x: seal.x, y: seal.y }, target, 'facility');
       if (!Number.isFinite(pathCost)) continue;
@@ -753,14 +754,20 @@ function chooseInnForSeal(seal) { return getBestFacilityForSeal(seal, ['inn']); 
 function chooseSpendingFacilityForSeal(seal) { return getBestFacilityForSeal(seal, ['restaurant', 'blacksmith']); }
 function chooseFacilityAfterHunt(seal) {
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
-  const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
-  const blacksmith = getBestFacilityForSeal(seal, ['blacksmith']);
-  if (blacksmith && chooseBestAffordableEquipmentUpgrade(seal, blacksmith)) return blacksmith;
+  const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
   if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseInnForSeal(seal) ?? chooseSpendingFacilityForSeal(seal);
+  const blacksmith = getBestFacilityForSeal(seal, ['blacksmith']);
+  const hasEquipmentBudget = blacksmith && chooseBestAffordableEquipmentUpgrade(seal, blacksmith);
+  if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return getBestFacilityForSeal(seal, ['inn', 'restaurant', 'blacksmith']);
   if (seal?.carriedG >= (CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) {
     return getBestFacilityForSeal(seal, ['inn', 'restaurant', 'blacksmith']);
   }
-  return getBestFacilityForSeal(seal, ['restaurant', 'blacksmith', 'inn']);
+  if (hasEquipmentBudget) return blacksmith;
+  const personality = getPersonalityConfig(seal);
+  const preferred = personality?.maxHuntsPerTrip > CONFIG.personalities.balanced.maxHuntsPerTrip
+    ? ['blacksmith', 'restaurant', 'inn']
+    : (personality?.maxHuntsPerTrip < CONFIG.personalities.balanced.maxHuntsPerTrip ? ['inn', 'restaurant', 'blacksmith'] : ['restaurant', 'blacksmith', 'inn']);
+  return getBestFacilityForSeal(seal, preferred);
 }
 
 function nearestFacility(type, x, y) {
