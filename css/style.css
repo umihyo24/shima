@@ -1,0 +1,35 @@
+:root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #071d2a; color: #f7fbff; }
+    canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; background: #0b5875; }
+    .hud { position: fixed; inset: 14px auto auto 14px; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
+    .panel { background: rgba(5, 18, 28, .82); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 8px 26px rgba(0,0,0,.3); border-radius: 10px; backdrop-filter: blur(6px); }
+    .stats { padding: 10px 12px; min-width: 260px; line-height: 1.45; }
+    .stats b { color: #ffe38a; }
+    .tools { position: fixed; top: 14px; right: 14px; width: 170px; padding: 10px; pointer-events: auto; }
+    button { appearance: none; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; background: linear-gradient(#1e5d75,#123848); color: #fff; padding: 8px 10px; font-weight: 700; cursor: pointer; box-shadow: inset 0 1px rgba(255,255,255,.16); }
+    button:hover { filter: brightness(1.15); }
+    button.active { background: linear-gradient(#f0a73a,#a86619); color: #1d1000; }
+    .tools button { width: 100%; margin: 4px 0; text-align: left; }
+    .bottom { position: fixed; left: 14px; bottom: 14px; right: 14px; display: grid; grid-template-columns: 260px 1fr; gap: 10px; pointer-events: none; }
+    .help { padding: 10px 12px; font-size: 13px; line-height: 1.55; }
+    .sealCards { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; }
+    .sealCard { padding: 10px 12px; min-height: 118px; }
+    .bar { height: 9px; border-radius: 99px; background: rgba(0,0,0,.35); overflow: hidden; margin: 4px 0 8px; }
+    .fill { height: 100%; background: linear-gradient(90deg,#79e54c,#16b15e); }
+    .log { margin-top: 8px; font-size: 13px; max-height: 115px; overflow: hidden; color: #d7efff; }
+    .start { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(23,112,145,.82), rgba(2,12,22,.96)); pointer-events: auto; }
+    .startCard { width: min(620px, calc(100vw - 36px)); padding: 30px; text-align: center; }
+    .startCard h1 { margin: 0 0 8px; font-size: clamp(30px, 6vw, 56px); }
+    .startCard p { color: #cdefff; line-height: 1.7; }
+    .startActions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    .saveInfo { margin-top: 10px; color: #cdefff; font-size: 13px; line-height: 1.55; }
+    .savePanel { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.16); color: #cdefff; font-size: 13px; line-height: 1.45; }
+    .savePanel button { width: 100%; margin-top: 8px; text-align: center; }
+    .zoomBtns { display: flex; gap: 6px; margin-top: 8px; pointer-events: auto; }
+    .zoomBtns button { width: 42px; text-align: center; }
+.speedControls { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.16); }
+.speedButtons { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; margin-top: 6px; }
+.speedButtons button { margin: 0; text-align: center; }
+.speedStatus { margin-top: 6px; color: #cdefff; font-size: 12px; }
+.dateLine { color: #9ee8ff; font-weight: 800; }
