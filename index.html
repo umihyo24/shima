@@ -29,6 +29,10 @@
     .startCard { width: min(620px, calc(100vw - 36px)); padding: 30px; text-align: center; }
     .startCard h1 { margin: 0 0 8px; font-size: clamp(30px, 6vw, 56px); }
     .startCard p { color: #cdefff; line-height: 1.7; }
+    .startActions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    .saveInfo { margin-top: 10px; color: #cdefff; font-size: 13px; line-height: 1.55; }
+    .savePanel { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.16); color: #cdefff; font-size: 13px; line-height: 1.45; }
+    .savePanel button { width: 100%; margin-top: 8px; text-align: center; }
     .zoomBtns { display: flex; gap: 6px; margin-top: 8px; pointer-events: auto; }
     .zoomBtns button { width: 42px; text-align: center; }
   </style>
@@ -58,7 +62,11 @@
     <div class="panel startCard">
       <h1>あざらし島の冒険経済</h1>
       <p>同じ世界マップ上にある島と外海を眺めながら、道路や施設を配置しましょう。あざらしたちは外でカニと戦い、Gを持ち帰り、施設で使い、倒れた仲間を救助し続けます。</p>
-      <button id="startBtn">ゲーム開始</button>
+      <div class="startActions">
+        <button id="startBtn">新しく始める</button>
+        <button id="loadBtn" hidden>続きから</button>
+      </div>
+      <div class="saveInfo" id="startSaveInfo">セーブデータを確認中...</div>
     </div>
   </div>
 
@@ -79,7 +87,11 @@ const CONFIG = Object.freeze({
     { type: 'tree', x: 6, y: 13 }, { type: 'flower', x: 12, y: 18 }, { type: 'rock', x: 18, y: 18 }
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
-  timing: { targetFps: 60, maxDt: 0.05, logLimit: 7, uiMs: 120 },
+  SAVE_KEY: 'seal-island-economy-save',
+  SAVE_VERSION: 1,
+  AUTO_SAVE_INTERVAL_MS: 30000,
+  MAX_LOGS: 7,
+  timing: { targetFps: 60, maxDt: 0.05, uiMs: 120 },
   placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75 },
   directions: [ { name: 'N', dx: 0, dy: -1 }, { name: 'E', dx: 1, dy: 0 }, { name: 'S', dx: 0, dy: 1 }, { name: 'W', dx: -1, dy: 0 } ],
   tools: [
@@ -113,22 +125,315 @@ const startScreen = document.getElementById('startScreen');
 const startBtn = document.getElementById('startBtn');
 const zoomInBtn = document.getElementById('zoomIn');
 const zoomOutBtn = document.getElementById('zoomOut');
+const loadBtn = document.getElementById('loadBtn');
+const startSaveInfoEl = document.getElementById('startSaveInfo');
 
-const gameState = {
-  phase: CONFIG.phase.start,
-  player: { g: 0 },
-  camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
-  input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-  ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0 },
-  world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
-  seals: [],
-  monsters: [],
-  images: {},
-  logs: [],
-  timers: { spawn: 0, ui: 0 },
-  frameTemps: { occupied: new Set(), usableFacilities: [], toRemoveMonsters: [] },
-  lastTime: performance.now()
-};
+const gameState = createNewGameState();
+
+function createNewGameState() {
+  return {
+    phase: CONFIG.phase.start,
+    player: { g: 0 },
+    camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
+    input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
+    ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true },
+    world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
+    seals: [],
+    monsters: [],
+    images: {},
+    logs: [],
+    timers: { spawn: 0, ui: 0 },
+    save: { autoSaveTimerMs: 0, lastSavedAt: null, statusText: '' },
+    frameTemps: { occupied: new Set(), usableFacilities: [], toRemoveMonsters: [] },
+    lastTime: performance.now()
+  };
+}
+
+function cloneSerializable(value, fallback) {
+  try {
+    const copy = JSON.parse(JSON.stringify(value));
+    return copy ?? fallback;
+  } catch (error) {
+    return fallback;
+  }
+}
+
+function getSerializableGameState() {
+  const objects = Array.isArray(gameState.world?.objects) ? gameState.world.objects : [];
+  return {
+    phase: CONFIG.phase.playing,
+    player: { g: safeFiniteNumber(gameState.player?.g, 0, 0) },
+    camera: {
+      x: safeFiniteNumber(gameState.camera?.x, CONFIG.camera.x),
+      y: safeFiniteNumber(gameState.camera?.y, CONFIG.camera.y),
+      zoom: clampNumber(gameState.camera?.zoom, CONFIG.camera.minZoom, CONFIG.camera.maxZoom, CONFIG.camera.zoom)
+    },
+    ui: {
+      selectedTool: getTool(gameState.ui?.selectedTool)?.id ?? 'road',
+      directionIndex: clampInteger(gameState.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2)
+    },
+    world: {
+      tiles: cloneSerializable(gameState.world?.tiles, []),
+      roads: cloneSerializable(gameState.world?.roads, []),
+      facilities: cloneSerializable(objects.filter(o => o?.kind === 'facility'), []),
+      decorations: cloneSerializable(objects.filter(o => o?.kind === 'decoration'), []),
+      nextObjectId: clampInteger(gameState.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1)
+    },
+    seals: cloneSerializable(gameState.seals, []),
+    monsters: cloneSerializable(gameState.monsters, []),
+    logs: cloneSerializable(gameState.logs, []).slice(0, CONFIG.MAX_LOGS),
+    timers: { spawn: safeFiniteNumber(gameState.timers?.spawn, 0, 0) },
+    save: {
+      autoSaveTimerMs: safeFiniteNumber(gameState.save?.autoSaveTimerMs, 0, 0),
+      lastSavedAt: safeFiniteNumber(gameState.save?.lastSavedAt, null, 0) || null,
+      statusText: String(gameState.save?.statusText ?? '')
+    }
+  };
+}
+
+function saveGame(reason) {
+  if (gameState.phase !== CONFIG.phase.playing) return false;
+  const saveReason = reason === 'auto' ? 'auto' : 'manual';
+  const payload = {
+    version: CONFIG.SAVE_VERSION,
+    savedAt: Date.now(),
+    reason: saveReason,
+    gameState: getSerializableGameState()
+  };
+  try {
+    window.localStorage?.setItem(CONFIG.SAVE_KEY, JSON.stringify(payload));
+    gameState.save.lastSavedAt = payload.savedAt;
+    gameState.save.statusText = saveReason === 'auto' ? '自動保存しました' : '手動保存しました';
+    logMessage(gameState.save.statusText);
+    updateStartSaveInfo();
+    updateHud();
+    return true;
+  } catch (error) {
+    gameState.save.statusText = '保存できませんでした（ブラウザの保存領域を確認してください）';
+    logMessage(gameState.save.statusText);
+    updateHud();
+    return false;
+  }
+}
+
+function loadGame() {
+  const payload = readSavePayload();
+  if (!validateLoadedGameState(payload)) {
+    gameState.save.statusText = 'セーブデータを読み込めませんでした';
+    logMessage(gameState.save.statusText);
+    updateStartSaveInfo();
+    updateHud();
+    return false;
+  }
+  applyLoadedGameState(payload);
+  logMessage('セーブデータを読み込みました');
+  startScreen.style.display = 'none';
+  updateToolButtons();
+  updateHud();
+  updateStartSaveInfo();
+  return true;
+}
+
+function hasSaveData() {
+  return validateLoadedGameState(readSavePayload());
+}
+
+function deleteSaveData() {
+  try {
+    window.localStorage?.removeItem(CONFIG.SAVE_KEY);
+    updateStartSaveInfo();
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+function validateLoadedGameState(data) {
+  const state = data?.gameState;
+  if (data?.version !== CONFIG.SAVE_VERSION) return false;
+  if (!Number.isFinite(data?.savedAt) || !['manual', 'auto'].includes(data?.reason)) return false;
+  if (!state || typeof state !== 'object') return false;
+  if (!state.player || !Number.isFinite(state.player?.g)) return false;
+  if (!state.world || !Array.isArray(state.world?.tiles) || state.world.tiles.length <= 0) return false;
+  if (!Array.isArray(state.world?.roads)) return false;
+  if (!Array.isArray(state.world?.facilities)) return false;
+  if (!Array.isArray(state.world?.decorations)) return false;
+  if (!Array.isArray(state.seals) || !Array.isArray(state.monsters)) return false;
+  return true;
+}
+
+function applyLoadedGameState(data) {
+  const fresh = createNewGameState();
+  const loaded = data?.gameState ?? {};
+  Object.assign(gameState, fresh);
+  gameState.phase = CONFIG.phase.playing;
+  gameState.player.g = safeFiniteNumber(loaded.player?.g, 0, 0);
+  gameState.camera.x = safeFiniteNumber(loaded.camera?.x, CONFIG.camera.x);
+  gameState.camera.y = safeFiniteNumber(loaded.camera?.y, CONFIG.camera.y);
+  gameState.camera.zoom = clampNumber(loaded.camera?.zoom, CONFIG.camera.minZoom, CONFIG.camera.maxZoom, CONFIG.camera.zoom);
+  gameState.ui.selectedTool = getTool(loaded.ui?.selectedTool)?.id ?? 'road';
+  gameState.ui.directionIndex = clampInteger(loaded.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2);
+  gameState.world.tiles = normalizeTiles(loaded.world?.tiles);
+  gameState.world.roads = normalizeRoads(loaded.world?.roads);
+  gameState.world.objects = normalizeObjects([...(loaded.world?.facilities ?? []), ...(loaded.world?.decorations ?? [])]);
+  gameState.world.nextObjectId = Math.max(nextObjectNumber(gameState.world.objects), clampInteger(loaded.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1));
+  gameState.seals = normalizeSeals(loaded.seals);
+  gameState.monsters = normalizeMonsters(loaded.monsters);
+  gameState.logs = Array.isArray(loaded.logs) ? loaded.logs.map(text => String(text)).slice(0, CONFIG.MAX_LOGS) : [];
+  gameState.timers.spawn = safeFiniteNumber(loaded.timers?.spawn, 0, 0);
+  gameState.save.autoSaveTimerMs = safeFiniteNumber(loaded.save?.autoSaveTimerMs, 0, 0);
+  gameState.save.lastSavedAt = safeFiniteNumber(data?.savedAt, null, 0) || null;
+  gameState.save.statusText = `最終保存: ${formatSaveTime(gameState.save.lastSavedAt)}`;
+}
+
+function updateAutoSave(deltaMs) {
+  if (gameState.phase !== CONFIG.phase.playing) return;
+  gameState.save.autoSaveTimerMs += safeFiniteNumber(deltaMs, 0, 0);
+  if (gameState.save.autoSaveTimerMs < CONFIG.AUTO_SAVE_INTERVAL_MS) return;
+  gameState.save.autoSaveTimerMs = 0;
+  saveGame('auto');
+}
+
+function readSavePayload() {
+  try {
+    const raw = window.localStorage?.getItem(CONFIG.SAVE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    return null;
+  }
+}
+
+function startNewGame() {
+  if (hasSaveData() && !window.confirm('既存のセーブデータを削除して新しく始めますか？')) return;
+  deleteSaveData();
+  Object.assign(gameState, createNewGameState());
+  initGame();
+  gameState.save.statusText = '新しいゲームを開始しました';
+  updateStartSaveInfo();
+  updateHud();
+}
+
+function updateStartSaveInfo() {
+  const payload = readSavePayload();
+  const valid = validateLoadedGameState(payload);
+  if (loadBtn) loadBtn.hidden = !valid;
+  if (!startSaveInfoEl) return;
+  if (valid) {
+    startSaveInfoEl.textContent = `保存済みデータ: ${formatSaveTime(payload.savedAt)} / ${payload.reason === 'auto' ? '自動保存' : '手動保存'}`;
+  } else if (payload) {
+    startSaveInfoEl.textContent = 'セーブデータが壊れているか、バージョンが違うため読み込めません。';
+  } else {
+    startSaveInfoEl.textContent = '保存済みデータはありません。';
+  }
+}
+
+function formatSaveTime(value) {
+  if (!Number.isFinite(value)) return 'なし';
+  return new Date(value).toLocaleString('ja-JP');
+}
+
+function safeFiniteNumber(value, fallback, min = -Infinity) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, number);
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, number));
+}
+
+function clampInteger(value, min, max, fallback) {
+  return Math.trunc(clampNumber(value, min, max, fallback));
+}
+
+function normalizeTiles(tiles) {
+  if (!Array.isArray(tiles) || tiles.length <= 0) return createWorldTiles();
+  const fallback = createWorldTiles();
+  return Array.from({ length: CONFIG.world.rows }, (_, y) => Array.from({ length: CONFIG.world.cols }, (_, x) => {
+    const source = tiles?.[y]?.[x] ?? fallback[y][x];
+    const terrainValues = [CONFIG.tileState.terrainWater, CONFIG.tileState.terrainLand, CONFIG.tileState.terrainOutside];
+    const buildValues = [CONFIG.tileState.buildBlocked, CONFIG.tileState.buildable];
+    const obstacleValues = [null, CONFIG.tileState.obstacleGrass, CONFIG.tileState.obstacleTree, CONFIG.tileState.obstacleRock];
+    return {
+      terrain: terrainValues.includes(source?.terrain) ? source.terrain : fallback[y][x].terrain,
+      buildState: buildValues.includes(source?.buildState) ? source.buildState : fallback[y][x].buildState,
+      obstacle: obstacleValues.includes(source?.obstacle ?? null) ? (source?.obstacle ?? null) : fallback[y][x].obstacle,
+      unlocked: source?.unlocked === true
+    };
+  }));
+}
+
+function normalizeRoads(roads) {
+  if (!Array.isArray(roads)) return [];
+  return roads.map(r => ({ x: clampInteger(r?.x, 0, CONFIG.world.cols - 1, 0), y: clampInteger(r?.y, 0, CONFIG.world.rows - 1, 0) }));
+}
+
+function normalizeObjects(objects) {
+  if (!Array.isArray(objects)) return [];
+  return objects.map((o, index) => {
+    const tool = getTool(o?.type);
+    if (!tool || !['facility', 'decoration'].includes(tool.kind)) return null;
+    return {
+      id: String(o?.id || `obj-${index + 1}`),
+      type: tool.id,
+      kind: tool.kind,
+      x: clampInteger(o?.x, 0, CONFIG.world.cols - 1, 0),
+      y: clampInteger(o?.y, 0, CONFIG.world.rows - 1, 0),
+      w: tool.w,
+      h: tool.h,
+      directionIndex: clampInteger(o?.directionIndex, 0, CONFIG.directions.length - 1, 0)
+    };
+  }).filter(Boolean);
+}
+
+function normalizeSeals(seals) {
+  if (!Array.isArray(seals)) return [];
+  const states = ['exploring', 'movingToMonster', 'fighting', 'returningToIsland', 'spending', 'movingToInn', 'resting', 'fallen', 'rescuing', 'carryingFallenSeal'];
+  return seals.map((s, index) => ({
+    id: String(s?.id || `seal-${index + 1}`),
+    name: String(s?.name || `あざらし${index + 1}`),
+    x: safeFiniteNumber(s?.x, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x),
+    y: safeFiniteNumber(s?.y, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y),
+    hp: safeFiniteNumber(s?.hp, CONFIG.seal.maxHp, 0),
+    maxHp: safeFiniteNumber(s?.maxHp, CONFIG.seal.maxHp, 1),
+    attack: safeFiniteNumber(s?.attack, CONFIG.seal.attack, 0),
+    defense: safeFiniteNumber(s?.defense, CONFIG.seal.defense, 0),
+    carriedG: safeFiniteNumber(s?.carriedG, 0, 0),
+    exp: safeFiniteNumber(s?.exp, 0, 0),
+    state: states.includes(s?.state) ? s.state : 'exploring',
+    targetId: s?.targetId ? String(s.targetId) : null,
+    target: { x: safeFiniteNumber(s?.target?.x, randomCoastPoint().x), y: safeFiniteNumber(s?.target?.y, randomCoastPoint().y) },
+    rescueTargetId: s?.rescueTargetId ? String(s.rescueTargetId) : null,
+    combatTimer: safeFiniteNumber(s?.combatTimer, 0, 0),
+    monsterTimer: safeFiniteNumber(s?.monsterTimer, 0, 0),
+    actionTimer: safeFiniteNumber(s?.actionTimer, 0, 0)
+  }));
+}
+
+function normalizeMonsters(monsters) {
+  if (!Array.isArray(monsters)) return [];
+  return monsters.map((m, index) => ({
+    id: String(m?.id || `crab-${Date.now()}-${index}`),
+    type: 'crab',
+    x: safeFiniteNumber(m?.x, randomCoastPoint().x),
+    y: safeFiniteNumber(m?.y, randomCoastPoint().y),
+    hp: safeFiniteNumber(m?.hp, CONFIG.monster.hp, 0),
+    maxHp: safeFiniteNumber(m?.maxHp, CONFIG.monster.hp, 1),
+    attack: safeFiniteNumber(m?.attack, CONFIG.monster.attack, 0),
+    defense: safeFiniteNumber(m?.defense, CONFIG.monster.defense, 0),
+    assignedSealId: m?.assignedSealId ? String(m.assignedSealId) : null
+  }));
+}
+
+function nextObjectNumber(objects) {
+  return objects.reduce((max, object) => {
+    const match = String(object?.id ?? '').match(/^obj-(\d+)$/);
+    return Math.max(max, match ? Number(match[1]) + 1 : 1);
+  }, 1);
+}
 
 function createImage(key) {
   const cached = gameState.images?.[key];
@@ -157,7 +462,7 @@ function safeDrawImage(context, imageRecord, x, y, w, h, fallback) {
 
 function logMessage(text) {
   gameState.logs.unshift(text);
-  gameState.logs.length = Math.min(gameState.logs.length, CONFIG.timing.logLimit);
+  gameState.logs.length = Math.min(gameState.logs.length, CONFIG.MAX_LOGS);
 }
 
 function initGame() {
@@ -170,6 +475,9 @@ function initGame() {
   gameState.monsters = [];
   gameState.logs = [];
   gameState.timers.spawn = 0;
+  gameState.timers.ui = 0;
+  gameState.save.autoSaveTimerMs = 0;
+  gameState.save.lastSavedAt = null;
   const safe = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
   gameState.seals = Array.from({ length: CONFIG.seal.count }, (_, i) => ({
     id: `seal-${i + 1}`,
@@ -430,9 +738,10 @@ function update(dt) {
   updateSpawner(dt);
   updateSeals(dt);
   removeDefeatedMonsters();
+  updateAutoSave(dt * 1000);
   gameState.timers.ui += dt;
   if (gameState.timers.ui >= CONFIG.timing.uiMs / 1000) {
-    updateHud();
+    gameState.ui.needsHudUpdate = true;
     gameState.timers.ui = 0;
   }
 }
@@ -815,8 +1124,11 @@ function drawMinimap() {
 }
 
 function updateHud() {
-  statsEl.innerHTML = `<b>${gameState.player.g} G</b><br>ズーム: ${gameState.camera.zoom.toFixed(2)}<br>ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${CONFIG.expansion.clearCost}G / 半径${CONFIG.expansion.clearRadius}<br>入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<div class="log">${gameState.logs.map(l => `・${l}`).join('<br>')}</div>`;
+  const saveText = gameState.save?.statusText || '未保存';
+  const lastSaved = formatSaveTime(gameState.save?.lastSavedAt);
+  statsEl.innerHTML = `<b>${gameState.player.g} G</b><br>ズーム: ${gameState.camera.zoom.toFixed(2)}<br>ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${CONFIG.expansion.clearCost}G / 半径${CONFIG.expansion.clearRadius}<br>入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<br>最終保存: ${lastSaved}<br>保存状態: ${saveText}<div class="log">${gameState.logs.map(l => `・${l}`).join('<br>')}</div>`;
   sealCardsEl.innerHTML = gameState.seals.map(s => `<div class="panel sealCard"><b>${s.name}</b><br>HP ${Math.ceil(s.hp)} / ${s.maxHp}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, s.hp / s.maxHp * 100))}%"></div></div>所持G: ${s.carriedG}<br>EXP: ${s.exp}<br>状態: ${stateLabel(s.state)}</div>`).join('');
+  updateToolButtons();
 }
 function stateLabel(state) { return ({ exploring:'探索中', movingToMonster:'カニへ移動', fighting:'戦闘中', returningToIsland:'島へ帰還', spending:'利用中', movingToInn:'宿屋へ移動', resting:'休憩中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
 
@@ -831,11 +1143,17 @@ function resizeCanvas() { const dpr = devicePixelRatioClamped(); const w = Math.
 function devicePixelRatioClamped() { return Math.max(CONFIG.canvas.minDevicePixelRatio, Math.min(CONFIG.canvas.maxDevicePixelRatio, window.devicePixelRatio || 1)); }
 
 function buildTools() {
-  toolsEl.innerHTML = '<b>ツール</b>' + CONFIG.tools.map(t => `<button data-tool="${t.id}">${t.label}</button>`).join('') + '<button data-action="rotate">R 回転</button>';
-  toolsEl.addEventListener('click', e => { const tool = e.target?.dataset?.tool; if (tool) { gameState.ui.selectedTool = tool; updateToolButtons(); updateHud(); } if (e.target?.dataset?.action === 'rotate') rotateTool(); });
+  toolsEl.innerHTML = '<b>ツール</b>' + CONFIG.tools.map(t => `<button data-tool="${t.id}">${t.label}</button>`).join('') + '<button data-action="rotate">R 回転</button><div class="savePanel"><b>セーブ</b><br><span id="toolSaveStatus">未保存</span><br><span id="toolSaveTime">最終保存: なし</span><button data-action="manualSave">手動保存</button></div>';
+  toolsEl.addEventListener('click', e => { const tool = e.target?.dataset?.tool; if (tool) { gameState.ui.selectedTool = tool; updateToolButtons(); updateHud(); } if (e.target?.dataset?.action === 'rotate') rotateTool(); if (e.target?.dataset?.action === 'manualSave') saveGame('manual'); });
   updateToolButtons();
 }
-function updateToolButtons() { for (const b of toolsEl.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b.dataset.tool === gameState.ui.selectedTool); }
+function updateToolButtons() {
+  for (const b of toolsEl.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b.dataset.tool === gameState.ui.selectedTool);
+  const status = document.getElementById('toolSaveStatus');
+  const time = document.getElementById('toolSaveTime');
+  if (status) status.textContent = gameState.save?.statusText || '未保存';
+  if (time) time.textContent = `最終保存: ${formatSaveTime(gameState.save?.lastSavedAt)}`;
+}
 function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionIndex + 1) % CONFIG.directions.length; updateHud(); }
 
 canvas.addEventListener('mousemove', e => {
@@ -869,7 +1187,8 @@ canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => { e.preventDefault(); setZoom(gameState.camera.zoom + (e.deltaY < 0 ? CONFIG.camera.wheelStep : -CONFIG.camera.wheelStep), e.clientX, e.clientY); }, { passive: false });
 window.addEventListener('keydown', e => { gameState.input.keys[e.code] = true; if (e.code === 'KeyR') rotateTool(); });
 window.addEventListener('keyup', e => { gameState.input.keys[e.code] = false; });
-startBtn.addEventListener('click', initGame);
+startBtn.addEventListener('click', startNewGame);
+loadBtn.addEventListener('click', loadGame);
 zoomInBtn.addEventListener('click', () => setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep));
 zoomOutBtn.addEventListener('click', () => setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep));
 
@@ -877,12 +1196,17 @@ function loop(now) {
   const dt = Math.min(CONFIG.timing.maxDt, (now - gameState.lastTime) / 1000);
   gameState.lastTime = now;
   update(dt);
+  if (gameState.ui.needsHudUpdate) {
+    updateHud();
+    gameState.ui.needsHudUpdate = false;
+  }
   render();
   requestAnimationFrame(loop);
 }
 
 gameState.world.tiles = createWorldTiles();
 buildTools();
+updateStartSaveInfo();
 updateHud();
 requestAnimationFrame(loop);
 </script>
