@@ -37,7 +37,7 @@ const CONFIG = Object.freeze({
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
-  sealStates: { arriving: 'arriving', choosingHuntArea: 'choosingHuntArea', movingToHuntExit: 'movingToHuntExit', hunting: 'hunting', movingToMonster: 'movingToMonster', fighting: 'fighting', returningFromHunt: 'returningFromHunt', choosingFacility: 'choosingFacility', movingToFacility: 'movingToFacility', usingFacility: 'usingFacility', leaving: 'leaving', idle: 'idle', fallen: 'fallen', rescuing: 'rescuing', carryingFallenSeal: 'carryingFallenSeal' },
+  sealStates: { arrivingFromSea: 'arrivingFromSea', choosingArrivalAction: 'choosingArrivalAction', movingToFacility: 'movingToFacility', usingFacility: 'usingFacility', choosingHuntArea: 'choosingHuntArea', movingToHuntArea: 'movingToHuntArea', hunting: 'hunting', movingToMonster: 'movingToMonster', fighting: 'fighting', returningFromHunt: 'returningFromHunt', choosingPostHuntFacility: 'choosingPostHuntFacility', leavingToSea: 'leavingToSea', idle: 'idle', fallen: 'fallen', rescuing: 'rescuing', carryingFallenSeal: 'carryingFallenSeal', arriving: 'arriving', movingToHuntExit: 'movingToHuntExit', choosingFacility: 'choosingFacility', leaving: 'leaving' },
   CALENDAR: { WEEK_DURATION_MS: 12000, WEEKS_PER_MONTH: 4, MONTHS_PER_YEAR: 12 },
   TIME: { SPEED_OPTIONS: [0, 1, 2, 4], DEFAULT_SCALE: 1 },
   ASSETS: { paths: {
@@ -52,7 +52,7 @@ const CONFIG = Object.freeze({
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   knownness: { initial: 0, huntRewardPerMonthlyHunt: 4, monthlyBaseReward: 2, satisfyingVisitReward: 3, duplicateRelicReward: 1, unlockTargetId: 'visitor-tategoto' },
-  movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['rescue', 'carry'] },
+  movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, waterCost: 3, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['rescue', 'carry'] },
   timing: { targetFps: 60, maxDt: 0.05, uiMs: 120 },
   placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75 },
   directions: [ { name: 'N', dx: 0, dy: -1 }, { name: 'E', dx: 1, dy: 0 }, { name: 'S', dx: 0, dy: 1 }, { name: 'W', dx: -1, dy: 0 } ],
@@ -73,6 +73,19 @@ const CONFIG = Object.freeze({
     blacksmith: { label: '鍛冶屋', spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05 }
   },
   ROUTES: { entryCorridor: { id: 'south_entry', type: 'entry', waypoints: [{ x: 14, y: 30 }, { x: 14, y: 24 }, { x: 14, y: 17 }] }, huntingCorridors: [ { id: 'coast_exit', type: 'hunting', areaId: 'coast', waypoints: [{ x: 14, y: 17 }, { x: 24, y: 17 }, { x: 24, y: 16 }, { x: 34, y: 16 }, { x: 38, y: 16 }] } ] },
+  VISITORS: { ARRIVAL: {
+    seaSpawnPoints: [{ x: 12, y: 33 }, { x: 14, y: 33 }, { x: 16, y: 33 }],
+    shoreLandingPoints: [{ x: 14, y: 27 }, { x: 13, y: 27 }, { x: 15, y: 27 }],
+    seaExitPoints: [{ x: 12, y: 33 }, { x: 14, y: 33 }, { x: 16, y: 33 }],
+    initialCarriedGMin: 70,
+    initialCarriedGMax: 140,
+    initialHpRatioMin: 0.62,
+    initialHpRatioMax: 0.92,
+    preHuntFacilityChance: 0.72,
+    lowHpFacilityHpRatio: 0.58,
+    restaurantHpRatio: 0.82,
+    facilityTypes: { lowHp: ['inn'], reducedHp: ['restaurant', 'inn'], gear: ['blacksmith'], optional: ['restaurant', 'blacksmith', 'inn'] }
+  } },
   visitor: { maxActive: 2, spawnInterval: 16, spawnIntervalFavorReduction: 0.04, minSpawnIntervalMultiplier: 0.55, returnBaseWeight: 1, returnFavorWeight: 0.18, inactiveWeightBonus: 3, safeLeaveFavor: 2, entrySpawn: { x: 14, y: 24 }, spawnSearchRadius: 8, minStayMs: 45000, maxStayMs: 110000, maxStayFavorBonusMs: 25000, maxStayFavorMsPerFavor: 1000, satisfyingMinFacilities: 1, satisfyingMinHunts: 1, enoughHuntsForLeave: 2, profiles: [
     { id: 'visitor-goma', name: 'ゴマ', personality: 'balanced', unlockedAtKnownness: 0, baseStats: { maxHp: 130, attack: 18, defense: 5 }, favor: 0, visits: 0, level: 1, exp: 0 },
     { id: 'visitor-kurakake', name: 'クラカケ', personality: 'cautious', unlockedAtKnownness: 0, baseStats: { maxHp: 120, attack: 17, defense: 6 }, favor: 0, visits: 0, level: 1, exp: 0 },

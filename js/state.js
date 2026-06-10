@@ -216,9 +216,17 @@ function normalizeSeals(seals) {
   const states = Object.values(CONFIG.sealStates ?? {});
   return seals.map((s, index) => normalizeSeal(s, index)).filter(Boolean).map(seal => {
     if (seal.state === 'resting') seal.state = 'usingFacility';
-    if (!states.includes(seal.state)) seal.state = seal.type === 'visitor' ? 'arriving' : 'choosingHuntArea';
+    if (!states.includes(seal.state)) seal.state = seal.type === 'visitor' ? 'arrivingFromSea' : 'choosingHuntArea';
     return seal;
   });
+}
+
+
+function normalizeSealState(state, isVisitor) {
+  const legacyVisitorStates = { arriving: 'arrivingFromSea', arrived: 'choosingArrivalAction', staying: 'choosingArrivalAction', choosing: 'choosingArrivalAction', choosingFacility: 'choosingPostHuntFacility', leaving: 'leavingToSea', movingToHuntExit: 'movingToHuntArea' };
+  const next = isVisitor ? (legacyVisitorStates[state] ?? state) : (state === 'movingToHuntArea' ? 'movingToHuntExit' : state);
+  const valid = Object.values(CONFIG.sealStates ?? {});
+  return valid.includes(next) ? next : (isVisitor ? 'arrivingFromSea' : 'choosingHuntArea');
 }
 
 function normalizeSeal(s, index) {
@@ -245,9 +253,9 @@ function normalizeSeal(s, index) {
     exp: safeFiniteNumber(s?.exp, 0, 0),
     level: clampInteger(s?.level, 1, Number.MAX_SAFE_INTEGER, 1),
     favor: safeFiniteNumber(s?.favor, 0, 0),
-    state: String(s?.state || (isVisitor ? 'arriving' : 'choosingHuntArea')),
+    state: normalizeSealState(String(s?.state || (isVisitor ? 'arrivingFromSea' : 'choosingHuntArea')), isVisitor),
     targetId: s?.targetId ? String(s.targetId) : null,
-    target: s?.target ? { x: safeFiniteNumber(s.target?.x, entry.x), y: safeFiniteNumber(s.target?.y, entry.y) } : null,
+    target: s?.target ? { x: safeFiniteNumber(s.target?.x, entry.x), y: safeFiniteNumber(s.target?.y, entry.y), reason: String(s.target?.reason ?? '') } : null,
     selectedHuntAreaId: s?.selectedHuntAreaId ? String(s.selectedHuntAreaId) : null,
     visits: clampInteger(s?.visits, 0, Number.MAX_SAFE_INTEGER, isVisitor ? 1 : 0),
     facilityUseCounts: normalizeFacilityUseCounts(s?.facilityUseCounts),
@@ -267,6 +275,9 @@ function normalizeSeal(s, index) {
     huntsThisVisit: clampInteger(s?.huntsThisVisit, 0, Number.MAX_SAFE_INTEGER, 0),
     facilitiesUsedThisVisit: clampInteger(s?.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0),
     wantsToLeave: s?.wantsToLeave === true,
+    currentAction: s?.currentAction ? String(s.currentAction) : '',
+    choosingTicks: clampInteger(s?.choosingTicks, 0, Number.MAX_SAFE_INTEGER, 0),
+    lastTransitionLogKey: s?.lastTransitionLogKey ? String(s.lastTransitionLogKey) : '',
     path: [],
     pathTargetKey: null,
     warnedPathFallback: s?.warnedPathFallback === true
@@ -799,9 +810,31 @@ function getVillageEntryPoint() {
   return gridToWorld(CONFIG.world.villageEntryX, CONFIG.world.villageEntryY);
 }
 
+function pointFromConfigTile(point, fallback) {
+  const source = point && Number.isFinite(Number(point.x)) && Number.isFinite(Number(point.y)) ? point : fallback;
+  return gridToWorld(clampInteger(source?.x, 0, CONFIG.world.cols - 1, CONFIG.world.safeX), clampInteger(source?.y, 0, CONFIG.world.rows - 1, CONFIG.world.safeY));
+}
+
+function pickConfigPoint(points, fallback) {
+  const list = (Array.isArray(points) ? points : []).filter(point => Number.isFinite(Number(point?.x)) && Number.isFinite(Number(point?.y)));
+  return pointFromConfigTile(list.length > 0 ? list[Math.floor(Math.random() * list.length)] : fallback, fallback);
+}
+
 function getVisitorPreferredSpawnPoint() {
-  const point = CONFIG.visitor?.entrySpawn;
-  return gridToWorld(point?.x ?? CONFIG.world.safeX, point?.y ?? CONFIG.world.safeY);
+  return pickConfigPoint(CONFIG.VISITORS?.ARRIVAL?.seaSpawnPoints, CONFIG.visitor?.entrySpawn ?? { x: CONFIG.world.safeX, y: CONFIG.world.safeY });
+}
+
+function getVisitorShoreLandingPoint() {
+  return pickConfigPoint(CONFIG.VISITORS?.ARRIVAL?.shoreLandingPoints, { x: CONFIG.world.villageEntryX, y: CONFIG.world.villageEntryY });
+}
+
+function getVisitorSeaExitPoint() {
+  return pickConfigPoint(CONFIG.VISITORS?.ARRIVAL?.seaExitPoints ?? CONFIG.VISITORS?.ARRIVAL?.seaSpawnPoints, CONFIG.visitor?.entrySpawn ?? { x: CONFIG.world.safeX, y: CONFIG.world.safeY });
+}
+
+function isWaterWorldPoint(point) {
+  const tile = worldToGrid(point?.x, point?.y);
+  return getTile(tile.x, tile.y)?.terrain === CONFIG.tileState.terrainWater;
 }
 
 function findNearestPassableSpawnPoint(preferredPoint) {
