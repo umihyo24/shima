@@ -154,14 +154,9 @@ function chooseUnlockedVisitorProfile() {
 
 function spawnVisitorFromProfile(profile) {
   if (!profile) return null;
-  const preferred = getVisitorPreferredSpawnPoint();
-  const start = findNearestPassableSpawnPoint(preferred);
-  if (!start) {
-    if (!gameState.warnings?.visitorSpawnBlocked) {
-      gameState.warnings = gameState.warnings ?? {};
-      gameState.warnings.visitorSpawnBlocked = true;
-      logMessage('訪問者の入口が水上または通行不能なため、今回は来訪を見送りました。');
-    }
+  const start = getVisitorPreferredSpawnPoint();
+  if (!start || !isWaterWorldPoint(start)) {
+    logVisitorIssue(null, 'no-sea-spawn', '訪問者の海上出現地点がないため、今回は来訪を見送りました。');
     return null;
   }
   gameState.warnings = gameState.warnings ?? {};
@@ -184,20 +179,22 @@ function spawnVisitorFromProfile(profile) {
     maxHp: safeFiniteNumber(base.maxHp, CONFIG.seal.maxHp, 1) + Math.max(0, profile.level - 1) * CONFIG.seal.levelHpGain,
     attack: safeFiniteNumber(base.attack, CONFIG.seal.attack, 0) + Math.max(0, profile.level - 1) * CONFIG.seal.levelAttackGain,
     defense: safeFiniteNumber(base.defense, CONFIG.seal.defense, 0),
-    carriedG: 0,
+    carriedG: Math.floor(randomRange(CONFIG.VISITORS.ARRIVAL.initialCarriedGMin, CONFIG.VISITORS.ARRIVAL.initialCarriedGMax + 1)),
     gearBudget: safeFiniteNumber(profile.gearBudget, 0, 0),
     equipment: normalizeEquipment(profile.equipment),
     exp: profile.exp,
     level: profile.level,
     favor: profile.favor,
     visits: profile.visits,
-    state: 'arriving',
+    state: 'arrivingFromSea',
     minStayMs: CONFIG.visitor.minStayMs,
     maxStayMs: CONFIG.visitor.maxStayMs + favorBonus
   }, gameState.seals.length);
-  visitor.hp = visitor.maxHp;
+  const hpRatio = randomRange(CONFIG.VISITORS.ARRIVAL.initialHpRatioMin, CONFIG.VISITORS.ARRIVAL.initialHpRatioMax);
+  visitor.hp = Math.max(1, Math.min(visitor.maxHp, visitor.maxHp * hpRatio));
+  visitor.currentAction = '海から島へ向かっています';
   gameState.seals.push(visitor);
-  logMessage(`${visitor.name}が南の入口から歩いて訪れました。`);
+  logMessage(`${visitor.name}が海から島へ泳いできました。`);
   return visitor;
 }
 
@@ -259,21 +256,26 @@ function updateSeals(dt) {
       seal.state = 'rescuing'; seal.rescueTargetId = fallen.id; seal.target = { x: fallen.x, y: fallen.y }; logMessage(`${seal.name}が${fallen.name}を救助に向かいました。`);
     }
     switch (seal.state) {
-      case 'arriving': updateArriving(seal); break;
+      case 'arriving': seal.state = 'arrivingFromSea'; updateArrivingFromSea(seal, dt); break;
+      case 'arrivingFromSea': updateArrivingFromSea(seal, dt); break;
+      case 'choosingArrivalAction': updateChoosingArrivalAction(seal); break;
       case 'choosingHuntArea': updateChoosingHuntArea(seal); break;
-      case 'movingToHuntExit': updateMovingToHuntExit(seal, dt); break;
+      case 'movingToHuntExit': seal.state = 'movingToHuntArea'; updateMovingToHuntArea(seal, dt); break;
+      case 'movingToHuntArea': updateMovingToHuntArea(seal, dt); break;
       case 'hunting': updateHunting(seal, dt); break;
       case 'movingToMonster': updateMovingToMonster(seal, dt); break;
       case 'fighting': updateFighting(seal, dt); break;
       case 'returningFromHunt': updateReturningFromHunt(seal, dt); break;
-      case 'choosingFacility': updateChoosingFacility(seal, dt); break;
+      case 'choosingFacility': seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; updateChoosingFacility(seal, dt); break;
+      case 'choosingPostHuntFacility': updateChoosingPostHuntFacility(seal, dt); break;
       case 'movingToFacility': updateMovingToFacility(seal, dt); break;
       case 'usingFacility': updateUsingFacility(seal, dt); break;
-      case 'leaving': updateLeaving(seal, dt); break;
+      case 'leaving': seal.state = 'leavingToSea'; updateLeavingToSea(seal, dt); break;
+      case 'leavingToSea': updateLeavingToSea(seal, dt); break;
       case 'idle': updateIdle(seal, dt); break;
       case 'rescuing': updateRescuing(seal, dt); break;
       case 'carryingFallenSeal': updateCarrying(seal, dt); break;
-      default: seal.state = seal.type === 'visitor' ? 'arriving' : 'choosingHuntArea'; seal.target = null; break;
+      default: seal.state = seal.type === 'visitor' ? 'choosingArrivalAction' : 'choosingHuntArea'; seal.target = null; break;
     }
   }
 }
@@ -281,21 +283,80 @@ function updateSeals(dt) {
 function updateFallen(seal, dt) {
   seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, seal.hp + CONFIG.seal.fallenRecoveryPerSecond * dt);
   if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.standHpRatio && !isBeingCarried(seal.id)) {
-    seal.state = 'returningFromHunt';
+    seal.currentAction = '村へ戻っています'; seal.state = 'returningFromHunt';
     buildRouteToVillage(seal);
     logMessage(`${seal.name}が自力で起き上がりました。`);
   }
 }
 
-function updateArriving(seal, dt) {
+function logVisitorIssue(seal, key, message) {
+  gameState.warnings = gameState.warnings ?? {};
+  const scopedKey = `${seal?.id ?? 'global'}:${key}`;
+  if (gameState.warnings[scopedKey] || seal?.lastTransitionLogKey === key) return;
+  gameState.warnings[scopedKey] = true;
+  if (seal) seal.lastTransitionLogKey = key;
+  logMessage(message);
+}
+
+function setVisitorIdleWithReason(seal, key, message) {
+  if (!seal) return;
+  seal.state = 'idle';
+  seal.target = null;
+  seal.path = [];
+  seal.currentAction = message;
+  logVisitorIssue(seal, key, message);
+}
+
+function updateArrivingFromSea(seal, dt) {
   seal.leaveAfterFacilityUse = false;
-  if (!Array.isArray(seal.path) || seal.path.length <= 0) {
-    const village = getVillageEntryPoint();
-    if (!setSealDestination(seal, village, 'arriving')) { persistAndRemoveVisitor(seal); return; }
-    seal.wanderTimer = CONFIG.seal.wanderSeconds;
+  seal.currentAction = '海から島へ向かっています';
+  if (!seal?.target || !Array.isArray(seal.path) || seal.path.length <= 0) {
+    const landing = getVisitorShoreLandingPoint();
+    if (!landing) { setVisitorIdleWithReason(seal, 'no-landing-point', `${seal.name}は上陸地点が見つからず待機します。`); return; }
+    if (!setSealDestination(seal, landing, 'sea-arrival')) { setVisitorIdleWithReason(seal, 'no-path-to-landing', `${seal.name}は上陸地点までの経路が見つからず待機します。`); return; }
   }
   updateSealMovement(seal, dt * 1000);
 }
+
+function updateArriving(seal, dt) { updateArrivingFromSea(seal, dt); }
+
+function chooseArrivalActionForVisitor(seal) {
+  if (!seal || seal.type !== 'visitor') return { type: 'hunt' };
+  const arrival = CONFIG.VISITORS?.ARRIVAL ?? {};
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal.hp, 0, 0) / effectiveMaxHp : 0;
+  const typeConfig = arrival.facilityTypes ?? {};
+  if (hpRatio <= safeFiniteNumber(arrival.lowHpFacilityHpRatio, 0.58, 0)) {
+    const inn = getBestFacilityForSeal(seal, typeConfig.lowHp ?? ['inn']);
+    if (inn) return { type: 'facility', facility: inn, action: '宿屋で回復します' };
+  }
+  const blacksmith = getBestFacilityForSeal(seal, typeConfig.gear ?? ['blacksmith']);
+  if (blacksmith && chooseBestAffordableEquipmentUpgrade(seal, blacksmith)) return { type: 'facility', facility: blacksmith, action: '鍛冶屋で装備を見ます' };
+  if (hpRatio < safeFiniteNumber(arrival.restaurantHpRatio, 0.82, 0) || Math.random() < safeFiniteNumber(arrival.preHuntFacilityChance, 0, 0)) {
+    const facility = getBestFacilityForSeal(seal, hpRatio < safeFiniteNumber(arrival.restaurantHpRatio, 0.82, 0) ? (typeConfig.reducedHp ?? ['restaurant', 'inn']) : (typeConfig.optional ?? ['restaurant', 'blacksmith', 'inn']));
+    if (facility) return { type: 'facility', facility, action: `${CONFIG.facilities[facility.type]?.label ?? '施設'}へ向かいます` };
+  }
+  return { type: 'hunt' };
+}
+
+function updateChoosingArrivalAction(seal) {
+  seal.choosingTicks = clampInteger(seal?.choosingTicks, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  const choice = chooseArrivalActionForVisitor(seal);
+  if (choice?.type === 'facility' && choice.facility) {
+    const facility = (gameState.world.objects ?? []).find(o => o?.id === choice.facility.id);
+    if (facility && isFacilityUsable(facility) && setSealDestination(seal, facilityInteractionPoint(facility), 'facility')) {
+      seal.targetId = facility.id;
+      seal.currentAction = choice.action ?? '施設へ向かいます';
+      seal.state = 'movingToFacility';
+      seal.choosingTicks = 0;
+      return;
+    }
+    logVisitorIssue(seal, 'no-usable-facility', `${seal.name}は使える施設への経路がなく狩りへ向かいます。`);
+  }
+  seal.choosingTicks = 0;
+  updateChoosingHuntArea(seal);
+}
+
 
 function updateChoosingHuntArea(seal) {
   const areaId = seal?.selectedHuntAreaId ?? 'coast';
@@ -313,16 +374,19 @@ function updateChoosingHuntArea(seal) {
     warnNoHuntCorridor(seal);
     return;
   }
-  seal.state = monster ? 'movingToMonster' : 'movingToHuntExit';
+  seal.currentAction = monster ? '獲物へ向かっています' : '狩場へ向かっています';
+  seal.state = monster ? 'movingToMonster' : 'movingToHuntArea';
 }
 
-function updateMovingToHuntExit(seal, dt) {
-  if (!seal?.target || !Array.isArray(seal.path)) {
+function updateMovingToHuntArea(seal, dt) {
+  if (!seal?.target || !Array.isArray(seal.path) || seal.path.length <= 0) {
     const target = randomHuntAreaPoint(seal?.selectedHuntAreaId ?? 'coast');
     if (!setSealDestination(seal, target, 'hunt-wander')) { warnNoHuntCorridor(seal); return; }
   }
   updateSealMovement(seal, dt * 1000);
 }
+
+function updateMovingToHuntExit(seal, dt) { updateMovingToHuntArea(seal, dt); }
 
 function updateHunting(seal, dt) {
   seal.huntTimer = safeFiniteNumber(seal.huntTimer, 0, 0) + dt;
@@ -347,7 +411,7 @@ function updateHunting(seal, dt) {
 
 function sendSealBackThroughHuntCorridor(seal) {
   if (!buildRouteToVillage(seal)) { warnNoHuntCorridor(seal); return; }
-  seal.state = 'returningFromHunt';
+  seal.currentAction = '村へ戻っています'; seal.state = 'returningFromHunt';
 }
 
 function claimNearestMonster(seal, areaId = null) {
@@ -359,10 +423,10 @@ function claimNearestMonster(seal, areaId = null) {
 
 function updateMovingToMonster(seal, dt) {
   const monster = (gameState.monsters ?? []).find(m => m?.id === seal.targetId);
-  if (!monster || monster.hp <= 0) { seal.targetId = null; seal.state = 'hunting'; return; }
+  if (!monster || monster.hp <= 0) { seal.targetId = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
   if (shouldReturnFromHunt(seal)) { monster.assignedSealId = null; seal.targetId = null; sendSealBackThroughHuntCorridor(seal); return; }
   if (!seal.target || seal.pathTargetKey !== `${worldToGrid(monster.x, monster.y).x},${worldToGrid(monster.x, monster.y).y}:monster`) {
-    if (!setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster')) { monster.assignedSealId = null; seal.targetId = null; seal.state = 'hunting'; return; }
+    if (!setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster')) { monster.assignedSealId = null; seal.targetId = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
   }
   updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, monster.x, monster.y) <= CONFIG.monster.contactDistance) { seal.state = 'fighting'; seal.combatTimer = 0; seal.monsterTimer = 0; }
@@ -370,7 +434,12 @@ function updateMovingToMonster(seal, dt) {
 
 function updateFighting(seal, dt) {
   const monster = (gameState.monsters ?? []).find(m => m?.id === seal.targetId);
-  if (!monster || monster.hp <= 0) { seal.targetId = null; if (seal.carriedG > 0) sendSealBackThroughHuntCorridor(seal); else seal.state = 'hunting'; return; }
+  if (!monster || monster.hp <= 0) {
+    seal.targetId = null;
+    if (seal.carriedG > 0) sendSealBackThroughHuntCorridor(seal);
+    else { seal.currentAction = '探索中'; seal.state = 'hunting'; }
+    return;
+  }
   seal.combatTimer += dt; seal.monsterTimer += dt;
   if (seal.combatTimer >= CONFIG.combat.sealAttackSeconds) {
     seal.combatTimer = 0;
@@ -388,7 +457,7 @@ function updateFighting(seal, dt) {
       gameState.frameTemps.toRemoveMonsters.push(monster.id);
       logMessage(`${seal.name}がカニを倒して${CONFIG.monster.rewardG}Gを獲得！`);
       seal.targetId = null;
-      if (shouldContinueHunting(seal)) seal.state = 'hunting'; else sendSealBackThroughHuntCorridor(seal);
+      if (shouldContinueHunting(seal)) { seal.currentAction = '探索中'; seal.state = 'hunting'; } else sendSealBackThroughHuntCorridor(seal);
       return;
     }
   }
@@ -400,7 +469,7 @@ function updateFighting(seal, dt) {
 }
 
 function updateReturningFromHunt(seal, dt) {
-  if (!seal?.target || !Array.isArray(seal.path)) {
+  if (!seal?.target || !Array.isArray(seal.path) || seal.path.length <= 0) {
     if (!buildRouteToVillage(seal)) { warnNoHuntCorridor(seal); return; }
   }
   updateSealMovement(seal, dt * 1000);
@@ -420,14 +489,20 @@ function updateChoosingFacility(seal, dt) {
   seal.state = 'movingToFacility';
 }
 
+function updateChoosingPostHuntFacility(seal, dt) {
+  if (seal?.type === 'visitor') seal.wanderTimer = 0;
+  updateChoosingFacility(seal, dt);
+}
+
 function updateMovingToFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
-  if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
+  if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const target = facilityInteractionPoint(facility);
-  if (!setSealDestination(seal, target, 'facility')) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
+  if (!setSealDestination(seal, target, 'facility')) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, target.x, target.y) <= CONFIG.seal.contactDistance) {
     seal.actionTimer = facility.type === 'inn' ? CONFIG.seal.restSeconds : CONFIG.seal.spendSeconds;
+    seal.currentAction = `${CONFIG.facilities[facility.type]?.label ?? '施設'}を利用中`;
     seal.state = 'usingFacility';
   }
 }
@@ -435,7 +510,7 @@ function updateMovingToFacility(seal, dt) {
 function updateUsingFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (facility?.type === 'inn') { updateResting(seal, dt); return; }
-  if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
+  if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   seal.actionTimer -= dt;
   if (seal.actionTimer > 0) return;
   const upgrade = chooseBestAffordableEquipmentUpgrade(seal, facility);
@@ -460,7 +535,7 @@ function updateUsingFacility(seal, dt) {
 
 function updateResting(seal, dt) {
   const inn = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
-  if (!inn || !isFacilityUsable(inn)) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
+  if (!inn || !isFacilityUsable(inn)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const bonus = facilityBonus(inn);
   seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, seal.hp + CONFIG.facilities.inn.healPerSecond * (1 + bonus) * dt);
   seal.actionTimer -= dt;
@@ -478,7 +553,12 @@ function updateResting(seal, dt) {
 }
 
 function handleNoUsableFacility(seal) {
-  if (seal?.type === 'visitor') { afterVillageActivity(seal); return; }
+  if (seal?.type === 'visitor') {
+    logVisitorIssue(seal, 'no-usable-facility', `${seal.name}は使える施設がないため狩りへ向かいます。`);
+    if (visitorShouldLeave(seal)) { seal.currentAction = '海へ帰っています'; seal.state = 'leavingToSea'; buildRouteToVillage(seal); return; }
+    updateChoosingHuntArea(seal);
+    return;
+  }
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
   if (hpRatio <= CONFIG.seal.lowHpRatio) {
@@ -510,29 +590,32 @@ function afterVillageActivity(seal) {
   if (seal?.type === 'visitor') {
     seal.wantsToLeave = visitorShouldLeave(seal);
     if (seal.wantsToLeave) {
-      seal.state = 'leaving';
+      seal.currentAction = '海へ帰っています';
+      seal.state = 'leavingToSea';
       buildRouteToVillage(seal);
       return;
     }
-    seal.wanderTimer = CONFIG.seal.wanderSeconds;
-    setSealDestination(seal, villageWanderPoint(), 'visitor-stay');
-    seal.state = 'choosingFacility';
+    seal.wanderTimer = 0;
+    seal.state = 'choosingPostHuntFacility';
+    updateChoosingPostHuntFacility(seal, 0);
     return;
   }
   seal.state = 'choosingHuntArea';
 }
 
-function updateLeaving(seal, dt) {
-  if (!seal?.target || !Array.isArray(seal.path)) {
-    if (!buildRouteToVillage(seal)) { persistAndRemoveVisitor(seal); return; }
+function updateLeavingToSea(seal, dt) {
+  if (!seal?.target || !Array.isArray(seal.path) || seal.path.length <= 0) {
+    if (!buildRouteToVillage(seal)) { setVisitorIdleWithReason(seal, 'no-passable-route', `${seal.name}は海へ帰る経路が見つからず待機します。`); return; }
   }
   updateSealMovement(seal, dt * 1000);
 }
 
+function updateLeaving(seal, dt) { updateLeavingToSea(seal, dt); }
+
 function persistAndRemoveVisitor(seal) {
   if (seal?.type !== 'visitor') return;
   writeBackVisitorProfile(seal);
-  logMessage(`${seal.name}が南の入口から帰りました。`);
+  logMessage(`${seal.name}が海へ帰りました。`);
   gameState.seals = (gameState.seals ?? []).filter(item => item?.id !== seal.id);
   if (gameState.ui?.selectedSealId === seal.id) gameState.ui.selectedSealId = null;
 }
@@ -618,10 +701,9 @@ function buildRouteToArea(seal, areaId) {
 
 function buildRouteToVillage(seal) {
   if (!seal) return false;
-  const target = seal.type === 'visitor' && seal.state === 'leaving'
-    ? (findNearestPassableSpawnPoint(getVisitorPreferredSpawnPoint()) ?? getVillageEntryPoint())
-    : getVillageEntryPoint();
-  return setSealDestination(seal, target, seal.type === 'visitor' && seal.state === 'leaving' ? 'leaving' : 'village-route');
+  const isLeavingVisitor = seal.type === 'visitor' && (seal.state === 'leaving' || seal.state === 'leavingToSea');
+  const target = isLeavingVisitor ? getVisitorSeaExitPoint() : getVillageEntryPoint();
+  return setSealDestination(seal, target, isLeavingVisitor ? 'leaving-sea' : 'village-route');
 }
 
 function setSealDestination(seal, worldPosition, reason) {
@@ -632,7 +714,7 @@ function setSealDestination(seal, worldPosition, reason) {
   const key = `${goal.x},${goal.y}:${next.reason}`;
   seal.target = next;
   if (seal.pathTargetKey === key && Array.isArray(seal.path)) return true;
-  const path = findPath(worldToGrid(seal.x, seal.y), goal, { seal, reason: next.reason });
+  const path = findPath(worldToGrid(seal.x, seal.y), goal, { seal, reason: next.reason, allowWater: ['sea-arrival', 'leaving-sea'].includes(next.reason) });
   if (Array.isArray(path)) return setSealPath(seal, path, next.reason);
   if ((CONFIG.movement.directFallbackReasons ?? []).includes(next.reason)) return setSealPath(seal, [next], `${next.reason}-direct`);
   seal.path = [];
@@ -691,10 +773,21 @@ function updateSealMovement(seal, deltaMs) {
 function advanceSealStateAfterArrival(seal) {
   if (!seal) return;
   seal.path = [];
-  if (seal.state === 'arriving') { seal.state = 'choosingFacility'; return; }
-  if (seal.state === 'movingToHuntExit') { seal.target = null; seal.state = 'hunting'; return; }
-  if (seal.state === 'returningFromHunt') { seal.target = null; seal.targetId = null; seal.state = 'choosingFacility'; return; }
-  if (seal.state === 'leaving') {
+  if (seal.state === 'arriving' || seal.state === 'arrivingFromSea') {
+    seal.target = null;
+    seal.state = seal.type === 'visitor' ? 'choosingArrivalAction' : 'choosingFacility';
+    if (seal.type === 'visitor') updateChoosingArrivalAction(seal);
+    return;
+  }
+  if (seal.state === 'movingToHuntExit' || seal.state === 'movingToHuntArea') { seal.target = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
+  if (seal.state === 'returningFromHunt') {
+    seal.target = null;
+    seal.targetId = null;
+    seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility';
+    if (seal.type === 'visitor') updateChoosingPostHuntFacility(seal, 0);
+    return;
+  }
+  if (seal.state === 'leaving' || seal.state === 'leavingToSea') {
     addFavor(seal, CONFIG.visitor.safeLeaveFavor);
     if (clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) >= CONFIG.visitor.satisfyingMinFacilities || clampInteger(seal.huntsThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) >= CONFIG.visitor.satisfyingMinHunts) {
       addFavor(seal, CONFIG.knownness.satisfyingVisitReward);
@@ -754,7 +847,7 @@ function getTileMoveCost(tile, options = {}) {
   const y = clampInteger(tile?.y, 0, CONFIG.world.rows - 1, -1);
   const cell = getTile(x, y);
   if (!cell || objectAt(x, y)) return Infinity;
-  if (cell.terrain === CONFIG.tileState.terrainWater) return Infinity;
+  if (cell.terrain === CONFIG.tileState.terrainWater) return options.allowWater === true ? CONFIG.movement.waterCost : Infinity;
   if (roadAt(x, y)) return CONFIG.movement.roadCost;
   if (cell.terrain === CONFIG.tileState.terrainOutside) return CONFIG.movement.outsideCost;
   if (cell.terrain === CONFIG.tileState.terrainLand && cell.buildState === CONFIG.tileState.buildable && cell.obstacle === null) return CONFIG.movement.buildableCost;
