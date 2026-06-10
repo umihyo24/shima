@@ -12,7 +12,8 @@ function getSerializableGameState() {
     ui: {
       selectedTool: getTool(gameState.ui?.selectedTool)?.id ?? 'road',
       directionIndex: clampInteger(gameState.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2),
-      selectedSealId: gameState.ui?.selectedSealId ? String(gameState.ui.selectedSealId) : null
+      selectedSealId: gameState.ui?.selectedSealId ? String(gameState.ui.selectedSealId) : null,
+      selectedDungeonId: gameState.ui?.selectedDungeonId ? String(gameState.ui.selectedDungeonId) : null
     },
     world: {
       tiles: cloneSerializable(gameState.world?.tiles, []),
@@ -23,6 +24,7 @@ function getSerializableGameState() {
     },
     seals: cloneSerializable((gameState.seals ?? []).map(seal => { const copy = { ...seal }; delete copy.path; delete copy.pathTargetKey; delete copy.targetFacility; return copy; }), []),
     visitorProfiles: cloneSerializable(gameState.visitorProfiles, []),
+    dungeons: cloneSerializable(normalizeDungeons(gameState.dungeons), []),
     relicInventory: cloneSerializable(normalizeRelicInventory(gameState.relicInventory), []),
     shopCatalog: cloneSerializable(normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory), { unlockedItemIds: [], discoveredAt: {} }),
     village: { knownness: safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0), clearCount: clampInteger(gameState.village?.clearCount, 0, Number.MAX_SAFE_INTEGER, 0) },
@@ -43,7 +45,8 @@ function getSerializableGameState() {
     timers: {
       spawn: safeFiniteNumber(gameState.timers?.spawn, 0, 0),
       monsterSpawn: safeFiniteNumber(gameState.timers?.monsterSpawn, gameState.timers?.spawn ?? 0, 0),
-      visitorSpawn: safeFiniteNumber(gameState.timers?.visitorSpawn, 0, 0)
+      visitorSpawn: safeFiniteNumber(gameState.timers?.visitorSpawn, 0, 0),
+      dungeonSpawnMs: safeFiniteNumber(gameState.timers?.dungeonSpawnMs, 0, 0)
     },
     save: {
       autoSaveTimerMs: safeFiniteNumber(gameState.save?.autoSaveTimerMs, 0, 0),
@@ -137,6 +140,7 @@ function applyLoadedGameState(data) {
   gameState.ui.selectedTool = getTool(loaded.ui?.selectedTool)?.id ?? 'road';
   gameState.ui.directionIndex = clampInteger(loaded.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2);
   gameState.ui.selectedSealId = loaded.ui?.selectedSealId ? String(loaded.ui.selectedSealId) : null;
+  gameState.ui.selectedDungeonId = loaded.ui?.selectedDungeonId ? String(loaded.ui.selectedDungeonId) : null;
   gameState.world.tiles = data?.version < 4 ? generateInitialMap() : normalizeTiles(loaded.world?.tiles);
   protectOpenCorridors(gameState.world);
   gameState.world.roads = normalizeRoads(loaded.world?.roads);
@@ -161,12 +165,15 @@ function applyLoadedGameState(data) {
   gameState.stats.monthlyKnownnessGained = safeFiniteNumber(loaded.stats?.monthlyKnownnessGained, 0, 0);
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(loaded.stats?.monthlyPlayerIncome, 0, 0);
   gameState.monsters = normalizeMonsters(loaded.monsters);
+  gameState.dungeons = normalizeDungeons(loaded.dungeons);
   rebuildLoadedSealRoutes();
   if (!(gameState.seals ?? []).some(seal => seal?.id === gameState.ui.selectedSealId)) gameState.ui.selectedSealId = null;
+  if (!getDungeonById(gameState.ui.selectedDungeonId)) gameState.ui.selectedDungeonId = null;
   gameState.logs = Array.isArray(loaded.logs) ? loaded.logs.map(text => String(text)).slice(0, CONFIG.MAX_LOGS) : [];
   gameState.timers.spawn = safeFiniteNumber(loaded.timers?.spawn, 0, 0);
   gameState.timers.monsterSpawn = safeFiniteNumber(loaded.timers?.monsterSpawn, loaded.timers?.spawn ?? 0, 0);
   gameState.timers.visitorSpawn = safeFiniteNumber(loaded.timers?.visitorSpawn, 0, 0);
+  gameState.timers.dungeonSpawnMs = safeFiniteNumber(loaded.timers?.dungeonSpawnMs, 0, 0);
   initializeAssetRegistry();
   gameState.save.autoSaveTimerMs = safeFiniteNumber(loaded.save?.autoSaveTimerMs, 0, 0);
   gameState.save.lastSavedAt = safeFiniteNumber(data?.savedAt, null, 0) || null;

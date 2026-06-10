@@ -28,9 +28,31 @@ function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionInd
 function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
 function setGameSpeed(speed) { gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; updateToolButtons(); updateHud(); }
 
+function handleDungeonPanelAction(event) {
+  const button = event.target?.closest?.('[data-dungeon-action]');
+  if (!button || !sealCardsEl?.contains(button)) return;
+  if (event.type === 'click' && button.__dungeonActionHandled === true) return;
+  if (event.type === 'pointerdown') button.__dungeonActionHandled = true;
+  event.preventDefault();
+  event.stopPropagation();
+  const action = button.dataset?.dungeonAction;
+  if (action === 'start') startDungeon(button.dataset?.dungeonId);
+  if (action === 'close') {
+    gameState.ui.selectedDungeonId = null;
+    updateHud();
+  }
+}
+
 function sealAtWorldPoint(point) {
   if (!point) return null;
   return [...(gameState.seals ?? [])].reverse().find(seal => seal && distance(point.x, point.y, seal.x, seal.y) <= CONFIG.seal.contactDistance * 1.4) ?? null;
+}
+
+function placementClickHasPriority(tool, tile) {
+  if (!tool || !tile) return false;
+  const terrain = getTile(tile.x, tile.y)?.terrain;
+  if (terrain === CONFIG.tileState.terrainOutside) return false;
+  return isPlacementModeActive();
 }
 
 function isPlacementModeActive() {
@@ -60,17 +82,29 @@ window.addEventListener('mouseup', e => {
   gameState.camera.dragging = false;
   if (gameState.camera.dragMoved || gameState.phase !== CONFIG.phase.playing) return;
   updateMouse(e.clientX, e.clientY);
-  const clickedSeal = sealAtWorldPoint(gameState.input.mouseWorld);
-  if (clickedSeal?.id) {
-    gameState.ui.selectedSealId = clickedSeal.id;
+  const t = getTool(gameState.ui.selectedTool);
+  if (placementClickHasPriority(t, gameState.input.mouseTile)) {
+    gameState.ui.selectedDungeonId = null;
+    if (t?.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
+    else if (t?.kind === 'clear') clearLandAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
+    else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
     updateHud();
     return;
   }
-  const t = getTool(gameState.ui.selectedTool);
+  const dungeon = selectDungeonAtWorldPosition(gameState.input.mouseWorld?.x, gameState.input.mouseWorld?.y);
+  const clickedSeal = sealAtWorldPoint(gameState.input.mouseWorld);
+  if (dungeon?.id && (!clickedSeal || distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, dungeon.x, dungeon.y) <= distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedSeal.x, clickedSeal.y))) {
+    updateHud();
+    return;
+  }
+  if (clickedSeal?.id) {
+    gameState.ui.selectedSealId = clickedSeal.id;
+    gameState.ui.selectedDungeonId = null;
+    updateHud();
+    return;
+  }
   if (!isPlacementModeActive()) gameState.ui.selectedSealId = null;
-  if (t?.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
-  else if (t?.kind === 'clear') clearLandAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
-  else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
+  gameState.ui.selectedDungeonId = null;
   updateHud();
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -81,5 +115,7 @@ startBtn.addEventListener('click', startNewGame);
 loadBtn.addEventListener('click', loadGame);
 zoomInBtn.addEventListener('click', () => setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep));
 zoomOutBtn.addEventListener('click', () => setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep));
+sealCardsEl.addEventListener('pointerdown', handleDungeonPanelAction);
+sealCardsEl.addEventListener('click', handleDungeonPanelAction);
 
 }

@@ -36,3 +36,10 @@
 .selectedSealCard { max-width: 520px; line-height: 1.48; }
 .emptySealCard { max-width: 320px; color: #cdefff; }
 .selectedSealCard hr { border: 0; border-top: 1px solid rgba(255,255,255,.16); margin: 8px 0; }
+.dungeonPanel { max-width: 560px; line-height: 1.5; pointer-events: auto; }
+.dungeonButtons { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
+.warnText { color: #ffd47a; font-weight: 700; }
+.sealCards { pointer-events: auto; }
+.bottom { z-index: 20; }
+.sealCards, .dungeonPanel, .dungeonButtons, .dungeonButtons button { pointer-events: auto; }
+.dungeonButtons button { touch-action: manipulation; }
