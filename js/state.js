@@ -7,7 +7,6 @@ function createNewGameState() {
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
     ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
-    gates: cloneSerializable(CONFIG.gates, { entryGate: null, huntGates: [] }),
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
     monsters: [],
@@ -105,43 +104,21 @@ function normalizeObjects(objects) {
   }).filter(Boolean);
 }
 
-function normalizeGates(gates) {
-  const fallback = cloneSerializable(CONFIG.gates, { entryGate: null, huntGates: [] });
-  const entrySource = gates?.entryGate ?? fallback.entryGate;
-  const entryGate = entrySource ? {
-    id: String(entrySource?.id || fallback.entryGate?.id || 'entry_south'),
-    x: clampInteger(entrySource?.x, 0, CONFIG.world.cols - 1, fallback.entryGate?.x ?? CONFIG.world.safeX),
-    y: clampInteger(entrySource?.y, 0, CONFIG.world.rows - 1, fallback.entryGate?.y ?? CONFIG.world.safeY)
-  } : null;
-  const huntSource = Array.isArray(gates?.huntGates) && gates.huntGates.length > 0 ? gates.huntGates : fallback.huntGates;
-  const huntGates = (huntSource ?? []).map((gate, index) => ({
-    id: String(gate?.id || `hunt_gate_${index + 1}`),
-    village: normalizeGatePoint(gate?.village, fallback.huntGates?.[index]?.village ?? { x: CONFIG.world.safeX, y: CONFIG.world.safeY }),
-    outside: normalizeGatePoint(gate?.outside, fallback.huntGates?.[index]?.outside ?? { x: CONFIG.world.coastX, y: CONFIG.world.coastY }),
-    areaId: String(gate?.areaId || fallback.huntGates?.[index]?.areaId || 'coast')
-  })).filter(gate => gate?.id && gate?.village && gate?.outside);
-  return { entryGate, huntGates };
-}
-
-function normalizeGatePoint(point, fallback) {
-  return {
-    x: clampInteger(point?.x, 0, CONFIG.world.cols - 1, fallback?.x ?? 0),
-    y: clampInteger(point?.y, 0, CONFIG.world.rows - 1, fallback?.y ?? 0)
-  };
-}
-
 function normalizeSeals(seals) {
   if (!Array.isArray(seals)) return [];
-  const states = ['arriving', 'choosingHuntGate', 'movingToHuntGate', 'hunting', 'movingToMonster', 'fighting', 'returningFromHunt', 'choosingFacility', 'movingToFacility', 'usingFacility', 'leaving', 'resting', 'fallen', 'rescuing', 'carryingFallenSeal'];
+  const states = Object.values(CONFIG.sealStates ?? {});
   return seals.map((s, index) => normalizeSeal(s, index)).filter(Boolean).map(seal => {
-    if (!states.includes(seal.state)) seal.state = seal.type === 'visitor' ? 'arriving' : 'choosingHuntGate';
+    if (seal.state === 'choosingHuntGate') seal.state = 'choosingHuntArea';
+    if (seal.state === 'movingToHuntGate') seal.state = 'movingToHuntExit';
+    if (seal.state === 'resting') seal.state = 'usingFacility';
+    if (!states.includes(seal.state)) seal.state = seal.type === 'visitor' ? 'arriving' : 'choosingHuntArea';
     return seal;
   });
 }
 
 function normalizeSeal(s, index) {
   if (!s || typeof s !== 'object') return null;
-  const entry = gatePointToWorld(gameState.gates?.entryGate) ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  const entry = routeWaypointToWorld(getEntryCorridor()?.waypoints?.[1]) ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
   const isVisitor = s?.type === 'visitor';
   return {
     id: String(s?.id || (isVisitor ? `visitor-${Date.now()}-${index}` : 'resident-seal')),
@@ -161,10 +138,12 @@ function normalizeSeal(s, index) {
     exp: safeFiniteNumber(s?.exp, 0, 0),
     level: clampInteger(s?.level, 1, Number.MAX_SAFE_INTEGER, 1),
     favor: safeFiniteNumber(s?.favor, 0, 0),
-    state: String(s?.state || (isVisitor ? 'arriving' : 'choosingHuntGate')),
+    state: String(s?.state || (isVisitor ? 'arriving' : 'choosingHuntArea')),
     targetId: s?.targetId ? String(s.targetId) : null,
     target: s?.target ? { x: safeFiniteNumber(s.target?.x, entry.x), y: safeFiniteNumber(s.target?.y, entry.y) } : null,
-    selectedHuntGateId: s?.selectedHuntGateId ? String(s.selectedHuntGateId) : null,
+    selectedHuntAreaId: s?.selectedHuntAreaId ? String(s.selectedHuntAreaId) : (s?.selectedHuntGateId ? 'coast' : null),
+    selectedRouteId: s?.selectedRouteId ? String(s.selectedRouteId) : null,
+    routeDirection: s?.routeDirection ? String(s.routeDirection) : null,
     visits: clampInteger(s?.visits, 0, Number.MAX_SAFE_INTEGER, isVisitor ? 1 : 0),
     facilityUseCounts: normalizeFacilityUseCounts(s?.facilityUseCounts),
     mealCountSinceInn: clampInteger(s?.mealCountSinceInn, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -262,7 +241,6 @@ function initGame(residentName) {
   gameState.world.roads = [];
   gameState.world.objects = [];
   gameState.world.nextObjectId = 1;
-  gameState.gates = normalizeGates(CONFIG.gates);
   gameState.monsters = [];
   gameState.visitorProfiles = createDefaultVisitorProfiles();
   gameState.logs = [];
@@ -286,7 +264,7 @@ function initGame(residentName) {
   gameState.seals = [createResidentSeal(gameState.residentName)];
   addDefaultVillage();
   startScreen.style.display = 'none';
-  logMessage('ゲーム開始。住民あざらしが門から冒険へ向かいます。');
+  logMessage('ゲーム開始。住民あざらしが海辺の通り道から冒険へ向かいます。');
 }
 
 function addDefaultVillage() {
@@ -354,8 +332,8 @@ function isProtectedCorridorTile(x, y) {
   for (const line of CONFIG.map.protectedCorridors ?? []) {
     if (distanceToSegment(x, y, line.from?.x, line.from?.y, line.to?.x, line.to?.y) <= width) return true;
   }
-  const gatePoints = [gameState.gates?.entryGate ?? CONFIG.gates.entryGate, ...((gameState.gates?.huntGates ?? CONFIG.gates.huntGates) ?? []).flatMap(gate => [gate?.village, gate?.outside])];
-  return gatePoints.some(point => point && distance(x, y, point.x, point.y) <= CONFIG.map.gateBreathingRadius);
+  const routePoints = getAllRouteWaypoints();
+  return routePoints.some(point => point && distance(x, y, point.x, point.y) <= CONFIG.map.routeBreathingRadius);
 }
 
 function distanceToSegment(px, py, ax, ay, bx, by) {
@@ -580,7 +558,7 @@ function createResidentSeal(name) {
   return normalizeSeal({
     id: 'resident-seal', name: String(name || gameState.residentName || CONFIG.resident.defaultName), type: 'resident', personality: 'balanced', assetKey: 'seals.resident', facing: 'left', x: safe.x, y: safe.y,
     hp: CONFIG.seal.maxHp, maxHp: CONFIG.seal.maxHp, attack: CONFIG.seal.attack, defense: CONFIG.seal.defense,
-    carriedG: CONFIG.seal.startG, exp: 0, level: 1, favor: 0, state: 'choosingHuntGate', visits: 0
+    carriedG: CONFIG.seal.startG, exp: 0, level: 1, favor: 0, state: 'choosingHuntArea', visits: 0
   }, 0);
 }
 
@@ -593,15 +571,42 @@ function enforceSingleResidentSeal() {
   let residentSeen = false;
   gameState.seals = (Array.isArray(gameState.seals) ? gameState.seals : []).map((seal, index) => {
     if (seal?.type === 'resident' && !residentSeen) { residentSeen = true; seal.id = 'resident-seal'; return seal; }
-    if (seal?.type === 'resident') { seal.type = 'visitor'; seal.profileId = seal.profileId ?? null; seal.state = 'leaving'; seal.target = gatePointToWorld(gameState.gates?.entryGate) ?? villageWanderPoint(); }
+    if (seal?.type === 'resident') { seal.type = 'visitor'; seal.profileId = seal.profileId ?? null; seal.state = 'leaving'; buildRouteToVillage(seal); }
     return seal;
   });
   ensureResidentSeal();
 }
 
-function gatePointToWorld(point) {
+function routeWaypointToWorld(point) {
   if (!point || !Number.isFinite(Number(point.x)) || !Number.isFinite(Number(point.y))) return null;
   return gridToWorld(point.x, point.y);
+}
+
+function getEntryCorridor() {
+  return CONFIG.ROUTES?.entryCorridor ?? null;
+}
+
+function getHuntingCorridorForArea(areaId) {
+  const id = areaId ? String(areaId) : 'coast';
+  return (CONFIG.ROUTES?.huntingCorridors ?? []).find(corridor => corridor?.areaId === id) ?? null;
+}
+
+function getAllRouteWaypoints() {
+  return [getEntryCorridor(), ...(CONFIG.ROUTES?.huntingCorridors ?? [])].flatMap(route => route?.waypoints ?? []);
+}
+
+function getNearestCorridorWaypoint(position, corridor) {
+  if (!position || !Array.isArray(corridor?.waypoints) || corridor.waypoints.length <= 0) return null;
+  return corridor.waypoints.reduce((best, point) => {
+    const world = routeWaypointToWorld(point);
+    if (!world) return best;
+    return !best || distance(position.x, position.y, world.x, world.y) < distance(position.x, position.y, best.x, best.y) ? world : best;
+  }, null);
+}
+
+function corridorWaypointsToWorld(corridor, reverse = false) {
+  const points = (corridor?.waypoints ?? []).map(routeWaypointToWorld).filter(Boolean);
+  return reverse ? points.reverse() : points;
 }
 
 function huntAreaBounds(areaId) {
@@ -614,28 +619,16 @@ function randomHuntAreaPoint(areaId) {
   return gridToWorld(Math.floor(randomRange(area.x, area.x + area.w)), Math.floor(randomRange(area.y, area.y + area.h)));
 }
 
-function getHuntGateById(id) {
-  return (gameState.gates?.huntGates ?? []).find(gate => gate?.id === id) ?? null;
-}
-
-function nearestHuntGate(x, y, areaId = null) {
-  const gates = (gameState.gates?.huntGates ?? []).filter(gate => gate?.id && (!areaId || gate?.areaId === areaId));
-  return gates.reduce((best, gate) => {
-    const point = gatePointToWorld(gate?.village) ?? gatePointToWorld(gate?.outside);
-    if (!point) return best;
-    return !best || distance(x, y, point.x, point.y) < distance(x, y, (gatePointToWorld(best?.village) ?? point).x, (gatePointToWorld(best?.village) ?? point).y) ? gate : best;
-  }, null);
-}
-
-function selectedOrNearestHuntGate(seal) {
-  return getHuntGateById(seal?.selectedHuntGateId) ?? nearestHuntGate(seal?.x, seal?.y);
-}
-
-function warnNoHuntGate(seal) {
+function warnNoHuntCorridor(seal) {
+  if (!seal) return;
   seal.wanderTimer = CONFIG.seal.wanderSeconds;
-  seal.state = 'choosingFacility';
-  seal.target = villageWanderPoint();
-  logMessage('狩猟門がないため、あざらしは村を歩いています。');
+  seal.state = 'idle';
+  seal.target = null;
+  seal.path = [];
+  if (!seal.warnedNoHuntCorridor) {
+    seal.warnedNoHuntCorridor = true;
+    logMessage('狩猟用の通り道がないため、あざらしは待機しています。');
+  }
 }
 
 function villageWanderPoint() {

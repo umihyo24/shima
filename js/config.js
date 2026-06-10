@@ -7,7 +7,7 @@ const CONFIG = Object.freeze({
   expansion: { startX: 6, startY: 12, startW: 20, startH: 13, regionX: 5, regionY: 11, regionW: 26, regionH: 16 },
   CLEARING: { BASE_COST: 260, COST_STEP: 75, RADIUS: 1 },
   map: {
-    corridorWidth: 1, gateBreathingRadius: 2, obstacleSeedA: 17, obstacleSeedB: 31, obstacleModulo: 10, grassLimit: 4, treeLimit: 7,
+    corridorWidth: 1, routeBreathingRadius: 2, obstacleSeedA: 17, obstacleSeedB: 31, obstacleModulo: 10, grassLimit: 4, treeLimit: 7,
     protectedCorridors: [
       { from: { x: 14, y: 24 }, to: { x: 14, y: 17 } },
       { from: { x: 14, y: 17 }, to: { x: 24, y: 17 } },
@@ -33,10 +33,11 @@ const CONFIG = Object.freeze({
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
-  SAVE_VERSION: 5,
+  SAVE_VERSION: 6,
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
+  sealStates: { arriving: 'arriving', choosingHuntArea: 'choosingHuntArea', movingToHuntExit: 'movingToHuntExit', hunting: 'hunting', movingToMonster: 'movingToMonster', fighting: 'fighting', returningFromHunt: 'returningFromHunt', choosingFacility: 'choosingFacility', movingToFacility: 'movingToFacility', usingFacility: 'usingFacility', leaving: 'leaving', idle: 'idle', fallen: 'fallen', rescuing: 'rescuing', carryingFallenSeal: 'carryingFallenSeal' },
   CALENDAR: { WEEK_DURATION_MS: 12000, WEEKS_PER_MONTH: 4, MONTHS_PER_YEAR: 12 },
   TIME: { SPEED_OPTIONS: [0, 1, 2, 4], DEFAULT_SCALE: 1 },
   ASSETS: { paths: {
@@ -51,7 +52,7 @@ const CONFIG = Object.freeze({
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   knownness: { initial: 0, huntRewardPerMonthlyHunt: 4, monthlyBaseReward: 2, satisfyingVisitReward: 3, unlockTargetId: 'visitor-tategoto' },
-  movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, gateCost: 1, maxPathNodes: 2500, pathReachDistance: 8, fallbackWarnCooldownMs: 60000 },
+  movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['hunt-wander', 'monster', 'rescue', 'carry'] },
   timing: { targetFps: 60, maxDt: 0.05, uiMs: 120 },
   placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75 },
   directions: [ { name: 'N', dx: 0, dy: -1 }, { name: 'E', dx: 1, dy: 0 }, { name: 'S', dx: 0, dy: 1 }, { name: 'W', dx: -1, dy: 0 } ],
@@ -71,7 +72,7 @@ const CONFIG = Object.freeze({
     restaurant: { label: '食堂', spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05 },
     blacksmith: { label: '鍛冶屋', spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05 }
   },
-  gates: { entryGate: { id: 'entry_south', x: 14, y: 24 }, huntGates: [ { id: 'coast_gate', village: { x: 24, y: 16 }, outside: { x: 34, y: 16 }, areaId: 'coast' } ] },
+  ROUTES: { entryCorridor: { id: 'south_entry', type: 'entry', waypoints: [{ x: 14, y: 30 }, { x: 14, y: 24 }, { x: 14, y: 17 }] }, huntingCorridors: [ { id: 'coast_exit', type: 'hunting', areaId: 'coast', waypoints: [{ x: 14, y: 17 }, { x: 24, y: 17 }, { x: 24, y: 16 }, { x: 34, y: 16 }, { x: 38, y: 16 }] } ] },
   visitor: { maxActive: 2, spawnInterval: 16, spawnIntervalFavorReduction: 0.04, minSpawnIntervalMultiplier: 0.55, returnBaseWeight: 1, returnFavorWeight: 0.18, inactiveWeightBonus: 3, safeLeaveFavor: 2, minStayMs: 45000, maxStayMs: 110000, maxStayFavorBonusMs: 25000, maxStayFavorMsPerFavor: 1000, satisfyingMinFacilities: 1, satisfyingMinHunts: 1, enoughHuntsForLeave: 2, profiles: [
     { id: 'visitor-goma', name: 'ゴマ', personality: 'balanced', unlockedAtKnownness: 0, baseStats: { maxHp: 130, attack: 18, defense: 5 }, favor: 0, visits: 0, level: 1, exp: 0 },
     { id: 'visitor-kurakake', name: 'クラカケ', personality: 'cautious', unlockedAtKnownness: 0, baseStats: { maxHp: 120, attack: 17, defense: 6 }, favor: 0, visits: 0, level: 1, exp: 0 },
