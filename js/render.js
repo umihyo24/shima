@@ -145,6 +145,13 @@ function drawSeals() {
     ctx.beginPath();
     ctx.ellipse(seal.x, seal.y + 15, 20, 7, 0, 0, Math.PI * 2);
     ctx.fill();
+    if (gameState.ui?.selectedSealId === seal.id) {
+      ctx.strokeStyle = '#ffe66b';
+      ctx.lineWidth = 4 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
+      ctx.beginPath();
+      ctx.ellipse(seal.x, seal.y + 9, 29, 15, 0, 0, Math.PI * 2);
+      ctx.stroke();
+    }
     drawSpriteFacing(ctx, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), seal.x - w / 2, seal.y - h / 2, w, h, seal.facing, (context, x, y, width, height, options) => drawFallbackSeal(context, seal, x, y, width, height, options));
     drawHpBar(seal.x - 22, seal.y - 29, 44, seal.hp / seal.maxHp, '#5fe45e');
     drawLabel(seal?.type === 'resident' ? '住' : '訪', seal.x - 10, seal.y - 38, seal?.type === 'resident' ? '#ffd98a' : '#aef3ff');
@@ -252,13 +259,29 @@ function updateHud() {
   const nextVisitor = Math.max(0, CONFIG.visitor.spawnInterval - safeFiniteNumber(gameState.timers?.visitorSpawn, 0, 0));
   const resident = getResidentSeal();
   const tategoto = getVisitorProfileById(CONFIG.knownness.unlockTargetId);
-  const activeNames = visitors.map(v => `${escapeHtml(v?.name)}(好感度${Math.floor(safeFiniteNumber(v?.favor, 0, 0))})`).join('、') || 'なし';
-  statsEl.innerHTML = `<b>${Math.floor(gameState.player.g)} G</b><br>住民: ${escapeHtml(resident?.name ?? gameState.residentName)}<br>知名度: ${Math.floor(safeFiniteNumber(gameState.village?.knownness, 0, 0))}<br><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span> / 今月の狩猟: ${gameState.stats?.monthlyHunts ?? 0}<br>速度: ${formatSpeedLabel(gameState.time?.timeScale)}<br>タテゴト: ${(safeFiniteNumber(gameState.village?.knownness, 0, 0) >= safeFiniteNumber(tategoto?.unlockedAtKnownness, 0, 0)) ? '解放' : `未解放(${Math.floor(safeFiniteNumber(tategoto?.unlockedAtKnownness, 0, 0))})`}<br>訪問者: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>固定訪問者: ${activeNames}<br>次の訪問者目安: ${nextVisitor.toFixed(0)}秒<br>ズーム: ${gameState.camera.zoom.toFixed(2)} / ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${getClearingCost()}G / 半径${CONFIG.CLEARING.RADIUS} / 開拓${clampInteger(gameState.village?.clearCount, 0, Number.MAX_SAFE_INTEGER, 0)}回<br>入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<br>最終保存: ${lastSaved}<br>保存状態: ${escapeHtml(saveText)}<div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>')}</div>`;
-  sealCardsEl.innerHTML = (gameState.seals ?? []).map(s => {
-    const stay = s?.type === 'visitor' ? `<br>滞在: ${Math.floor(safeFiniteNumber(s.visitTimerMs, 0, 0) / 1000)}秒 / ${s.wantsToLeave ? '帰りたい' : '滞在中'}` : '';
-    return `<div class="panel sealCard"><b>${escapeHtml(s.name)}</b>（${s.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(s)?.label ?? s.personality)}<br>HP ${Math.ceil(s.hp)} / ${s.maxHp}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, s.hp / s.maxHp * 100))}%"></div></div>所持G: ${s.carriedG}<br>Lv: ${s.level} / EXP: ${s.exp}<br>好感度: ${s.favor}<br>状態: ${stateLabel(s.state)}${stay}<br>訪問狩猟/施設: ${s.huntsThisVisit ?? 0}/${s.facilitiesUsedThisVisit ?? 0}</div>`;
-  }).join('');
+  const tategotoUnlocked = safeFiniteNumber(gameState.village?.knownness, 0, 0) >= safeFiniteNumber(tategoto?.unlockedAtKnownness, 0, 0);
+  statsEl.innerHTML = `<b>${Math.floor(gameState.player?.g ?? 0)} G</b><br>知名度: ${Math.floor(safeFiniteNumber(gameState.village?.knownness, 0, 0))}<br><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><br>今月の狩猟: ${gameState.stats?.monthlyHunts ?? 0}<br>訪問者: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>次の訪問者目安: ${nextVisitor.toFixed(0)}秒<br>タテゴト: ${tategotoUnlocked ? '解放' : `未解放(${Math.floor(safeFiniteNumber(tategoto?.unlockedAtKnownness, 0, 0))})`}<br>住民: ${escapeHtml(resident?.name ?? gameState.residentName)}<br>速度: ${formatSpeedLabel(gameState.time?.timeScale)} / ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${getClearingCost()}G / 入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<br>最終保存: ${lastSaved}<br>保存状態: ${escapeHtml(saveText)}<div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>')}</div>`;
+  const selected = (gameState.seals ?? []).find(seal => seal?.id === gameState.ui?.selectedSealId) ?? null;
+  sealCardsEl.innerHTML = selected ? renderSelectedSealPanel(selected) : '<div class="panel sealCard emptySealCard">あざらしをクリックすると詳細を表示します。</div>';
   updateToolButtons();
 }
-function stateLabel(state) { return ({ arriving:'到着', choosingHuntArea:'狩猟先選択', movingToHuntExit:'狩猟エリアへ移動', hunting:'狩猟探索', movingToMonster:'カニへ移動', fighting:'戦闘中', returningFromHunt:'村へ帰還', choosingFacility:'施設選択', movingToFacility:'施設へ移動', usingFacility:'施設利用中', leaving:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
 
+function renderSelectedSealPanel(seal) {
+  const stats = getSealEffectiveStats(seal);
+  const hpMax = safeFiniteNumber(stats.maxHp, seal?.maxHp ?? CONFIG.seal.maxHp, 1);
+  const stay = seal?.type === 'visitor' ? `<br>滞在: ${Math.floor(safeFiniteNumber(seal.visitTimerMs, 0, 0) / 1000)}秒 / 最短${Math.floor(safeFiniteNumber(seal.minStayMs, 0, 0) / 1000)}秒 / 最長${Math.floor(safeFiniteNumber(seal.maxStayMs, 0, 0) / 1000)}秒<br>訪問狩猟/施設: ${seal.huntsThisVisit ?? 0}/${seal.facilitiesUsedThisVisit ?? 0} / ${seal.wantsToLeave ? '帰りたい' : '滞在中'}` : '';
+  return `<div class="panel sealCard selectedSealCard"><b>${escapeHtml(seal.name)}</b>（${seal.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(seal)?.label ?? seal.personality)}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))} / ${Math.ceil(hpMax)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, safeFiniteNumber(seal.hp, 0, 0) / hpMax * 100))}%"></div></div>所持G: ${Math.floor(safeFiniteNumber(seal.carriedG, 0, 0))}<br>装備予算: ${Math.floor(safeFiniteNumber(seal.gearBudget, 0, 0))}<br>Lv: ${seal.level} / EXP: ${Math.floor(safeFiniteNumber(seal.exp, 0, 0))}<br>好感度: ${Math.floor(safeFiniteNumber(seal.favor, 0, 0))}<br>状態: ${escapeHtml(stateLabel(seal.state))}${stay}<hr>武器: ${equipmentText(seal, 'weapon')}<br>防具: ${equipmentText(seal, 'armor')}<br>アクセ: ${equipmentText(seal, 'accessory')}<br>有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}</div>`;
+}
+
+function equipmentText(seal, slot) {
+  const itemId = seal?.equipment?.[slot] ?? null;
+  if (!itemId) return 'なし';
+  const item = getItemDef(itemId);
+  if (!item) return '不明な装備';
+  const bonuses = [];
+  if (safeFiniteNumber(item.attackBonus, 0, 0) > 0) bonuses.push(`攻+${item.attackBonus}`);
+  if (safeFiniteNumber(item.defenseBonus, 0, 0) > 0) bonuses.push(`防+${item.defenseBonus}`);
+  if (safeFiniteNumber(item.hpBonus, 0, 0) > 0) bonuses.push(`HP+${item.hpBonus}`);
+  return `${escapeHtml(item.name)}${bonuses.length ? `（${bonuses.join(' / ')}）` : ''}`;
+}
+function stateLabel(state) { return ({ arriving:'到着', choosingHuntArea:'狩猟先選択', movingToHuntExit:'狩猟エリアへ移動', hunting:'狩猟探索', movingToMonster:'カニへ移動', fighting:'戦闘中', returningFromHunt:'村へ帰還', choosingFacility:'施設選択', movingToFacility:'施設へ移動', usingFacility:'施設利用中', leaving:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }

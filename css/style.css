@@ -33,3 +33,6 @@
 .speedButtons button { margin: 0; text-align: center; }
 .speedStatus { margin-top: 6px; color: #cdefff; font-size: 12px; }
 .dateLine { color: #9ee8ff; font-weight: 800; }
+.selectedSealCard { max-width: 520px; line-height: 1.48; }
+.emptySealCard { max-width: 320px; color: #cdefff; }
+.selectedSealCard hr { border: 0; border-top: 1px solid rgba(255,255,255,.16); margin: 8px 0; }

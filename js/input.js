@@ -28,6 +28,16 @@ function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionInd
 function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
 function setGameSpeed(speed) { gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; updateToolButtons(); updateHud(); }
 
+function sealAtWorldPoint(point) {
+  if (!point) return null;
+  return [...(gameState.seals ?? [])].reverse().find(seal => seal && distance(point.x, point.y, seal.x, seal.y) <= CONFIG.seal.contactDistance * 1.4) ?? null;
+}
+
+function isPlacementModeActive() {
+  const kind = getTool(gameState.ui?.selectedTool)?.kind;
+  return ['road', 'facility', 'decoration', 'clear', 'delete'].includes(kind);
+}
+
 function bindInputEvents() {
 canvas.addEventListener('mousemove', e => {
   updateMouse(e.clientX, e.clientY);
@@ -50,7 +60,14 @@ window.addEventListener('mouseup', e => {
   gameState.camera.dragging = false;
   if (gameState.camera.dragMoved || gameState.phase !== CONFIG.phase.playing) return;
   updateMouse(e.clientX, e.clientY);
+  const clickedSeal = sealAtWorldPoint(gameState.input.mouseWorld);
+  if (clickedSeal?.id) {
+    gameState.ui.selectedSealId = clickedSeal.id;
+    updateHud();
+    return;
+  }
   const t = getTool(gameState.ui.selectedTool);
+  if (!isPlacementModeActive()) gameState.ui.selectedSealId = null;
   if (t?.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
   else if (t?.kind === 'clear') clearLandAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
   else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
