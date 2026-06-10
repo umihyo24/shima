@@ -1,0 +1,723 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Seal Island Economy Adventure</title>
+  <style>
+    :root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; overflow: hidden; background: #071d2a; color: #f7fbff; }
+    canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; background: #0b5875; }
+    .hud { position: fixed; inset: 14px auto auto 14px; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
+    .panel { background: rgba(5, 18, 28, .82); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 8px 26px rgba(0,0,0,.3); border-radius: 10px; backdrop-filter: blur(6px); }
+    .stats { padding: 10px 12px; min-width: 260px; line-height: 1.45; }
+    .stats b { color: #ffe38a; }
+    .tools { position: fixed; top: 14px; right: 14px; width: 170px; padding: 10px; pointer-events: auto; }
+    button { appearance: none; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; background: linear-gradient(#1e5d75,#123848); color: #fff; padding: 8px 10px; font-weight: 700; cursor: pointer; box-shadow: inset 0 1px rgba(255,255,255,.16); }
+    button:hover { filter: brightness(1.15); }
+    button.active { background: linear-gradient(#f0a73a,#a86619); color: #1d1000; }
+    .tools button { width: 100%; margin: 4px 0; text-align: left; }
+    .bottom { position: fixed; left: 14px; bottom: 14px; right: 14px; display: grid; grid-template-columns: 260px 1fr; gap: 10px; pointer-events: none; }
+    .help { padding: 10px 12px; font-size: 13px; line-height: 1.55; }
+    .sealCards { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; }
+    .sealCard { padding: 10px 12px; min-height: 118px; }
+    .bar { height: 9px; border-radius: 99px; background: rgba(0,0,0,.35); overflow: hidden; margin: 4px 0 8px; }
+    .fill { height: 100%; background: linear-gradient(90deg,#79e54c,#16b15e); }
+    .log { margin-top: 8px; font-size: 13px; max-height: 115px; overflow: hidden; color: #d7efff; }
+    .start { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(23,112,145,.82), rgba(2,12,22,.96)); pointer-events: auto; }
+    .startCard { width: min(620px, calc(100vw - 36px)); padding: 30px; text-align: center; }
+    .startCard h1 { margin: 0 0 8px; font-size: clamp(30px, 6vw, 56px); }
+    .startCard p { color: #cdefff; line-height: 1.7; }
+    .zoomBtns { display: flex; gap: 6px; margin-top: 8px; pointer-events: auto; }
+    .zoomBtns button { width: 42px; text-align: center; }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+
+  <div class="hud">
+    <div class="panel stats" id="stats"></div>
+  </div>
+
+  <div class="panel tools" id="tools"></div>
+
+  <div class="bottom">
+    <div class="panel help">
+      <b>操作</b><br>
+      WASD/矢印: カメラ移動<br>
+      ドラッグ: カメラ移動 / 短いクリック: 配置<br>
+      ホイール: ズーム<br>
+      R: 施設入口を回転<br>
+      <div class="zoomBtns"><button id="zoomOut">−</button><button id="zoomIn">＋</button></div>
+    </div>
+    <div class="sealCards" id="sealCards"></div>
+  </div>
+
+  <div class="start" id="startScreen">
+    <div class="panel startCard">
+      <h1>あざらし島の冒険経済</h1>
+      <p>同じ世界マップ上にある島と外海を眺めながら、道路や施設を配置しましょう。あざらしたちは外でカニと戦い、Gを持ち帰り、施設で使い、倒れた仲間を救助し続けます。</p>
+      <button id="startBtn">ゲーム開始</button>
+    </div>
+  </div>
+
+<script>
+'use strict';
+
+const CONFIG = Object.freeze({
+  canvas: { minDevicePixelRatio: 1, maxDevicePixelRatio: 2 },
+  phase: { start: 'start', playing: 'playing', gameover: 'gameover' },
+  world: { cols: 54, rows: 34, tile: 44, islandX: 4, islandY: 10, islandW: 22, islandH: 16, coastX: 27, coastY: 5, coastW: 23, coastH: 24, safeX: 14, safeY: 18 },
+  village: { roadY: 16, roadX: 14, roadStartX: 7, roadEndX: 22, roadStartY: 16, roadEndY: 22, defaults: [
+    { type: 'inn', x: 8, y: 14, directionIndex: 2 },
+    { type: 'restaurant', x: 14, y: 14, directionIndex: 2 },
+    { type: 'blacksmith', x: 20, y: 14, directionIndex: 2 },
+    { type: 'flower', x: 13, y: 14 }, { type: 'tree', x: 8, y: 13 }, { type: 'rock', x: 19, y: 14 },
+    { type: 'tree', x: 6, y: 13 }, { type: 'flower', x: 12, y: 18 }, { type: 'rock', x: 18, y: 18 }
+  ] },
+  camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
+  timing: { targetFps: 60, maxDt: 0.05, logLimit: 7, uiMs: 120 },
+  placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75 },
+  directions: [ { name: 'N', dx: 0, dy: -1 }, { name: 'E', dx: 1, dy: 0 }, { name: 'S', dx: 0, dy: 1 }, { name: 'W', dx: -1, dy: 0 } ],
+  tools: [
+    { id: 'road', label: '🟫 道路', kind: 'road', w: 1, h: 1 },
+    { id: 'inn', label: '🏨 宿屋', kind: 'facility', w: 2, h: 2 },
+    { id: 'restaurant', label: '🍲 食堂', kind: 'facility', w: 2, h: 2 },
+    { id: 'blacksmith', label: '⚒️ 鍛冶屋', kind: 'facility', w: 2, h: 2 },
+    { id: 'flower', label: '🌼 花', kind: 'decoration', w: 1, h: 1 },
+    { id: 'tree', label: '🌲 木', kind: 'decoration', w: 1, h: 1 },
+    { id: 'rock', label: '🪨 岩', kind: 'decoration', w: 1, h: 1 },
+    { id: 'delete', label: '❌ 削除', kind: 'delete', w: 1, h: 1 }
+  ],
+  facilities: {
+    inn: { label: '宿屋', fee: 36, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05 },
+    restaurant: { label: '食堂', spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05 },
+    blacksmith: { label: '鍛冶屋', spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05 }
+  },
+  seal: { count: 3, maxHp: 130, attack: 18, defense: 5, baseSpeed: 50, roadSpeedMultiplier: 1.55, lowHpRatio: 0.4, fallenRecoveryPerSecond: 3, standHpRatio: 0.36, restTargetRatio: 0.88, contactDistance: 15, rescueScanDistance: 380, spendSeconds: 1.4, restSeconds: 1, startG: 12, spread: 24 },
+  monster: { cap: 7, spawnInterval: 2.4, hp: 64, attack: 13, defense: 3, rewardG: 28, rewardExp: 16, contactDistance: 18 },
+  combat: { sealAttackSeconds: 0.75, monsterAttackSeconds: 1.0, minDamage: 1 },
+  render: { gridLine: 'rgba(255,255,255,.13)', island: '#79b85c', coast: '#1b90a9', beach: '#d9c887', road: '#b28a56', invalid: 'rgba(255,50,50,.45)', valid: 'rgba(80,255,140,.35)', shadow: 'rgba(0,0,0,.24)', font: '13px system-ui', bigFont: '18px system-ui', minimapW: 220, minimapH: 128 }
+});
+
+const canvas = document.getElementById('game');
+const ctx = canvas.getContext('2d');
+const statsEl = document.getElementById('stats');
+const toolsEl = document.getElementById('tools');
+const sealCardsEl = document.getElementById('sealCards');
+const startScreen = document.getElementById('startScreen');
+const startBtn = document.getElementById('startBtn');
+const zoomInBtn = document.getElementById('zoomIn');
+const zoomOutBtn = document.getElementById('zoomOut');
+
+const gameState = {
+  phase: CONFIG.phase.start,
+  player: { g: 0 },
+  camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
+  input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
+  ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0 },
+  world: { roads: [], objects: [], nextObjectId: 1 },
+  seals: [],
+  monsters: [],
+  images: {},
+  logs: [],
+  timers: { spawn: 0, ui: 0 },
+  frameTemps: { occupied: new Set(), usableFacilities: [], toRemoveMonsters: [] },
+  lastTime: performance.now()
+};
+
+function createImage(key) {
+  const cached = gameState.images?.[key];
+  if (cached) return cached;
+  const parts = String(key || '').split('.');
+  const folder = parts?.[0] === 'cards' ? '/assets/cards/' : '/assets/monsters/';
+  const name = parts?.[1] || 'unknown';
+  const img = new Image();
+  const record = { img, loaded: false, failed: false };
+  img.onload = () => { record.loaded = true; };
+  img.onerror = () => { record.failed = true; };
+  img.src = `${folder}${name}.png`;
+  gameState.images[key] = record;
+  return record;
+}
+
+function safeDrawImage(context, imageRecord, x, y, w, h, fallback) {
+  const img = imageRecord?.img;
+  if (imageRecord?.loaded && img?.complete && img?.naturalWidth > 0) {
+    context.drawImage(img, x, y, w, h);
+    return true;
+  }
+  if (typeof fallback === 'function') fallback(context, x, y, w, h);
+  return false;
+}
+
+function logMessage(text) {
+  gameState.logs.unshift(text);
+  gameState.logs.length = Math.min(gameState.logs.length, CONFIG.timing.logLimit);
+}
+
+function initGame() {
+  gameState.phase = CONFIG.phase.playing;
+  gameState.player.g = 0;
+  gameState.world.roads = [];
+  gameState.world.objects = [];
+  gameState.world.nextObjectId = 1;
+  gameState.monsters = [];
+  gameState.logs = [];
+  gameState.timers.spawn = 0;
+  const safe = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  gameState.seals = Array.from({ length: CONFIG.seal.count }, (_, i) => ({
+    id: `seal-${i + 1}`,
+    name: `あざらし${i + 1}`,
+    x: safe.x + (i - 1) * CONFIG.seal.spread,
+    y: safe.y,
+    hp: CONFIG.seal.maxHp,
+    maxHp: CONFIG.seal.maxHp,
+    attack: CONFIG.seal.attack + i,
+    defense: CONFIG.seal.defense,
+    carriedG: CONFIG.seal.startG * i,
+    exp: 0,
+    state: 'exploring',
+    targetId: null,
+    target: randomCoastPoint(),
+    rescueTargetId: null,
+    combatTimer: 0,
+    monsterTimer: 0,
+    actionTimer: 0
+  }));
+  addDefaultVillage();
+  startScreen.style.display = 'none';
+  logMessage('ゲーム開始。あざらしたちは外海へ向かいます。');
+}
+
+function addDefaultVillage() {
+  for (let x = CONFIG.village.roadStartX; x <= CONFIG.village.roadEndX; x += 1) gameState.world.roads.push({ x, y: CONFIG.village.roadY });
+  for (let y = CONFIG.village.roadStartY; y <= CONFIG.village.roadEndY; y += 1) gameState.world.roads.push({ x: CONFIG.village.roadX, y });
+  for (const item of CONFIG.village.defaults) placeObject(item.type, item.x, item.y, item.directionIndex ?? 0, true);
+}
+
+function gridToWorld(gx, gy) {
+  return { x: (gx + 0.5) * CONFIG.world.tile, y: (gy + 0.5) * CONFIG.world.tile };
+}
+
+function worldToGrid(x, y) {
+  return { x: Math.floor(x / CONFIG.world.tile), y: Math.floor(y / CONFIG.world.tile) };
+}
+
+function inRect(gx, gy, x, y, w, h) { return gx >= x && gy >= y && gx < x + w && gy < y + h; }
+function isIslandTile(gx, gy) { return inRect(gx, gy, CONFIG.world.islandX, CONFIG.world.islandY, CONFIG.world.islandW, CONFIG.world.islandH); }
+function isCoastTile(gx, gy) { return inRect(gx, gy, CONFIG.world.coastX, CONFIG.world.coastY, CONFIG.world.coastW, CONFIG.world.coastH); }
+function roadAt(gx, gy) { return gameState.world.roads.some(r => r?.x === gx && r?.y === gy); }
+function objectAt(gx, gy) { return gameState.world.objects.find(o => gx >= o?.x && gy >= o?.y && gx < (o?.x ?? 0) + (o?.w ?? 1) && gy < (o?.y ?? 0) + (o?.h ?? 1)); }
+
+function getTool(id) { return CONFIG.tools.find(t => t.id === id) ?? CONFIG.tools[0]; }
+
+function canPlace(type, gx, gy) {
+  const tool = getTool(type);
+  if (tool?.kind === 'delete') return { ok: true, reason: '' };
+  if (!isIslandTile(gx, gy)) return { ok: false, reason: '島の中だけに配置できます。' };
+  const w = tool?.w ?? CONFIG.placement.decorationSize;
+  const h = tool?.h ?? CONFIG.placement.decorationSize;
+  for (let y = gy; y < gy + h; y += 1) {
+    for (let x = gx; x < gx + w; x += 1) {
+      if (!isIslandTile(x, y)) return { ok: false, reason: '島からはみ出しています。' };
+      if (objectAt(x, y)) return { ok: false, reason: '他の物があります。' };
+      if (tool?.kind !== 'road' && roadAt(x, y)) return { ok: false, reason: '道路の上には置けません。' };
+    }
+  }
+  if (tool?.kind === 'road' && objectAt(gx, gy)) return { ok: false, reason: '施設や飾りがあります。' };
+  return { ok: true, reason: '' };
+}
+
+function placeObject(type, gx, gy, directionIndex, silent) {
+  const result = canPlace(type, gx, gy);
+  if (!result.ok) {
+    gameState.ui.placementFeedback = { x: gx, y: gy, ok: false, text: result.reason, timer: CONFIG.placement.feedbackSeconds };
+    return false;
+  }
+  const tool = getTool(type);
+  if (tool?.kind === 'road') {
+    if (!roadAt(gx, gy)) gameState.world.roads.push({ x: gx, y: gy });
+  } else if (tool?.kind !== 'delete') {
+    gameState.world.objects.push({ id: `obj-${gameState.world.nextObjectId++}`, type, kind: tool?.kind, x: gx, y: gy, w: tool?.w, h: tool?.h, directionIndex });
+  }
+  if (!silent) gameState.ui.placementFeedback = { x: gx, y: gy, ok: true, text: '配置しました。', timer: CONFIG.placement.feedbackSeconds };
+  return true;
+}
+
+function deleteAt(gx, gy) {
+  const obj = objectAt(gx, gy);
+  if (obj?.id) {
+    gameState.world.objects = gameState.world.objects.filter(o => o?.id !== obj.id);
+    gameState.ui.placementFeedback = { x: gx, y: gy, ok: true, text: '削除しました。', timer: CONFIG.placement.feedbackSeconds };
+    return;
+  }
+  const before = gameState.world.roads.length;
+  gameState.world.roads = gameState.world.roads.filter(r => !(r?.x === gx && r?.y === gy));
+  gameState.ui.placementFeedback = { x: gx, y: gy, ok: before !== gameState.world.roads.length, text: before !== gameState.world.roads.length ? '削除しました。' : '削除対象がありません。', timer: CONFIG.placement.feedbackSeconds };
+}
+
+function entranceTile(facility) {
+  const index = facility?.directionIndex ?? 0;
+  const x = facility?.x ?? 0;
+  const y = facility?.y ?? 0;
+  const w = facility?.w ?? CONFIG.placement.facilitySize;
+  const h = facility?.h ?? CONFIG.placement.facilitySize;
+  if (CONFIG.directions[index]?.name === 'N') return { x: x + Math.floor(w / 2), y: y - 1 };
+  if (CONFIG.directions[index]?.name === 'E') return { x: x + w, y: y + Math.floor(h / 2) };
+  if (CONFIG.directions[index]?.name === 'S') return { x: x + Math.floor(w / 2), y: y + h };
+  return { x: x - 1, y: y + Math.floor(h / 2) };
+}
+
+function isFacilityUsable(facility) {
+  if (facility?.kind !== 'facility') return false;
+  const e = entranceTile(facility);
+  return roadAt(e.x, e.y);
+}
+
+function facilityBonus(facility) {
+  const cfg = CONFIG.facilities[facility?.type];
+  if (!cfg) return 0;
+  const adjacentCells = new Set();
+  for (let y = facility?.y ?? 0; y < (facility?.y ?? 0) + (facility?.h ?? 1); y += 1) {
+    for (let x = facility?.x ?? 0; x < (facility?.x ?? 0) + (facility?.w ?? 1); x += 1) {
+      for (const dir of CONFIG.directions) adjacentCells.add(`${x + dir.dx},${y + dir.dy}`);
+    }
+  }
+  const count = gameState.world.objects.filter(o => o?.type === cfg.bonusDecoration && adjacentCells.has(`${o.x},${o.y}`)).length;
+  return count * cfg.bonusRate;
+}
+
+function usableFacilities(type) {
+  return gameState.world.objects.filter(o => o?.type === type && isFacilityUsable(o));
+}
+
+function nearestFacility(type, x, y) {
+  const list = usableFacilities(type);
+  return list.reduce((best, item) => !best || distance(x, y, centerOfObject(item).x, centerOfObject(item).y) < distance(x, y, centerOfObject(best).x, centerOfObject(best).y) ? item : best, null);
+}
+
+function centerOfObject(obj) { return { x: ((obj?.x ?? 0) + (obj?.w ?? 1) / 2) * CONFIG.world.tile, y: ((obj?.y ?? 0) + (obj?.h ?? 1) / 2) * CONFIG.world.tile }; }
+function distance(ax, ay, bx, by) { return Math.hypot((bx ?? 0) - (ax ?? 0), (by ?? 0) - (ay ?? 0)); }
+function randomRange(min, max) { return min + Math.random() * (max - min); }
+function randomCoastPoint() { return gridToWorld(Math.floor(randomRange(CONFIG.world.coastX, CONFIG.world.coastX + CONFIG.world.coastW)), Math.floor(randomRange(CONFIG.world.coastY, CONFIG.world.coastY + CONFIG.world.coastH))); }
+
+function update(dt) {
+  if (gameState.phase !== CONFIG.phase.playing) return;
+  gameState.frameTemps.occupied.clear();
+  gameState.frameTemps.usableFacilities.length = 0;
+  gameState.frameTemps.toRemoveMonsters.length = 0;
+  updateCamera(dt);
+  updatePlacementFeedback(dt);
+  updateSpawner(dt);
+  updateSeals(dt);
+  removeDefeatedMonsters();
+  gameState.timers.ui += dt;
+  if (gameState.timers.ui >= CONFIG.timing.uiMs / 1000) {
+    updateHud();
+    gameState.timers.ui = 0;
+  }
+}
+
+function updateCamera(dt) {
+  const keys = gameState.input.keys;
+  const speed = CONFIG.camera.panSpeed * dt / (gameState.camera.zoom || 1);
+  if (keys?.KeyA || keys?.ArrowLeft) gameState.camera.x -= speed;
+  if (keys?.KeyD || keys?.ArrowRight) gameState.camera.x += speed;
+  if (keys?.KeyW || keys?.ArrowUp) gameState.camera.y -= speed;
+  if (keys?.KeyS || keys?.ArrowDown) gameState.camera.y += speed;
+}
+
+function updatePlacementFeedback(dt) {
+  const feedback = gameState.ui.placementFeedback;
+  if (!feedback) return;
+  feedback.timer -= dt;
+  if (feedback.timer <= 0) gameState.ui.placementFeedback = null;
+}
+
+function updateSpawner(dt) {
+  gameState.timers.spawn += dt;
+  if (gameState.timers.spawn < CONFIG.monster.spawnInterval) return;
+  gameState.timers.spawn = 0;
+  if (gameState.monsters.length >= CONFIG.monster.cap) return;
+  const p = randomCoastPoint();
+  gameState.monsters.push({ id: `crab-${Date.now()}-${Math.random().toString(16).slice(2)}`, type: 'crab', x: p.x, y: p.y, hp: CONFIG.monster.hp, maxHp: CONFIG.monster.hp, attack: CONFIG.monster.attack, defense: CONFIG.monster.defense, assignedSealId: null });
+}
+
+function updateSeals(dt) {
+  for (const seal of gameState.seals) {
+    if (!seal) continue;
+    if (seal.state === 'fallen') { updateFallen(seal, dt); continue; }
+    const fallen = findFallenForRescue(seal);
+    if (fallen && !seal.rescueTargetId && seal.hp > seal.maxHp * CONFIG.seal.lowHpRatio) {
+      seal.state = 'rescuing'; seal.rescueTargetId = fallen.id; seal.target = { x: fallen.x, y: fallen.y }; logMessage(`${seal.name}が${fallen.name}を救助に向かいました。`);
+    }
+    switch (seal.state) {
+      case 'exploring': updateExploring(seal, dt); break;
+      case 'movingToMonster': updateMovingToMonster(seal, dt); break;
+      case 'fighting': updateFighting(seal, dt); break;
+      case 'returningToIsland': updateReturning(seal, dt); break;
+      case 'spending': updateSpending(seal, dt); break;
+      case 'movingToInn': updateMovingToInn(seal, dt); break;
+      case 'resting': updateResting(seal, dt); break;
+      case 'rescuing': updateRescuing(seal, dt); break;
+      case 'carryingFallenSeal': updateCarrying(seal, dt); break;
+      default: seal.state = 'exploring'; seal.target = randomCoastPoint(); break;
+    }
+  }
+}
+
+function updateFallen(seal, dt) {
+  seal.hp = Math.min(seal.maxHp, seal.hp + CONFIG.seal.fallenRecoveryPerSecond * dt);
+  if (seal.hp >= seal.maxHp * CONFIG.seal.standHpRatio && !isBeingCarried(seal.id)) {
+    seal.state = 'returningToIsland'; seal.target = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY); logMessage(`${seal.name}が自力で起き上がりました。`);
+  }
+}
+
+function updateExploring(seal, dt) {
+  if (seal.hp <= seal.maxHp * CONFIG.seal.lowHpRatio) { sendToInnOrSafe(seal); return; }
+  if (seal.carriedG > 0) { sendToSpend(seal); return; }
+  const monster = claimNearestMonster(seal);
+  if (monster) { seal.state = 'movingToMonster'; seal.targetId = monster.id; seal.target = { x: monster.x, y: monster.y }; return; }
+  if (!seal.target || distance(seal.x, seal.y, seal.target.x, seal.target.y) < CONFIG.seal.contactDistance) seal.target = randomCoastPoint();
+  moveSealToward(seal, seal.target, dt);
+}
+
+function claimNearestMonster(seal) {
+  const available = gameState.monsters.filter(m => m?.hp > 0 && (!m.assignedSealId || m.assignedSealId === seal.id));
+  const monster = available.reduce((best, m) => !best || distance(seal.x, seal.y, m.x, m.y) < distance(seal.x, seal.y, best.x, best.y) ? m : best, null);
+  if (monster) monster.assignedSealId = seal.id;
+  return monster;
+}
+
+function updateMovingToMonster(seal, dt) {
+  const monster = gameState.monsters.find(m => m?.id === seal.targetId);
+  if (!monster || monster.hp <= 0) { seal.targetId = null; seal.state = 'exploring'; return; }
+  seal.target = { x: monster.x, y: monster.y };
+  moveSealToward(seal, seal.target, dt);
+  if (distance(seal.x, seal.y, monster.x, monster.y) <= CONFIG.monster.contactDistance) { seal.state = 'fighting'; seal.combatTimer = 0; seal.monsterTimer = 0; }
+}
+
+function updateFighting(seal, dt) {
+  const monster = gameState.monsters.find(m => m?.id === seal.targetId);
+  if (!monster || monster.hp <= 0) { seal.targetId = null; seal.state = seal.carriedG > 0 ? 'returningToIsland' : 'exploring'; return; }
+  seal.combatTimer += dt; seal.monsterTimer += dt;
+  if (seal.combatTimer >= CONFIG.combat.sealAttackSeconds) {
+    seal.combatTimer = 0;
+    monster.hp -= Math.max(CONFIG.combat.minDamage, seal.attack - monster.defense);
+    if (monster.hp <= 0) {
+      seal.exp += CONFIG.monster.rewardExp; seal.carriedG += CONFIG.monster.rewardG; gameState.frameTemps.toRemoveMonsters.push(monster.id); logMessage(`${seal.name}がカニを倒して${CONFIG.monster.rewardG}Gを獲得！`); seal.targetId = null; seal.state = 'returningToIsland'; seal.target = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY); return;
+    }
+  }
+  if (seal.monsterTimer >= CONFIG.combat.monsterAttackSeconds) {
+    seal.monsterTimer = 0;
+    seal.hp -= Math.max(CONFIG.combat.minDamage, monster.attack - seal.defense);
+    if (seal.hp <= 0) { seal.hp = 0; monster.assignedSealId = null; seal.state = 'fallen'; seal.targetId = null; seal.rescueTargetId = null; logMessage(`${seal.name}が倒れました。`); }
+  }
+}
+
+function updateReturning(seal, dt) {
+  if (seal.hp <= seal.maxHp * CONFIG.seal.lowHpRatio) { sendToInnOrSafe(seal); return; }
+  const target = seal.target ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  moveSealToward(seal, target, dt);
+  if (distance(seal.x, seal.y, target.x, target.y) <= CONFIG.seal.contactDistance) {
+    const facility = gameState.world.objects.find(o => o?.id === seal.targetId);
+    if ((facility?.type === 'restaurant' || facility?.type === 'blacksmith') && isFacilityUsable(facility)) {
+      seal.state = 'spending';
+      seal.actionTimer = CONFIG.seal.spendSeconds;
+      return;
+    }
+    sendToSpend(seal);
+  }
+}
+
+function sendToSpend(seal) {
+  const restaurant = nearestFacility('restaurant', seal.x, seal.y);
+  const blacksmith = nearestFacility('blacksmith', seal.x, seal.y);
+  const facility = !restaurant ? blacksmith : !blacksmith ? restaurant : (Math.random() < 0.5 ? restaurant : blacksmith);
+  if (!facility || seal.carriedG <= 0) { seal.state = 'exploring'; seal.target = randomCoastPoint(); return; }
+  seal.targetId = facility.id; seal.target = centerOfObject(facility); seal.state = 'returningToIsland';
+  if (distance(seal.x, seal.y, seal.target.x, seal.target.y) <= CONFIG.seal.contactDistance) { seal.state = 'spending'; seal.actionTimer = CONFIG.seal.spendSeconds; }
+}
+
+function updateSpending(seal, dt) {
+  const facility = gameState.world.objects.find(o => o?.id === seal.targetId);
+  if (!facility || !isFacilityUsable(facility)) { seal.state = 'exploring'; return; }
+  seal.actionTimer -= dt;
+  if (seal.actionTimer > 0) return;
+  const base = CONFIG.facilities[facility.type]?.spendPerVisit ?? 0;
+  const spent = Math.min(seal.carriedG, Math.round(base * (1 + facilityBonus(facility))));
+  seal.carriedG -= spent; gameState.player.g += spent; logMessage(`${seal.name}が${CONFIG.facilities[facility.type]?.label}で${spent}G使いました。`);
+  if (seal.hp <= seal.maxHp * CONFIG.seal.lowHpRatio) sendToInnOrSafe(seal); else { seal.state = 'exploring'; seal.target = randomCoastPoint(); }
+}
+
+function sendToInnOrSafe(seal) {
+  const inn = nearestFacility('inn', seal.x, seal.y);
+  seal.targetId = inn?.id ?? null; seal.target = inn ? centerOfObject(inn) : gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY); seal.state = inn ? 'movingToInn' : 'returningToIsland';
+}
+
+function updateMovingToInn(seal, dt) {
+  const inn = gameState.world.objects.find(o => o?.id === seal.targetId);
+  if (!inn || !isFacilityUsable(inn)) { seal.targetId = null; seal.state = 'returningToIsland'; seal.target = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY); return; }
+  moveSealToward(seal, centerOfObject(inn), dt);
+  if (distance(seal.x, seal.y, centerOfObject(inn).x, centerOfObject(inn).y) <= CONFIG.seal.contactDistance) { seal.state = 'resting'; seal.actionTimer = CONFIG.seal.restSeconds; }
+}
+
+function updateResting(seal, dt) {
+  const inn = gameState.world.objects.find(o => o?.id === seal.targetId);
+  const bonus = inn ? facilityBonus(inn) : 0;
+  seal.hp = Math.min(seal.maxHp, seal.hp + CONFIG.facilities.inn.healPerSecond * (1 + bonus) * dt);
+  seal.actionTimer -= dt;
+  if (seal.hp >= seal.maxHp * CONFIG.seal.restTargetRatio && seal.actionTimer <= 0) { seal.state = seal.carriedG > 0 ? 'returningToIsland' : 'exploring'; seal.target = seal.carriedG > 0 ? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY) : randomCoastPoint(); logMessage(`${seal.name}が宿屋で回復しました。`); }
+}
+
+function findFallenForRescue(seal) {
+  return gameState.seals.find(other => other?.id !== seal.id && other?.state === 'fallen' && !isBeingCarried(other.id) && distance(seal.x, seal.y, other.x, other.y) <= CONFIG.seal.rescueScanDistance);
+}
+
+function isBeingCarried(sealId) { return gameState.seals.some(s => s?.rescueTargetId === sealId && s?.state === 'carryingFallenSeal'); }
+
+function updateRescuing(seal, dt) {
+  const fallen = gameState.seals.find(s => s?.id === seal.rescueTargetId);
+  if (!fallen || fallen.state !== 'fallen') { seal.rescueTargetId = null; seal.state = 'exploring'; return; }
+  moveSealToward(seal, { x: fallen.x, y: fallen.y }, dt);
+  if (distance(seal.x, seal.y, fallen.x, fallen.y) <= CONFIG.seal.contactDistance) {
+    seal.state = 'carryingFallenSeal';
+    const inn = nearestFacility('inn', seal.x, seal.y);
+    seal.targetId = inn?.id ?? null;
+    seal.target = inn ? centerOfObject(inn) : gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  }
+}
+
+function updateCarrying(seal, dt) {
+  const fallen = gameState.seals.find(s => s?.id === seal.rescueTargetId);
+  if (!fallen) { seal.rescueTargetId = null; seal.state = 'exploring'; return; }
+  moveSealToward(seal, seal.target, dt);
+  fallen.x = seal.x - CONFIG.seal.spread * 0.5; fallen.y = seal.y;
+  if (distance(seal.x, seal.y, seal.target.x, seal.target.y) > CONFIG.seal.contactDistance) return;
+  const inn = gameState.world.objects.find(o => o?.id === seal.targetId);
+  if (inn && isFacilityUsable(inn)) {
+    const fee = CONFIG.facilities.inn.fee;
+    const paidByFallen = Math.min(fallen.carriedG, fee);
+    fallen.carriedG -= paidByFallen;
+    const paidByRescuer = Math.min(seal.carriedG, fee - paidByFallen);
+    seal.carriedG -= paidByRescuer;
+    gameState.player.g += paidByFallen + paidByRescuer;
+    fallen.hp = Math.min(fallen.maxHp, fallen.maxHp * CONFIG.seal.restTargetRatio);
+    logMessage(`宿代${paidByFallen + paidByRescuer}G支払い、${fallen.name}を救助しました。`);
+  } else {
+    fallen.hp = Math.max(fallen.hp, fallen.maxHp * CONFIG.seal.standHpRatio);
+    logMessage(`${fallen.name}を安全地点へ運びました。`);
+  }
+  fallen.state = fallen.carriedG > 0 ? 'returningToIsland' : 'exploring'; fallen.target = fallen.carriedG > 0 ? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY) : randomCoastPoint();
+  seal.rescueTargetId = null; seal.state = seal.carriedG > 0 ? 'returningToIsland' : 'exploring'; seal.target = seal.carriedG > 0 ? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY) : randomCoastPoint();
+}
+
+function moveSealToward(seal, target, dt) {
+  if (!target) return;
+  const d = distance(seal.x, seal.y, target.x, target.y);
+  if (d <= CONFIG.seal.contactDistance) return;
+  const tile = worldToGrid(seal.x, seal.y);
+  const speed = CONFIG.seal.baseSpeed * (roadAt(tile.x, tile.y) ? CONFIG.seal.roadSpeedMultiplier : 1);
+  seal.x += ((target.x - seal.x) / d) * speed * dt;
+  seal.y += ((target.y - seal.y) / d) * speed * dt;
+}
+
+function removeDefeatedMonsters() {
+  if (gameState.frameTemps.toRemoveMonsters.length === 0) return;
+  const ids = new Set(gameState.frameTemps.toRemoveMonsters);
+  gameState.monsters = gameState.monsters.filter(m => !ids.has(m?.id));
+}
+
+function render() {
+  resizeCanvas();
+  ctx.clearRect(0, 0, canvas.width, canvas.height);
+  ctx.save();
+  ctx.scale(devicePixelRatioClamped(), devicePixelRatioClamped());
+  ctx.translate(canvas.clientWidth / 2, canvas.clientHeight / 2);
+  ctx.scale(gameState.camera.zoom, gameState.camera.zoom);
+  ctx.translate(-gameState.camera.x, -gameState.camera.y);
+  drawWorld();
+  drawRoads();
+  drawObjects();
+  drawMonsters();
+  drawSeals();
+  drawPlacementPreview();
+  ctx.restore();
+  ctx.save();
+  ctx.scale(devicePixelRatioClamped(), devicePixelRatioClamped());
+  drawMinimap();
+  ctx.restore();
+}
+
+function drawWorld() {
+  for (let y = 0; y < CONFIG.world.rows; y += 1) {
+    for (let x = 0; x < CONFIG.world.cols; x += 1) {
+      const wx = x * CONFIG.world.tile, wy = y * CONFIG.world.tile;
+      ctx.fillStyle = isIslandTile(x, y) ? CONFIG.render.island : isCoastTile(x, y) ? CONFIG.render.coast : '#126d8b';
+      if (isIslandTile(x, y) && (x === CONFIG.world.islandX || y === CONFIG.world.islandY || x === CONFIG.world.islandX + CONFIG.world.islandW - 1 || y === CONFIG.world.islandY + CONFIG.world.islandH - 1)) ctx.fillStyle = CONFIG.render.beach;
+      ctx.fillRect(wx, wy, CONFIG.world.tile, CONFIG.world.tile);
+      ctx.strokeStyle = CONFIG.render.gridLine; ctx.strokeRect(wx, wy, CONFIG.world.tile, CONFIG.world.tile);
+    }
+  }
+  drawLabel('島エリア', CONFIG.world.islandX * CONFIG.world.tile + 10, CONFIG.world.islandY * CONFIG.world.tile + 24, '#123');
+  drawLabel('外の冒険エリア：coast（カニ出現）', CONFIG.world.coastX * CONFIG.world.tile + 10, CONFIG.world.coastY * CONFIG.world.tile + 24, '#e8fbff');
+  const safe = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY); drawFlag(safe.x, safe.y);
+}
+
+function drawRoads() {
+  for (const r of gameState.world.roads) {
+    ctx.fillStyle = CONFIG.render.road; ctx.fillRect(r.x * CONFIG.world.tile + 5, r.y * CONFIG.world.tile + 14, CONFIG.world.tile - 10, CONFIG.world.tile - 28);
+    ctx.fillRect(r.x * CONFIG.world.tile + 14, r.y * CONFIG.world.tile + 5, CONFIG.world.tile - 28, CONFIG.world.tile - 10);
+  }
+}
+
+function drawObjects() {
+  for (const o of gameState.world.objects) {
+    if (o?.kind === 'facility') drawFacility(o); else drawDecoration(o);
+  }
+}
+
+function drawFacility(o) {
+  const x = o.x * CONFIG.world.tile, y = o.y * CONFIG.world.tile, w = o.w * CONFIG.world.tile, h = o.h * CONFIG.world.tile;
+  ctx.fillStyle = CONFIG.render.shadow; ctx.fillRect(x + 5, y + 7, w, h);
+  const image = createImage(`cards.facility_neutral_${o.type}_idle`);
+  safeDrawImage(ctx, image, x, y, w, h, () => {
+    ctx.fillStyle = CONFIG.facilities[o.type]?.color ?? '#777'; ctx.fillRect(x + 5, y + 12, w - 10, h - 17);
+    ctx.fillStyle = '#3a2115'; ctx.fillRect(x + 16, y + h - 30, w - 32, 26);
+    ctx.fillStyle = '#fff4c0'; ctx.fillText(CONFIG.facilities[o.type]?.label ?? o.type, x + 12, y + 30);
+  });
+  ctx.strokeStyle = isFacilityUsable(o) ? '#5cff7d' : '#ff5a50'; ctx.lineWidth = 3 / gameState.camera.zoom; ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
+  const e = entranceTile(o); ctx.fillStyle = isFacilityUsable(o) ? '#64ff95' : '#ff5757'; ctx.beginPath(); ctx.arc((e.x + 0.5) * CONFIG.world.tile, (e.y + 0.5) * CONFIG.world.tile, 7, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawDecoration(o) {
+  const x = o.x * CONFIG.world.tile + CONFIG.world.tile / 2, y = o.y * CONFIG.world.tile + CONFIG.world.tile / 2;
+  ctx.fillStyle = CONFIG.render.shadow; ctx.beginPath(); ctx.ellipse(x + 3, y + 9, 15, 7, 0, 0, Math.PI * 2); ctx.fill();
+  if (o.type === 'tree') { ctx.fillStyle = '#7a4b25'; ctx.fillRect(x - 4, y, 8, 16); ctx.fillStyle = '#1f7f3b'; ctx.beginPath(); ctx.arc(x, y - 5, 17, 0, Math.PI * 2); ctx.fill(); }
+  if (o.type === 'flower') { ctx.fillStyle = '#ffd34f'; ctx.beginPath(); ctx.arc(x, y, 5, 0, Math.PI * 2); ctx.fill(); ctx.strokeStyle = '#ff7bbd'; ctx.lineWidth = 5; for (const d of CONFIG.directions) { ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x + d.dx * 12, y + d.dy * 12); ctx.stroke(); } }
+  if (o.type === 'rock') { ctx.fillStyle = '#9b9b91'; ctx.beginPath(); ctx.ellipse(x, y, 16, 12, -0.4, 0, Math.PI * 2); ctx.fill(); }
+}
+
+function drawMonsters() {
+  for (const m of gameState.monsters) {
+    const image = createImage('monsters.crab_fire_single_idle');
+    safeDrawImage(ctx, image, m.x - 22, m.y - 22, 44, 44, () => drawCrab(m.x, m.y));
+    drawHpBar(m.x - 20, m.y - 30, 40, m.hp / m.maxHp, '#e14635');
+  }
+}
+
+function drawSeals() {
+  for (const s of gameState.seals) {
+    ctx.fillStyle = CONFIG.render.shadow; ctx.beginPath(); ctx.ellipse(s.x, s.y + 15, 20, 7, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = s.state === 'fallen' ? '#cbd2d8' : '#fff7ec'; ctx.beginPath(); ctx.ellipse(s.x, s.y, 21, 16, 0, 0, Math.PI * 2); ctx.fill();
+    ctx.fillStyle = '#20242a'; ctx.beginPath(); ctx.arc(s.x - 7, s.y - 3, 2.2, 0, Math.PI * 2); ctx.arc(s.x + 7, s.y - 3, 2.2, 0, Math.PI * 2); ctx.fill();
+    ctx.strokeStyle = '#20242a'; ctx.beginPath(); ctx.arc(s.x, s.y + 3, 5, 0, Math.PI); ctx.stroke();
+    drawHpBar(s.x - 22, s.y - 29, 44, s.hp / s.maxHp, '#5fe45e');
+  }
+}
+
+function drawPlacementPreview() {
+  const gx = gameState.input.mouseTile.x, gy = gameState.input.mouseTile.y;
+  const tool = getTool(gameState.ui.selectedTool);
+  if (gx < 0 || gy < 0) return;
+  const result = canPlace(tool.id, gx, gy);
+  ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
+  ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, (tool.w ?? 1) * CONFIG.world.tile, (tool.h ?? 1) * CONFIG.world.tile);
+  const fb = gameState.ui.placementFeedback;
+  if (fb) drawLabel(fb.text, fb.x * CONFIG.world.tile, fb.y * CONFIG.world.tile - 8, fb.ok ? '#d8ffe0' : '#ffd6d6');
+}
+
+function drawCrab(x, y) {
+  ctx.fillStyle = '#d6502b'; ctx.beginPath(); ctx.ellipse(x, y, 16, 12, 0, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = '#d6502b'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(x - 14, y); ctx.lineTo(x - 27, y - 10); ctx.moveTo(x + 14, y); ctx.lineTo(x + 27, y - 10); ctx.stroke();
+  ctx.fillStyle = '#111'; ctx.beginPath(); ctx.arc(x - 6, y - 5, 2, 0, Math.PI * 2); ctx.arc(x + 6, y - 5, 2, 0, Math.PI * 2); ctx.fill();
+}
+
+function drawFlag(x, y) { ctx.fillStyle = '#73451d'; ctx.fillRect(x - 3, y - 28, 6, 38); ctx.fillStyle = '#2a7bd1'; ctx.fillRect(x + 3, y - 28, 24, 16); ctx.fillStyle = '#ffd24d'; ctx.fillText('S', x + 9, y - 16); }
+function drawHpBar(x, y, w, ratio, color) { ctx.fillStyle = 'rgba(0,0,0,.45)'; ctx.fillRect(x, y, w, 6); ctx.fillStyle = color; ctx.fillRect(x, y, Math.max(0, Math.min(1, ratio ?? 0)) * w, 6); ctx.strokeStyle = 'rgba(0,0,0,.45)'; ctx.strokeRect(x, y, w, 6); }
+function drawLabel(text, x, y, color) { ctx.font = CONFIG.render.bigFont; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(text, x + 1, y + 1); ctx.fillStyle = color; ctx.fillText(text, x, y); }
+
+function drawMinimap() {
+  const w = CONFIG.render.minimapW, h = CONFIG.render.minimapH, x = 14, y = canvas.clientHeight - h - 154;
+  ctx.fillStyle = 'rgba(5,18,28,.82)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.strokeRect(x, y, w, h);
+  const sx = w / (CONFIG.world.cols * CONFIG.world.tile), sy = h / (CONFIG.world.rows * CONFIG.world.tile);
+  ctx.fillStyle = '#79b85c'; ctx.fillRect(x + CONFIG.world.islandX * CONFIG.world.tile * sx, y + CONFIG.world.islandY * CONFIG.world.tile * sy, CONFIG.world.islandW * CONFIG.world.tile * sx, CONFIG.world.islandH * CONFIG.world.tile * sy);
+  ctx.fillStyle = '#1b90a9'; ctx.fillRect(x + CONFIG.world.coastX * CONFIG.world.tile * sx, y + CONFIG.world.coastY * CONFIG.world.tile * sy, CONFIG.world.coastW * CONFIG.world.tile * sx, CONFIG.world.coastH * CONFIG.world.tile * sy);
+  ctx.fillStyle = '#ff3b30'; for (const m of gameState.monsters) ctx.fillRect(x + m.x * sx - 2, y + m.y * sy - 2, 4, 4);
+  ctx.fillStyle = '#fff'; for (const s of gameState.seals) ctx.fillRect(x + s.x * sx - 2, y + s.y * sy - 2, 4, 4);
+  ctx.strokeStyle = '#fff'; ctx.strokeRect(x + (gameState.camera.x - canvas.clientWidth / (2 * gameState.camera.zoom)) * sx, y + (gameState.camera.y - canvas.clientHeight / (2 * gameState.camera.zoom)) * sy, canvas.clientWidth / gameState.camera.zoom * sx, canvas.clientHeight / gameState.camera.zoom * sy);
+}
+
+function updateHud() {
+  statsEl.innerHTML = `<b>${gameState.player.g} G</b><br>ズーム: ${gameState.camera.zoom.toFixed(2)}<br>ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<div class="log">${gameState.logs.map(l => `・${l}`).join('<br>')}</div>`;
+  sealCardsEl.innerHTML = gameState.seals.map(s => `<div class="panel sealCard"><b>${s.name}</b><br>HP ${Math.ceil(s.hp)} / ${s.maxHp}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, s.hp / s.maxHp * 100))}%"></div></div>所持G: ${s.carriedG}<br>EXP: ${s.exp}<br>状態: ${stateLabel(s.state)}</div>`).join('');
+}
+function stateLabel(state) { return ({ exploring:'探索中', movingToMonster:'カニへ移動', fighting:'戦闘中', returningToIsland:'島へ帰還', spending:'利用中', movingToInn:'宿屋へ移動', resting:'休憩中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
+
+function screenToWorld(clientX, clientY) {
+  const rect = canvas.getBoundingClientRect();
+  return { x: gameState.camera.x + (clientX - rect.left - canvas.clientWidth / 2) / gameState.camera.zoom, y: gameState.camera.y + (clientY - rect.top - canvas.clientHeight / 2) / gameState.camera.zoom };
+}
+function updateMouse(clientX, clientY) { const p = screenToWorld(clientX, clientY); gameState.input.mouseWorld = p; gameState.input.mouseTile = worldToGrid(p.x, p.y); }
+function setZoom(next, clientX, clientY) { const before = screenToWorld(clientX ?? canvas.clientWidth / 2, clientY ?? canvas.clientHeight / 2); gameState.camera.zoom = Math.max(CONFIG.camera.minZoom, Math.min(CONFIG.camera.maxZoom, next)); const after = screenToWorld(clientX ?? canvas.clientWidth / 2, clientY ?? canvas.clientHeight / 2); gameState.camera.x += before.x - after.x; gameState.camera.y += before.y - after.y; updateHud(); }
+
+function resizeCanvas() { const dpr = devicePixelRatioClamped(); const w = Math.floor(canvas.clientWidth * dpr), h = Math.floor(canvas.clientHeight * dpr); if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } }
+function devicePixelRatioClamped() { return Math.max(CONFIG.canvas.minDevicePixelRatio, Math.min(CONFIG.canvas.maxDevicePixelRatio, window.devicePixelRatio || 1)); }
+
+function buildTools() {
+  toolsEl.innerHTML = '<b>ツール</b>' + CONFIG.tools.map(t => `<button data-tool="${t.id}">${t.label}</button>`).join('') + '<button data-action="rotate">R 回転</button>';
+  toolsEl.addEventListener('click', e => { const tool = e.target?.dataset?.tool; if (tool) { gameState.ui.selectedTool = tool; updateToolButtons(); updateHud(); } if (e.target?.dataset?.action === 'rotate') rotateTool(); });
+  updateToolButtons();
+}
+function updateToolButtons() { for (const b of toolsEl.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b.dataset.tool === gameState.ui.selectedTool); }
+function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionIndex + 1) % CONFIG.directions.length; updateHud(); }
+
+canvas.addEventListener('mousemove', e => {
+  updateMouse(e.clientX, e.clientY);
+  if (gameState.camera.dragging) {
+    gameState.camera.x -= e.movementX / gameState.camera.zoom;
+    gameState.camera.y -= e.movementY / gameState.camera.zoom;
+    if (distance(e.clientX, e.clientY, gameState.camera.dragStartX, gameState.camera.dragStartY) > CONFIG.seal.contactDistance) gameState.camera.dragMoved = true;
+  }
+});
+canvas.addEventListener('mousedown', e => {
+  if (e.button !== CONFIG.camera.dragButton) return;
+  updateMouse(e.clientX, e.clientY);
+  gameState.camera.dragging = true;
+  gameState.camera.dragMoved = false;
+  gameState.camera.dragStartX = e.clientX;
+  gameState.camera.dragStartY = e.clientY;
+});
+window.addEventListener('mouseup', e => {
+  if (!gameState.camera.dragging) return;
+  gameState.camera.dragging = false;
+  if (gameState.camera.dragMoved || gameState.phase !== CONFIG.phase.playing) return;
+  updateMouse(e.clientX, e.clientY);
+  const t = getTool(gameState.ui.selectedTool);
+  if (t.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y); else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
+  updateHud();
+});
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+canvas.addEventListener('wheel', e => { e.preventDefault(); setZoom(gameState.camera.zoom + (e.deltaY < 0 ? CONFIG.camera.wheelStep : -CONFIG.camera.wheelStep), e.clientX, e.clientY); }, { passive: false });
+window.addEventListener('keydown', e => { gameState.input.keys[e.code] = true; if (e.code === 'KeyR') rotateTool(); });
+window.addEventListener('keyup', e => { gameState.input.keys[e.code] = false; });
+startBtn.addEventListener('click', initGame);
+zoomInBtn.addEventListener('click', () => setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep));
+zoomOutBtn.addEventListener('click', () => setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep));
+
+function loop(now) {
+  const dt = Math.min(CONFIG.timing.maxDt, (now - gameState.lastTime) / 1000);
+  gameState.lastTime = now;
+  update(dt);
+  render();
+  requestAnimationFrame(loop);
+}
+
+buildTools();
+updateHud();
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
