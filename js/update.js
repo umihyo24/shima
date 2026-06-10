@@ -130,8 +130,18 @@ function chooseUnlockedVisitorProfile() {
 
 function spawnVisitorFromProfile(profile) {
   if (!profile) return null;
-  const entry = getEntryCorridor();
-  const start = routeWaypointToWorld(entry?.waypoints?.[0]) ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  const preferred = getVisitorPreferredSpawnPoint();
+  const start = findNearestPassableSpawnPoint(preferred);
+  if (!start) {
+    if (!gameState.warnings?.visitorSpawnBlocked) {
+      gameState.warnings = gameState.warnings ?? {};
+      gameState.warnings.visitorSpawnBlocked = true;
+      logMessage('訪問者の入口が水上または通行不能なため、今回は来訪を見送りました。');
+    }
+    return null;
+  }
+  gameState.warnings = gameState.warnings ?? {};
+  gameState.warnings.visitorSpawnBlocked = false;
   profile.visits = clampInteger(profile.visits, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
   profile.unlocked = true;
   const base = profile.baseStats ?? {};
@@ -166,8 +176,6 @@ function spawnVisitorFromProfile(profile) {
 }
 
 function spawnVisitor() {
-  const entry = getEntryCorridor();
-  if (!entry?.waypoints?.length) { logMessage('入口通路がないため、訪問者は来られません。'); return null; }
   return spawnVisitorFromProfile(chooseUnlockedVisitorProfile());
 }
 
@@ -209,10 +217,6 @@ function shouldReturnFromHunt(seal) {
 
 function chooseNextHuntTarget(seal) {
   return claimNearestMonster(seal, seal?.selectedHuntAreaId ?? 'coast');
-}
-
-function chooseFacilityAfterHunt(seal) {
-  return chooseFacilityForSeal(seal);
 }
 
 function updateSeals(dt) {
@@ -257,10 +261,8 @@ function updateFallen(seal, dt) {
 function updateArriving(seal, dt) {
   seal.leaveAfterFacilityUse = false;
   if (!Array.isArray(seal.path) || seal.path.length <= 0) {
-    const entry = getEntryCorridor();
-    const route = corridorWaypointsToWorld(entry, false);
-    const village = villageWanderPoint();
-    setSealPath(seal, [...route.slice(1), village], 'arriving');
+    const village = getVillageEntryPoint();
+    if (!setSealDestination(seal, village, 'arriving')) { persistAndRemoveVisitor(seal); return; }
     seal.wanderTimer = CONFIG.seal.wanderSeconds;
   }
   updateSealMovement(seal, dt * 1000);
@@ -268,18 +270,27 @@ function updateArriving(seal, dt) {
 
 function updateChoosingHuntArea(seal) {
   const areaId = seal?.selectedHuntAreaId ?? 'coast';
-  if (!buildRouteToArea(seal, areaId)) { warnNoHuntCorridor(seal); return; }
   seal.selectedHuntAreaId = areaId;
   seal.targetId = null;
   seal.huntTimer = 0;
   seal.noMonsterTimer = 0;
   seal.huntCountThisTrip = 0;
-  seal.state = 'movingToHuntExit';
+  const monster = chooseNextHuntTarget(seal);
+  const target = monster ? { x: monster.x, y: monster.y } : randomHuntAreaPoint(areaId);
+  if (monster) seal.targetId = monster.id;
+  if (!setSealDestination(seal, target, monster ? 'monster' : 'hunt-wander')) {
+    if (monster) monster.assignedSealId = null;
+    seal.targetId = null;
+    warnNoHuntCorridor(seal);
+    return;
+  }
+  seal.state = monster ? 'movingToMonster' : 'movingToHuntExit';
 }
 
 function updateMovingToHuntExit(seal, dt) {
   if (!seal?.target || !Array.isArray(seal.path)) {
-    if (!buildRouteToArea(seal, seal?.selectedHuntAreaId ?? 'coast')) { warnNoHuntCorridor(seal); return; }
+    const target = randomHuntAreaPoint(seal?.selectedHuntAreaId ?? 'coast');
+    if (!setSealDestination(seal, target, 'hunt-wander')) { warnNoHuntCorridor(seal); return; }
   }
   updateSealMovement(seal, dt * 1000);
 }
@@ -289,7 +300,13 @@ function updateHunting(seal, dt) {
   if (shouldReturnFromHunt(seal)) { sendSealBackThroughHuntCorridor(seal); return; }
   const areaId = seal?.selectedHuntAreaId ?? 'coast';
   const monster = chooseNextHuntTarget(seal);
-  if (monster) { seal.noMonsterTimer = 0; seal.state = 'movingToMonster'; seal.targetId = monster.id; setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster'); return; }
+  if (monster) {
+    seal.noMonsterTimer = 0;
+    seal.targetId = monster.id;
+    if (setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster')) { seal.state = 'movingToMonster'; return; }
+    monster.assignedSealId = null;
+    seal.targetId = null;
+  }
   seal.noMonsterTimer = safeFiniteNumber(seal.noMonsterTimer, 0, 0) + dt;
   seal.wanderTimer = Math.max(0, safeFiniteNumber(seal.wanderTimer, 0, 0) - dt);
   if (!seal.target || seal.wanderTimer <= 0 || distance(seal.x, seal.y, seal.target.x, seal.target.y) < CONFIG.seal.contactDistance) {
@@ -315,7 +332,9 @@ function updateMovingToMonster(seal, dt) {
   const monster = (gameState.monsters ?? []).find(m => m?.id === seal.targetId);
   if (!monster || monster.hp <= 0) { seal.targetId = null; seal.state = 'hunting'; return; }
   if (shouldReturnFromHunt(seal)) { monster.assignedSealId = null; seal.targetId = null; sendSealBackThroughHuntCorridor(seal); return; }
-  seal.target = { x: monster.x, y: monster.y };
+  if (!seal.target || seal.pathTargetKey !== `${worldToGrid(monster.x, monster.y).x},${worldToGrid(monster.x, monster.y).y}:monster`) {
+    if (!setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster')) { monster.assignedSealId = null; seal.targetId = null; seal.state = 'hunting'; return; }
+  }
   updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, monster.x, monster.y) <= CONFIG.monster.contactDistance) { seal.state = 'fighting'; seal.combatTimer = 0; seal.monsterTimer = 0; }
 }
@@ -359,54 +378,22 @@ function updateReturningFromHunt(seal, dt) {
 function updateChoosingFacility(seal, dt) {
   if (seal.wanderTimer > 0) {
     seal.wanderTimer -= dt;
-    if (!seal.target || distance(seal.x, seal.y, seal.target.x, seal.target.y) < CONFIG.seal.contactDistance) seal.target = villageWanderPoint();
+    if (!seal.target || distance(seal.x, seal.y, seal.target.x, seal.target.y) < CONFIG.seal.contactDistance) setSealDestination(seal, villageWanderPoint(), 'village-wander');
     updateSealMovement(seal, dt * 1000);
     if (seal.wanderTimer > 0) return;
   }
   const facility = chooseFacilityAfterHunt(seal);
   if (!facility) { handleNoUsableFacility(seal); return; }
   seal.targetId = facility.id;
-  setSealDestination(seal, centerOfObject(facility), 'facility');
+  if (!setSealDestination(seal, facilityInteractionPoint(facility), 'facility')) { seal.targetId = null; handleNoUsableFacility(seal); return; }
   seal.state = 'movingToFacility';
-}
-
-function chooseFacilityForSeal(seal) {
-  const hpRatio = seal.maxHp > 0 ? seal.hp / seal.maxHp : 0;
-  const candidates = [];
-  const inn = nearestFacility('inn', seal.x, seal.y);
-  const restaurant = nearestFacility('restaurant', seal.x, seal.y);
-  const blacksmith = nearestFacility('blacksmith', seal.x, seal.y);
-  if (inn && seal.carriedG >= CONFIG.facilities.inn.fee) {
-    let weight = CONFIG.seal.facilityChoiceWeights.inn;
-    if (hpRatio <= CONFIG.seal.innHpThreshold) weight += CONFIG.seal.facilityChoiceWeights.inn;
-    else if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) weight += CONFIG.seal.facilityChoiceWeights.inn;
-    if (seal.mealCountSinceInn >= CONFIG.seal.mealsBeforeInnSoftLimit) weight += CONFIG.seal.mealsInnChanceBoost;
-    candidates.push({ facility: inn, weight });
-  }
-  if (seal.carriedG > 0 && hpRatio > CONFIG.seal.lowHpRatio) {
-    if (restaurant) candidates.push({ facility: restaurant, weight: CONFIG.seal.facilityChoiceWeights.restaurant / (1 + (seal.facilityUseCounts?.restaurant ?? 0)) });
-    if (blacksmith) candidates.push({ facility: blacksmith, weight: CONFIG.seal.facilityChoiceWeights.blacksmith / (1 + (seal.facilityUseCounts?.blacksmith ?? 0)) });
-  }
-  if (hpRatio <= CONFIG.seal.innHpThreshold && inn) return inn;
-  return weightedFacility(candidates);
-}
-
-function weightedFacility(candidates) {
-  const valid = (candidates ?? []).filter(item => item?.facility && isFacilityUsable(item.facility) && item.weight > 0);
-  const total = valid.reduce((sum, item) => sum + item.weight, 0);
-  let roll = Math.random() * Math.max(total, 1);
-  for (const item of valid) {
-    roll -= item.weight;
-    if (roll <= 0) return item.facility;
-  }
-  return valid[0]?.facility ?? null;
 }
 
 function updateMovingToFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
-  const target = centerOfObject(facility);
-  setSealDestination(seal, target, 'facility');
+  const target = facilityInteractionPoint(facility);
+  if (!setSealDestination(seal, target, 'facility')) { seal.targetId = null; seal.state = 'choosingFacility'; return; }
   updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, target.x, target.y) <= CONFIG.seal.contactDistance) {
     seal.actionTimer = facility.type === 'inn' ? CONFIG.seal.restSeconds : CONFIG.seal.spendSeconds;
@@ -496,7 +483,9 @@ function afterVillageActivity(seal) {
 }
 
 function updateLeaving(seal, dt) {
-  if (!seal?.target || !Array.isArray(seal.path)) buildRouteToVillage(seal);
+  if (!seal?.target || !Array.isArray(seal.path)) {
+    if (!buildRouteToVillage(seal)) { persistAndRemoveVisitor(seal); return; }
+  }
   updateSealMovement(seal, dt * 1000);
 }
 
@@ -508,7 +497,7 @@ function persistAndRemoveVisitor(seal) {
 }
 
 function updateIdle(seal, dt) {
-  if (seal?.type === 'resident' && getHuntingCorridorForArea(seal.selectedHuntAreaId ?? 'coast')) { seal.state = 'choosingHuntArea'; return; }
+  if (seal?.type === 'resident') { seal.state = 'choosingHuntArea'; return; }
   seal.wanderTimer = Math.max(0, safeFiniteNumber(seal.wanderTimer, 0, 0) - dt);
   if (!seal.target || seal.wanderTimer <= 0 || distance(seal.x, seal.y, seal.target.x, seal.target.y) < CONFIG.seal.contactDistance) {
     setSealDestination(seal, villageWanderPoint(), 'idle');
@@ -545,9 +534,9 @@ function updateRescuing(seal, dt) {
   setSealDestination(seal, { x: fallen.x, y: fallen.y }, 'rescue'); updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, fallen.x, fallen.y) <= CONFIG.seal.contactDistance) {
     seal.state = 'carryingFallenSeal';
-    const inn = nearestFacility('inn', seal.x, seal.y);
+    const inn = chooseInnForSeal(seal);
     seal.targetId = inn?.id ?? null;
-    setSealDestination(seal, inn ? centerOfObject(inn) : (routeWaypointToWorld(getEntryCorridor()?.waypoints?.[1]) ?? villageWanderPoint()), 'carry');
+    setSealDestination(seal, inn ? facilityInteractionPoint(inn) : getVillageEntryPoint(), 'carry');
   }
 }
 
@@ -582,33 +571,16 @@ function updateCarrying(seal, dt) {
 
 function buildRouteToArea(seal, areaId) {
   if (!seal) return false;
-  const corridor = getHuntingCorridorForArea(areaId);
-  const route = corridorWaypointsToWorld(corridor, false);
-  if (route.length <= 0) return false;
-  seal.selectedHuntAreaId = String(areaId ?? corridor?.areaId ?? 'coast');
-  seal.selectedRouteId = String(corridor?.id ?? '');
-  seal.routeDirection = 'outbound';
-  return setSealPath(seal, buildPathToRouteStart(seal, route, 'hunt-corridor'), 'hunt-corridor');
+  seal.selectedHuntAreaId = String(areaId ?? 'coast');
+  return setSealDestination(seal, randomHuntAreaPoint(seal.selectedHuntAreaId), 'hunt-wander');
 }
 
 function buildRouteToVillage(seal) {
   if (!seal) return false;
-  const huntCorridor = getHuntingCorridorForArea(seal?.selectedHuntAreaId ?? 'coast');
-  const entryCorridor = getEntryCorridor();
-  const routeSource = seal?.type === 'visitor' ? entryCorridor : huntCorridor;
-  const route = corridorWaypointsToWorld(routeSource, true);
-  if (route.length <= 0) return false;
-  seal.selectedRouteId = String(routeSource?.id ?? '');
-  seal.routeDirection = 'inbound';
-  return setSealPath(seal, buildPathToRouteStart(seal, route, 'village-route'), 'village-route');
-}
-
-function buildPathToRouteStart(seal, route, reason) {
-  if (!seal || !Array.isArray(route) || route.length <= 0) return [];
-  const first = route[0];
-  const pathToStart = findPath(worldToGrid(seal.x, seal.y), worldToGrid(first.x, first.y), { seal, reason });
-  if (Array.isArray(pathToStart) && pathToStart.length > 0) return [...pathToStart, ...route.slice(1)];
-  return route;
+  const target = seal.type === 'visitor' && seal.state === 'leaving'
+    ? (findNearestPassableSpawnPoint(getVisitorPreferredSpawnPoint()) ?? getVillageEntryPoint())
+    : getVillageEntryPoint();
+  return setSealDestination(seal, target, seal.type === 'visitor' && seal.state === 'leaving' ? 'leaving' : 'village-route');
 }
 
 function setSealDestination(seal, worldPosition, reason) {
@@ -679,7 +651,7 @@ function advanceSealStateAfterArrival(seal) {
   if (!seal) return;
   seal.path = [];
   if (seal.state === 'arriving') { seal.state = 'choosingFacility'; return; }
-  if (seal.state === 'movingToHuntExit') { setSealDestination(seal, randomHuntAreaPoint(seal.selectedHuntAreaId ?? 'coast'), 'hunt-area'); seal.state = 'hunting'; return; }
+  if (seal.state === 'movingToHuntExit') { seal.target = null; seal.state = 'hunting'; return; }
   if (seal.state === 'returningFromHunt') { seal.target = null; seal.targetId = null; seal.state = 'choosingFacility'; return; }
   if (seal.state === 'leaving') {
     addFavor(seal, CONFIG.visitor.safeLeaveFavor);
@@ -740,9 +712,9 @@ function getTileMoveCost(tile, options = {}) {
   const x = clampInteger(tile?.x, 0, CONFIG.world.cols - 1, -1);
   const y = clampInteger(tile?.y, 0, CONFIG.world.rows - 1, -1);
   const cell = getTile(x, y);
-  if (!cell) return Infinity;
-  if (roadAt(x, y)) return CONFIG.movement.roadCost;
+  if (!cell || objectAt(x, y)) return Infinity;
   if (cell.terrain === CONFIG.tileState.terrainWater) return Infinity;
+  if (roadAt(x, y)) return CONFIG.movement.roadCost;
   if (cell.terrain === CONFIG.tileState.terrainOutside) return CONFIG.movement.outsideCost;
   if (cell.terrain === CONFIG.tileState.terrainLand && cell.buildState === CONFIG.tileState.buildable && cell.obstacle === null) return CONFIG.movement.buildableCost;
   return Infinity;

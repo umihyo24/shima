@@ -19,6 +19,7 @@ function createNewGameState() {
     calendar: { year: 1, month: 1, week: 1, weekTimerMs: 0 },
     stats: { monthlyHunts: 0, monthlyKnownnessGained: 0, monthlyPlayerIncome: 0 },
     frameTemps: { occupied: new Set(), usableFacilities: [], toRemoveMonsters: [] },
+    warnings: { visitorSpawnBlocked: false },
     lastTime: performance.now()
   };
 }
@@ -108,8 +109,6 @@ function normalizeSeals(seals) {
   if (!Array.isArray(seals)) return [];
   const states = Object.values(CONFIG.sealStates ?? {});
   return seals.map((s, index) => normalizeSeal(s, index)).filter(Boolean).map(seal => {
-    if (seal.state === 'choosingHuntGate') seal.state = 'choosingHuntArea';
-    if (seal.state === 'movingToHuntGate') seal.state = 'movingToHuntExit';
     if (seal.state === 'resting') seal.state = 'usingFacility';
     if (!states.includes(seal.state)) seal.state = seal.type === 'visitor' ? 'arriving' : 'choosingHuntArea';
     return seal;
@@ -118,7 +117,7 @@ function normalizeSeals(seals) {
 
 function normalizeSeal(s, index) {
   if (!s || typeof s !== 'object') return null;
-  const entry = routeWaypointToWorld(getEntryCorridor()?.waypoints?.[1]) ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  const entry = findNearestPassableSpawnPoint(getVisitorPreferredSpawnPoint()) ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
   const isVisitor = s?.type === 'visitor';
   return {
     id: String(s?.id || (isVisitor ? `visitor-${Date.now()}-${index}` : 'resident-seal')),
@@ -141,9 +140,7 @@ function normalizeSeal(s, index) {
     state: String(s?.state || (isVisitor ? 'arriving' : 'choosingHuntArea')),
     targetId: s?.targetId ? String(s.targetId) : null,
     target: s?.target ? { x: safeFiniteNumber(s.target?.x, entry.x), y: safeFiniteNumber(s.target?.y, entry.y) } : null,
-    selectedHuntAreaId: s?.selectedHuntAreaId ? String(s.selectedHuntAreaId) : (s?.selectedHuntGateId ? 'coast' : null),
-    selectedRouteId: s?.selectedRouteId ? String(s.selectedRouteId) : null,
-    routeDirection: s?.routeDirection ? String(s.routeDirection) : null,
+    selectedHuntAreaId: s?.selectedHuntAreaId ? String(s.selectedHuntAreaId) : null,
     visits: clampInteger(s?.visits, 0, Number.MAX_SAFE_INTEGER, isVisitor ? 1 : 0),
     facilityUseCounts: normalizeFacilityUseCounts(s?.facilityUseCounts),
     mealCountSinceInn: clampInteger(s?.mealCountSinceInn, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -508,7 +505,7 @@ function deleteAt(gx, gy) {
   gameState.ui.placementFeedback = { x: gx, y: gy, ok: before !== gameState.world.roads.length, text: before !== gameState.world.roads.length ? '削除しました。' : '削除対象がありません。', timer: CONFIG.placement.feedbackSeconds };
 }
 
-function entranceTile(facility) {
+function getFacilityEntranceTile(facility) {
   const index = facility?.directionIndex ?? 0;
   const x = facility?.x ?? 0;
   const y = facility?.y ?? 0;
@@ -520,10 +517,25 @@ function entranceTile(facility) {
   return { x: x - 1, y: y + Math.floor(h / 2) };
 }
 
+function entranceTile(facility) { return getFacilityEntranceTile(facility); }
+
+function isPassableTile(gx, gy, options = {}) {
+  const tile = getTile(gx, gy);
+  if (!tile) return false;
+  if (objectAt(gx, gy)) return false;
+  if (tile.terrain === CONFIG.tileState.terrainWater) return options.allowWater === true;
+  if (tile.terrain === CONFIG.tileState.terrainOutside) return true;
+  return tile.terrain === CONFIG.tileState.terrainLand
+    && tile.buildState === CONFIG.tileState.buildable
+    && tile.obstacle === null;
+}
+
 function isFacilityUsable(facility) {
-  if (facility?.kind !== 'facility') return false;
-  const e = entranceTile(facility);
-  return roadAt(e.x, e.y);
+  if (facility?.kind !== 'facility' || !facility?.id) return false;
+  const current = (gameState.world.objects ?? []).find(o => o?.id === facility.id);
+  if (current !== facility) return false;
+  const e = getFacilityEntranceTile(facility);
+  return Number.isFinite(e?.x) && Number.isFinite(e?.y) && roadAt(e.x, e.y) && isPassableTile(e.x, e.y);
 }
 
 function facilityBonus(facility) {
@@ -539,13 +551,93 @@ function facilityBonus(facility) {
   return count * cfg.bonusRate;
 }
 
-function usableFacilities(type) {
-  return gameState.world.objects.filter(o => o?.type === type && isFacilityUsable(o));
+function getAllFacilitiesByType(type) {
+  const typeId = String(type ?? '');
+  return (gameState.world.objects ?? []).filter(o => o?.kind === 'facility' && o?.type === typeId);
+}
+
+function getUsableFacilitiesByType(type) {
+  return getAllFacilitiesByType(type).filter(isFacilityUsable);
+}
+
+function usableFacilities(type) { return getUsableFacilitiesByType(type); }
+
+function getFacilityInteractionTile(facility) {
+  const entrance = getFacilityEntranceTile(facility);
+  if (Number.isFinite(entrance?.x) && Number.isFinite(entrance?.y) && isPassableTile(entrance.x, entrance.y)) return entrance;
+  const candidates = [];
+  for (let radius = 1; radius <= 2; radius += 1) {
+    for (let y = (facility?.y ?? 0) - radius; y < (facility?.y ?? 0) + (facility?.h ?? 1) + radius; y += 1) {
+      for (let x = (facility?.x ?? 0) - radius; x < (facility?.x ?? 0) + (facility?.w ?? 1) + radius; x += 1) {
+        if (!isPassableTile(x, y)) continue;
+        candidates.push({ x, y, road: roadAt(x, y) ? 0 : 1, d: distance(x, y, entrance?.x ?? x, entrance?.y ?? y) });
+      }
+    }
+    if (candidates.length > 0) break;
+  }
+  candidates.sort((a, b) => (a.road - b.road) || (a.d - b.d));
+  return candidates[0] ? { x: candidates[0].x, y: candidates[0].y } : entrance;
+}
+
+function facilityInteractionPoint(facility) {
+  const tile = getFacilityInteractionTile(facility);
+  return Number.isFinite(tile?.x) && Number.isFinite(tile?.y) ? gridToWorld(tile.x, tile.y) : centerOfObject(facility);
+}
+
+function estimatePathCostBetweenPoints(from, to, reason = 'facility') {
+  if (!from || !to) return Infinity;
+  const path = findPath(worldToGrid(from.x, from.y), worldToGrid(to.x, to.y), { reason });
+  if (!Array.isArray(path) || path.length <= 0) return Infinity;
+  return path.reduce((sum, point) => {
+    const tile = worldToGrid(point.x, point.y);
+    const moveCost = getTileMoveCost(tile, { reason });
+    return sum + (Number.isFinite(moveCost) ? moveCost : CONFIG.movement.buildableCost);
+  }, 0);
+}
+
+function getBestFacilityForSeal(seal, preferredTypes) {
+  if (!seal) return null;
+  const types = (Array.isArray(preferredTypes) && preferredTypes.length > 0 ? preferredTypes : Object.keys(CONFIG.facilities ?? {})).map(String);
+  const hpRatio = seal.maxHp > 0 ? seal.hp / seal.maxHp : 0;
+  const scored = [];
+  types.forEach((type, typeIndex) => {
+    for (const facility of getUsableFacilitiesByType(type)) {
+      if (type === 'inn' && seal.carriedG < (CONFIG.facilities.inn?.fee ?? 0) && hpRatio > CONFIG.seal.innHpThreshold) continue;
+      if (type !== 'inn' && seal.carriedG <= 0) continue;
+      const target = facilityInteractionPoint(facility);
+      const pathCost = estimatePathCostBetweenPoints({ x: seal.x, y: seal.y }, target, 'facility');
+      if (!Number.isFinite(pathCost)) continue;
+      let score = pathCost + typeIndex * 18;
+      score += (seal.facilityUseCounts?.[type] ?? 0) * 12;
+      score -= facilityBonus(facility) * 30;
+      if (type === 'inn') {
+        if (hpRatio <= CONFIG.seal.innHpThreshold) score -= 80;
+        else if (hpRatio <= CONFIG.seal.mediumHpRatio) score -= 20;
+        if ((seal.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) score -= 18;
+      }
+      if (type !== 'inn' && hpRatio <= CONFIG.seal.lowHpRatio) score += 80;
+      score += Math.random() * 6;
+      scored.push({ facility, score });
+    }
+  });
+  scored.sort((a, b) => a.score - b.score);
+  return scored[0]?.facility ?? null;
+}
+
+function chooseInnForSeal(seal) { return getBestFacilityForSeal(seal, ['inn']); }
+function chooseSpendingFacilityForSeal(seal) { return getBestFacilityForSeal(seal, ['restaurant', 'blacksmith']); }
+function chooseFacilityAfterHunt(seal) {
+  const hpRatio = seal?.maxHp > 0 ? seal.hp / seal.maxHp : 0;
+  if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseInnForSeal(seal) ?? chooseSpendingFacilityForSeal(seal);
+  if (seal?.carriedG >= (CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) {
+    return getBestFacilityForSeal(seal, ['inn', 'restaurant', 'blacksmith']);
+  }
+  return getBestFacilityForSeal(seal, ['restaurant', 'blacksmith', 'inn']);
 }
 
 function nearestFacility(type, x, y) {
-  const list = usableFacilities(type);
-  return list.reduce((best, item) => !best || distance(x, y, centerOfObject(item).x, centerOfObject(item).y) < distance(x, y, centerOfObject(best).x, centerOfObject(best).y) ? item : best, null);
+  const list = getUsableFacilitiesByType(type);
+  return list.reduce((best, item) => !best || distance(x, y, facilityInteractionPoint(item).x, facilityInteractionPoint(item).y) < distance(x, y, facilityInteractionPoint(best).x, facilityInteractionPoint(best).y) ? item : best, null);
 }
 
 function centerOfObject(obj) { return { x: ((obj?.x ?? 0) + (obj?.w ?? 1) / 2) * CONFIG.world.tile, y: ((obj?.y ?? 0) + (obj?.h ?? 1) / 2) * CONFIG.world.tile }; }
@@ -584,6 +676,34 @@ function routeWaypointToWorld(point) {
 
 function getEntryCorridor() {
   return CONFIG.ROUTES?.entryCorridor ?? null;
+}
+
+function getVillageEntryPoint() {
+  return gridToWorld(CONFIG.world.villageEntryX, CONFIG.world.villageEntryY);
+}
+
+function getVisitorPreferredSpawnPoint() {
+  const point = CONFIG.visitor?.entrySpawn;
+  return gridToWorld(point?.x ?? CONFIG.world.safeX, point?.y ?? CONFIG.world.safeY);
+}
+
+function findNearestPassableSpawnPoint(preferredPoint) {
+  const start = worldToGrid(preferredPoint?.x ?? getVisitorPreferredSpawnPoint().x, preferredPoint?.y ?? getVisitorPreferredSpawnPoint().y);
+  const maxRadius = clampInteger(CONFIG.visitor?.spawnSearchRadius, 1, Math.max(CONFIG.world.cols, CONFIG.world.rows), 8);
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    const candidates = [];
+    for (let y = start.y - radius; y <= start.y + radius; y += 1) {
+      for (let x = start.x - radius; x <= start.x + radius; x += 1) {
+        if (x < 0 || y < 0 || x >= CONFIG.world.cols || y >= CONFIG.world.rows) continue;
+        if (radius > 0 && Math.max(Math.abs(x - start.x), Math.abs(y - start.y)) !== radius) continue;
+        if (!isPassableTile(x, y)) continue;
+        candidates.push({ x, y, road: roadAt(x, y) ? 0 : 1, d: distance(x, y, start.x, start.y) });
+      }
+    }
+    candidates.sort((a, b) => (a.road - b.road) || (a.d - b.d));
+    if (candidates[0]) return gridToWorld(candidates[0].x, candidates[0].y);
+  }
+  return null;
 }
 
 function getHuntingCorridorForArea(areaId) {
