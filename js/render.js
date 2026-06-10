@@ -10,6 +10,7 @@ function render() {
   drawRoads();
   drawObjects();
   drawMonsters();
+  drawDungeons();
   drawSeals();
   drawPlacementPreview();
   ctx.restore();
@@ -296,7 +297,8 @@ function updateHud() {
   const unlockText = nextUnlock ? `次の訪問者: ${escapeHtml(nextUnlock.name)}(${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))})` : '訪問者解放: すべて解放';
   statsEl.innerHTML = `<b>${Math.floor(gameState.player?.g ?? 0)} G</b><br>知名度: ${Math.floor(safeFiniteNumber(gameState.village?.knownness, 0, 0))}<br><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><br>今月の狩猟: ${gameState.stats?.monthlyHunts ?? 0}<br>訪問者: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>次の訪問者目安: ${nextVisitor.toFixed(0)}秒<br>${unlockText}<br>住民: ${escapeHtml(resident?.name ?? gameState.residentName)}<br>速度: ${formatSpeedLabel(gameState.time?.timeScale)} / ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${getClearingCost()}G / 入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<br>最終保存: ${lastSaved}<br>保存状態: ${escapeHtml(saveText)}<div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>')}</div>`;
   const selected = (gameState.seals ?? []).find(seal => seal?.id === gameState.ui?.selectedSealId) ?? null;
-  sealCardsEl.innerHTML = selected ? renderSelectedSealPanel(selected) : '<div class="panel sealCard emptySealCard">あざらしをクリックすると詳細を表示します。</div>';
+  const dungeonPanel = drawDungeonPanel();
+  sealCardsEl.innerHTML = dungeonPanel || (selected ? renderSelectedSealPanel(selected) : '<div class="panel sealCard emptySealCard">あざらしや地図上の洞窟をクリックすると詳細を表示します。</div>');
   updateToolButtons();
 }
 
@@ -325,4 +327,67 @@ function formatSealTarget(seal) {
   if (seal?.target?.reason) return seal?.currentAction || seal.target.reason;
   return seal?.currentAction || 'なし';
 }
-function stateLabel(state) { return ({ arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'探索中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
+function stateLabel(state) { return ({ questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'探索中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
+
+function drawDungeon(context, dungeon) {
+  if (!context || !dungeon) return;
+  const selected = gameState.ui?.selectedDungeonId === dungeon.id;
+  const radius = CONFIG.dungeon?.clickRadius ?? 24;
+  context.save();
+  context.translate(dungeon.x, dungeon.y);
+  if (selected) {
+    context.strokeStyle = '#fff36a';
+    context.lineWidth = 4 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
+    context.beginPath();
+    context.arc(0, 0, radius, 0, Math.PI * 2);
+    context.stroke();
+  }
+  context.fillStyle = dungeon.state === 'running' ? '#7d5cff' : dungeon.state === 'completed' ? '#61e786' : '#2b2348';
+  context.strokeStyle = '#f4e5b4';
+  context.lineWidth = 3 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
+  context.beginPath();
+  context.moveTo(-18, 16);
+  context.lineTo(-10, -10);
+  context.quadraticCurveTo(0, -24, 10, -10);
+  context.lineTo(18, 16);
+  context.closePath();
+  context.fill();
+  context.stroke();
+  context.fillStyle = '#120e20';
+  context.beginPath();
+  context.arc(0, 7, 8, Math.PI, 0);
+  context.lineTo(8, 16);
+  context.lineTo(-8, 16);
+  context.closePath();
+  context.fill();
+  if (dungeon.state === 'running') {
+    const ratio = Math.max(0, Math.min(1, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1))));
+    context.fillStyle = 'rgba(0,0,0,.55)';
+    context.fillRect(-22, 24, 44, 6);
+    context.fillStyle = '#9dfcff';
+    context.fillRect(-22, 24, 44 * ratio, 6);
+  }
+  context.restore();
+}
+
+function drawDungeons() {
+  for (const dungeon of gameState.dungeons ?? []) drawDungeon(ctx, dungeon);
+}
+
+function drawDungeonPanel() {
+  const dungeon = getDungeonById(gameState.ui?.selectedDungeonId);
+  if (!dungeon) return '';
+  const area = getDungeonAreaDef(dungeon.areaId);
+  const type = getDungeonTypeDef(dungeon.type);
+  const preview = dungeon.rewardPreview ?? getDungeonRewardPreview(dungeon);
+  const remaining = Math.max(0, safeFiniteNumber(dungeon.expiresInMs, 0, 0));
+  const ratio = Math.max(0, Math.min(100, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1)) * 100));
+  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => escapeHtml(p.name || p.id)).join('、') || '未編成（開始時に自動選出）';
+  const itemNames = (preview.itemIds ?? []).map(id => getItemDef(id)?.name ?? id).join(' / ') || 'なし';
+  const canStart = canStartDungeon(dungeon);
+  const startButton = dungeon.state === 'available' ? `<button data-dungeon-action="start" data-dungeon-id="${escapeHtml(dungeon.id)}">攻略開始</button>` : '';
+  const progress = dungeon.state === 'running' ? `<div class="bar"><div class="fill" style="width:${ratio}%"></div></div>進行: ${Math.floor(ratio)}%<br>` : '';
+  return `<div class="panel sealCard dungeonPanel"><b>🕳️ ${escapeHtml(dungeon.name)}</b><br>エリア: ${escapeHtml(area?.label ?? dungeon.areaId)}<br>状態: ${escapeHtml(dungeonStateLabel(dungeon.state))}<br>残り時間: ${Math.ceil(remaining / 1000)}秒<br>参加費: ${Math.floor(safeFiniteNumber(dungeon.recruitCost, 0, 0))}G<br>難易度: ${Math.floor(safeFiniteNumber(type?.difficulty, 0, 0))}<br>敵: ${escapeHtml((dungeon.enemyTypes ?? []).join(' / ') || '不明')}<br>報酬見込み: ${Math.floor(preview.g ?? 0)}G / EXP${Math.floor(preview.exp ?? 0)} / 知名度+${Math.floor(preview.knownness ?? 0)}<br>ドロップ候補: ${escapeHtml(itemNames)}<br>参加者: ${participants}<br>${progress}${canStart.ok ? '' : `<span class="warnText">${escapeHtml(canStart.reason)}</span><br>`}<div class="dungeonButtons">${startButton}<button data-dungeon-action="close">閉じる</button></div></div>`;
+}
+
+function dungeonStateLabel(state) { return ({ available: '発見済み', running: '攻略中', completed: '攻略完了', expired: '消滅' })[state] ?? String(state ?? ''); }

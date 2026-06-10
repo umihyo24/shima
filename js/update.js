@@ -9,6 +9,7 @@ function update(deltaMs) {
   updatePlacementFeedback(dt);
   updateCalendar(safeDeltaMs);
   updateSpawner(dt);
+  updateDungeons(safeDeltaMs);
   updateSeals(dt);
   clearMissingSelectedSeal();
   removeDefeatedMonsters();
@@ -202,6 +203,8 @@ function writeBackVisitorProfile(seal) {
   profile.favor = safeFiniteNumber(seal.favor, profile.favor, 0);
   profile.equipment = normalizeEquipment(seal.equipment);
   profile.gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0);
+  profile.dungeonRuns = clampInteger(profile.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0);
+  profile.dungeonClears = clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0);
   profile.visits = Math.max(clampInteger(profile.visits, 0, Number.MAX_SAFE_INTEGER, 0), clampInteger(seal.visits, 0, Number.MAX_SAFE_INTEGER, 0));
   profile.personality = String(seal.personality || profile.personality || 'balanced');
   profile.baseStats = profile.baseStats ?? { maxHp: seal.maxHp, attack: seal.attack, defense: seal.defense };
@@ -241,6 +244,7 @@ function updateSeals(dt) {
   for (const seal of [...(gameState.seals ?? [])]) {
     if (!seal) continue;
     if (seal.type === 'visitor') seal.visitTimerMs = safeFiniteNumber(seal.visitTimerMs, 0, 0) + dt * 1000;
+    if (seal.state === 'questing') continue;
     if (seal.state === 'fallen') { updateFallen(seal, dt); continue; }
     const fallen = findFallenForRescue(seal);
     if (fallen && !seal.rescueTargetId && seal.hp > getSealEffectiveStats(seal).maxHp * CONFIG.seal.lowHpRatio) {
@@ -264,6 +268,7 @@ function updateSeals(dt) {
       case 'leaving': seal.state = 'leavingToSea'; updateLeavingToSea(seal, dt); break;
       case 'leavingToSea': updateLeavingToSea(seal, dt); break;
       case 'idle': updateIdle(seal, dt); break;
+      case 'questing': break;
       case 'rescuing': updateRescuing(seal, dt); break;
       case 'carryingFallenSeal': updateCarrying(seal, dt); break;
       default: seal.state = seal.type === 'visitor' ? 'choosingArrivalAction' : 'choosingHuntArea'; seal.target = null; break;
@@ -857,3 +862,200 @@ function removeDefeatedMonsters() {
   gameState.monsters = gameState.monsters.filter(m => !ids.has(m?.id));
 }
 
+
+function spawnDungeon(areaId) {
+  const area = getDungeonAreaDef(areaId);
+  const typeId = area?.types?.[Math.floor(Math.random() * Math.max(1, area?.types?.length ?? 1))];
+  const type = getDungeonTypeDef(typeId);
+  const point = area && type ? findDungeonSpawnPoint(area.id) : null;
+  if (!area || !type || !point) return null;
+  const dungeon = {
+    id: `dungeon-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    type: type.id,
+    name: type.name,
+    areaId: area.id,
+    x: point.x,
+    y: point.y,
+    state: 'available',
+    expiresInMs: safeFiniteNumber(type.expiresInMs, 0, 0),
+    progressMs: 0,
+    durationMs: safeFiniteNumber(type.durationMs, 1, 1),
+    recruitCost: safeFiniteNumber(type.recruitCost, 0, 0),
+    participantIds: [],
+    rewardPreview: getDungeonRewardPreview({ type: type.id, dropTableId: type.dropTableId }),
+    enemyRefs: [],
+    enemyTypes: (type.enemyTypes ?? []).map(String),
+    dropTableId: String(type.dropTableId ?? ''),
+    completedDisplayMs: 0
+  };
+  gameState.dungeons = Array.isArray(gameState.dungeons) ? gameState.dungeons : [];
+  gameState.dungeons.push(dungeon);
+  logMessage(`${dungeon.name}が${area.label ?? area.id}に現れました。地図上の洞窟をクリックできます。`);
+  return dungeon;
+}
+
+function updateDungeons(deltaMs) {
+  gameState.dungeons = normalizeDungeons(gameState.dungeons);
+  gameState.timers.dungeonSpawnMs = safeFiniteNumber(gameState.timers?.dungeonSpawnMs, 0, 0) + safeFiniteNumber(deltaMs, 0, 0);
+  for (const dungeon of [...(gameState.dungeons ?? [])]) {
+    if (dungeon?.state === 'available') {
+      dungeon.expiresInMs -= safeFiniteNumber(deltaMs, 0, 0);
+      if (dungeon.expiresInMs <= 0) expireDungeon(dungeon);
+    } else if (dungeon?.state === 'running') updateRunningDungeon(dungeon, deltaMs);
+    else if (dungeon?.state === 'completed' || dungeon?.state === 'expired') dungeon.completedDisplayMs = safeFiniteNumber(dungeon.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0) - safeFiniteNumber(deltaMs, 0, 0);
+  }
+  gameState.dungeons = (gameState.dungeons ?? []).filter(dungeon => !['completed', 'expired'].includes(dungeon?.state) || safeFiniteNumber(dungeon?.completedDisplayMs, 0, 0) > 0);
+  const activeCount = (gameState.dungeons ?? []).filter(dungeon => ['available', 'running'].includes(dungeon?.state)).length;
+  const interval = (gameState.dungeons ?? []).length <= 0 ? CONFIG.dungeon.initialSpawnDelayMs : CONFIG.dungeon.spawnIntervalMs;
+  if (activeCount < CONFIG.dungeon.maxActive && gameState.timers.dungeonSpawnMs >= interval) {
+    gameState.timers.dungeonSpawnMs = 0;
+    const areas = Object.keys(CONFIG.dungeon?.areas ?? {});
+    if (areas.length > 0) spawnDungeon(areas[Math.floor(Math.random() * areas.length)]);
+  }
+  gameState.ui.needsHudUpdate = true;
+  clearSelectedDungeonIfInvalid();
+}
+
+function getDungeonById(id) { return (gameState.dungeons ?? []).find(dungeon => dungeon?.id === id) ?? null; }
+
+function selectDungeonAtWorldPosition(worldX, worldY) {
+  const radius = safeFiniteNumber(CONFIG.dungeon?.clickRadius, 24, 1);
+  const candidates = (gameState.dungeons ?? []).filter(dungeon => dungeon && ['available', 'running', 'completed'].includes(dungeon.state)).map(dungeon => ({ dungeon, d: distance(worldX, worldY, dungeon.x, dungeon.y) })).filter(entry => entry.d <= radius).sort((a, b) => a.d - b.d);
+  const selected = candidates[0]?.dungeon ?? null;
+  gameState.ui.selectedDungeonId = selected?.id ?? null;
+  if (selected) gameState.ui.selectedSealId = null;
+  return selected;
+}
+
+function canStartDungeon(dungeon) {
+  if (!dungeon || dungeon.state !== 'available') return { ok: false, reason: 'このダンジョンは開始できません。' };
+  if (safeFiniteNumber(gameState.player?.g, 0, 0) < safeFiniteNumber(dungeon.recruitCost, 0, 0)) return { ok: false, reason: `${Math.floor(dungeon.recruitCost)}Gが必要です。` };
+  if (chooseDungeonParticipants(dungeon).length < (CONFIG.dungeon?.participant?.min ?? 1)) return { ok: false, reason: '参加できるあざらしがいません。' };
+  return { ok: true, reason: '' };
+}
+
+function startDungeon(dungeonId) {
+  const dungeon = getDungeonById(dungeonId);
+  const result = canStartDungeon(dungeon);
+  if (!result.ok) { logMessage(result.reason); updateHud(); return false; }
+  const participants = chooseDungeonParticipants(dungeon);
+  gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) - safeFiniteNumber(dungeon.recruitCost, 0, 0);
+  dungeon.participantIds = participants;
+  dungeon.state = 'running';
+  dungeon.progressMs = 0;
+  for (const participant of participants) {
+    if (participant.kind !== 'seal') continue;
+    const seal = (gameState.seals ?? []).find(item => item?.id === participant.sealId);
+    if (!seal) continue;
+    seal.questingReturnState = seal.state;
+    seal.questingDungeonId = dungeon.id;
+    seal.state = 'questing';
+    seal.currentAction = `${dungeon.name}を攻略中`;
+    seal.path = [];
+    seal.target = null;
+  }
+  for (const participant of participants.filter(p => p.profileId)) {
+    const profile = getVisitorProfileById(participant.profileId);
+    if (profile) profile.dungeonRuns = clampInteger(profile.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  }
+  logMessage(`${dungeon.name}の攻略を開始しました（${participants.map(p => p.name).join('、')}）。`);
+  updateHud();
+  return true;
+}
+
+function chooseDungeonParticipants(dungeon) {
+  const max = clampInteger(CONFIG.dungeon?.participant?.max, 1, Number.MAX_SAFE_INTEGER, 3);
+  const cfg = CONFIG.dungeon?.participant ?? {};
+  const activeQuestingProfiles = new Set((gameState.dungeons ?? []).filter(d => d?.id !== dungeon?.id && d?.state === 'running').flatMap(d => normalizeDungeonParticipantIds(d?.participantIds)).map(p => p.profileId).filter(Boolean));
+  const candidates = [];
+  for (const seal of gameState.seals ?? []) {
+    if (!seal || seal.state === 'questing' || seal.state === 'fallen') continue;
+    const stats = getSealEffectiveStats(seal);
+    candidates.push({ kind: 'seal', id: seal.id, sealId: seal.id, profileId: seal.profileId, name: seal.name, score: safeFiniteNumber(seal.favor, 0, 0) * 3 + safeFiniteNumber(seal.level, 1, 1) * 10 + safeFiniteNumber(stats.attack, 0, 0) + safeFiniteNumber(stats.defense, 0, 0) + (cfg.personalityBonus?.[seal.personality] ?? 0) + (seal.type === 'resident' ? cfg.residentBonus : cfg.activeSealBonus) });
+  }
+  if (cfg.allowUnlockedProfileRecruit) {
+    for (const profile of gameState.visitorProfiles ?? []) {
+      if (!profile || !isVisitorProfileUnlocked(profile) || activeQuestingProfiles.has(profile.id)) continue;
+      if (candidates.some(candidate => candidate.profileId === profile.id)) continue;
+      const base = profile.baseStats ?? {};
+      candidates.push({ kind: 'profile', id: profile.id, sealId: null, profileId: profile.id, name: profile.name, score: safeFiniteNumber(profile.favor, 0, 0) * 3 + safeFiniteNumber(profile.level, 1, 1) * 10 + safeFiniteNumber(base.attack, CONFIG.seal.attack, 0) + safeFiniteNumber(base.defense, CONFIG.seal.defense, 0) + (cfg.personalityBonus?.[profile.personality] ?? 0) });
+    }
+  }
+  return candidates.sort((a, b) => b.score - a.score).slice(0, max).map(({ score, ...participant }) => participant);
+}
+
+function updateRunningDungeon(dungeon, deltaMs) {
+  if (!dungeon || dungeon.state !== 'running') return;
+  dungeon.progressMs = safeFiniteNumber(dungeon.progressMs, 0, 0) + safeFiniteNumber(deltaMs, 0, 0);
+  if (dungeon.progressMs >= safeFiniteNumber(dungeon.durationMs, 1, 1)) completeDungeon(dungeon);
+}
+
+function completeDungeon(dungeon) {
+  if (!dungeon || dungeon.state !== 'running') return;
+  const type = getDungeonTypeDef(dungeon.type);
+  const rewards = type?.rewards ?? {};
+  const rewardG = safeFiniteNumber(rewards.g, 0, 0);
+  const rewardExp = safeFiniteNumber(rewards.exp, 0, 0);
+  const rewardKnownness = safeFiniteNumber(rewards.knownness, 0, 0);
+  gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) + rewardG;
+  gameState.stats.monthlyPlayerIncome = safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0) + rewardG;
+  gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + rewardKnownness;
+  const participants = normalizeDungeonParticipantIds(dungeon.participantIds);
+  for (const participant of participants) {
+    const seal = participant.sealId ? (gameState.seals ?? []).find(item => item?.id === participant.sealId) : null;
+    if (seal) {
+      seal.exp = safeFiniteNumber(seal.exp, 0, 0) + rewardExp;
+      addFavor(seal, CONFIG.dungeon?.participant?.clearFavor ?? 2);
+      applyLevelUps(seal);
+      if (seal.type === 'visitor') writeBackVisitorProfile(seal);
+      seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingHuntArea';
+      seal.questingReturnState = null;
+      seal.questingDungeonId = null;
+      seal.currentAction = '攻略から帰還しました';
+    }
+    const profile = participant.profileId ? getVisitorProfileById(participant.profileId) : null;
+    if (profile) {
+      profile.exp = safeFiniteNumber(profile.exp, 0, 0) + rewardExp;
+      profile.favor = safeFiniteNumber(profile.favor, 0, 0) + safeFiniteNumber(CONFIG.dungeon?.participant?.clearFavor, 0, 0);
+      profile.dungeonClears = clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+    }
+  }
+  const drops = rollDungeonDrops(dungeon.dropTableId);
+  for (const drop of drops) addRelicItem(drop.itemId, drop.count, dungeon.name);
+  dungeon.state = 'completed';
+  dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0;
+  unlockKnownVisitors();
+  logMessage(`${dungeon.name}を攻略完了！ ${Math.floor(rewardG)}G / EXP${Math.floor(rewardExp)} / 知名度+${Math.floor(rewardKnownness)} / ${drops.map(drop => `${getItemDef(drop.itemId)?.name ?? drop.itemId}x${drop.count}`).join('、') || 'ドロップなし'}`);
+  updateHud();
+}
+
+function rollDungeonDrops(dropTableId) {
+  const table = CONFIG.dungeon?.dropTables?.[String(dropTableId ?? '')] ?? [];
+  if (table.length <= 0) return [];
+  const total = table.reduce((sum, entry) => sum + Math.max(0, safeFiniteNumber(entry?.weight, 0, 0)), 0);
+  let roll = Math.random() * Math.max(total, 1);
+  for (const entry of table) {
+    roll -= Math.max(0, safeFiniteNumber(entry?.weight, 0, 0));
+    if (roll <= 0) return [{ itemId: String(entry.itemId), count: clampInteger(entry.count, 1, Number.MAX_SAFE_INTEGER, 1) }];
+  }
+  const fallback = table[0];
+  return fallback ? [{ itemId: String(fallback.itemId), count: clampInteger(fallback.count, 1, Number.MAX_SAFE_INTEGER, 1) }] : [];
+}
+
+function expireDungeon(dungeon) {
+  if (!dungeon || dungeon.state !== 'available') return;
+  dungeon.state = 'expired';
+  dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0;
+  logMessage(`${dungeon.name}は潮に隠れて消えました。`);
+}
+
+function getDungeonRewardPreview(dungeon) {
+  const type = getDungeonTypeDef(dungeon?.type);
+  const table = CONFIG.dungeon?.dropTables?.[String(dungeon?.dropTableId || type?.dropTableId || '')] ?? [];
+  return { g: safeFiniteNumber(type?.rewards?.g, 0, 0), exp: safeFiniteNumber(type?.rewards?.exp, 0, 0), knownness: safeFiniteNumber(type?.rewards?.knownness, 0, 0), itemIds: table.map(entry => String(entry?.itemId ?? '')).filter(Boolean) };
+}
+
+function clearSelectedDungeonIfInvalid() {
+  const selected = getDungeonById(gameState.ui?.selectedDungeonId);
+  if (!selected || ['expired', 'completed'].includes(selected.state)) gameState.ui.selectedDungeonId = null;
+}
