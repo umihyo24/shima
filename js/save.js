@@ -143,6 +143,7 @@ function applyLoadedGameState(data) {
   gameState.world.objects = normalizeObjects([...(loaded.world?.facilities ?? []), ...(loaded.world?.decorations ?? []), ...(loaded.world?.objects ?? [])]);
   gameState.world.nextObjectId = Math.max(nextObjectNumber(gameState.world.objects), clampInteger(loaded.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1));
   gameState.seals = normalizeSeals(loaded.seals);
+  for (const seal of gameState.seals ?? []) clearLegacyReturnTarget(seal);
   enforceSingleResidentSeal();
   gameState.visitorProfiles = normalizeVisitorProfiles(loaded.visitorProfiles);
   const legacyInventory = Array.isArray(loaded.townInventory) ? loaded.townInventory : [];
@@ -227,7 +228,8 @@ function rebuildLoadedSealRoutes() {
     if (!seal) continue;
     if (seal.state === 'arriving') { seal.path = []; seal.target = null; continue; }
     if (seal.state === 'movingToHuntExit') { if (!buildRouteToArea(seal, seal.selectedHuntAreaId ?? 'coast')) seal.state = 'idle'; continue; }
-    if (seal.state === 'returningFromHunt' || seal.state === 'leaving') { if (!buildRouteToVillage(seal)) seal.state = seal.type === 'visitor' ? 'leaving' : 'idle'; continue; }
+    if (seal.state === 'returningFromHunt') { clearLegacyReturnTarget(seal); choosePostHuntAction(seal); continue; }
+    if (seal.state === 'leaving' || seal.state === 'leavingToSea') { if (!buildRouteToVillage(seal)) seal.state = seal.type === 'visitor' ? 'leavingToSea' : 'idle'; continue; }
     if (seal.state === 'movingToMonster') { const monster = (gameState.monsters ?? []).find(item => item?.id === seal.targetId); if (monster) setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster'); else seal.state = 'hunting'; continue; }
     if (seal.state === 'movingToFacility') { const facility = (gameState.world.objects ?? []).find(item => item?.id === seal.targetId); if (facility && isFacilityUsable(facility)) setSealDestination(seal, facilityInteractionPoint(facility), 'facility'); else { seal.targetId = null; seal.state = 'choosingFacility'; } }
   }

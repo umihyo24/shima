@@ -113,10 +113,14 @@ function facilitySellsItem(facility, itemDef) {
   return itemDef.shopType === facility.type;
 }
 
+function getUnlockedShopItemsForFacility(facility) {
+  if (!facility || !isFacilityUsable(facility)) return [];
+  return (gameState.shopCatalog?.unlockedItemIds ?? []).map(getItemDef).filter(item => item && facilitySellsItem(facility, item));
+}
+
 function chooseBestAffordableEquipmentUpgrade(seal, facility) {
-  const ids = gameState.shopCatalog?.unlockedItemIds ?? [];
   const budget = safeFiniteNumber(seal?.gearBudget, 0, 0);
-  const candidates = ids.map(getItemDef).filter(item => item && facilitySellsItem(facility, item) && safeFiniteNumber(item.price, 0, 0) <= budget && isEquipmentUpgradeForSeal(seal, item));
+  const candidates = getUnlockedShopItemsForFacility(facility).filter(item => safeFiniteNumber(item.price, 0, 0) <= budget && isEquipmentUpgradeForSeal(seal, item));
   candidates.sort((a, b) => (getEquipmentScoreForSeal(seal, b) - getEquipmentScoreForSeal(seal, a)) || (safeFiniteNumber(a.price, 0, 0) - safeFiniteNumber(b.price, 0, 0)));
   return candidates[0] ?? null;
 }
@@ -134,15 +138,27 @@ function buyAndEquipItem(seal, itemId, facility) {
   return true;
 }
 
-function addRelicItem(itemId, count = 1) {
+function unlockCatalogItem(itemId, source = '') {
+  const item = getItemDef(itemId);
+  if (!item) return false;
+  gameState.shopCatalog = normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory);
+  const ids = gameState.shopCatalog.unlockedItemIds;
+  if (ids.includes(item.id)) return false;
+  ids.push(item.id);
+  gameState.shopCatalog.discoveredAt[item.id] = Date.now();
+  if (source) logMessage(`${item.name}が商品カタログに追加されました（${source}）。`);
+  return true;
+}
+
+function addRelicItem(itemId, count = 1, source = '') {
   const item = getItemDef(itemId);
   if (!item) return false;
   gameState.relicInventory = normalizeRelicInventory(gameState.relicInventory);
   const existing = gameState.relicInventory.find(entry => entry?.itemId === item.id);
   if (existing) existing.count = clampInteger(existing.count, 0, Number.MAX_SAFE_INTEGER, 0) + clampInteger(count, 1, Number.MAX_SAFE_INTEGER, 1);
   else gameState.relicInventory.push({ itemId: item.id, count: clampInteger(count, 1, Number.MAX_SAFE_INTEGER, 1) });
-  const catalog = gameState.shopCatalog = normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory);
-  if (!catalog.unlockedItemIds.includes(item.id)) { catalog.unlockedItemIds.push(item.id); catalog.discoveredAt[item.id] = Date.now(); }
+  unlockCatalogItem(item.id, source);
+  gameState.shopCatalog = normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory);
   return true;
 }
 
@@ -259,6 +275,7 @@ function normalizeSeal(s, index) {
     selectedHuntAreaId: s?.selectedHuntAreaId ? String(s.selectedHuntAreaId) : null,
     visits: clampInteger(s?.visits, 0, Number.MAX_SAFE_INTEGER, isVisitor ? 1 : 0),
     facilityUseCounts: normalizeFacilityUseCounts(s?.facilityUseCounts),
+    lastFacilityId: s?.lastFacilityId ? String(s.lastFacilityId) : null,
     mealCountSinceInn: clampInteger(s?.mealCountSinceInn, 0, Number.MAX_SAFE_INTEGER, 0),
     leaveAfterFacilityUse: s?.leaveAfterFacilityUse === true,
     rescueTargetId: s?.rescueTargetId ? String(s.rescueTargetId) : null,
@@ -675,13 +692,17 @@ function facilityBonus(facility) {
   return count * cfg.bonusRate;
 }
 
+function getUsableFacilities() {
+  return (gameState.world.objects ?? []).filter(o => o?.kind === 'facility' && isFacilityUsable(o));
+}
+
 function getAllFacilitiesByType(type) {
   const typeId = String(type ?? '');
   return (gameState.world.objects ?? []).filter(o => o?.kind === 'facility' && o?.type === typeId);
 }
 
 function getUsableFacilitiesByType(type) {
-  return getAllFacilitiesByType(type).filter(isFacilityUsable);
+  return getUsableFacilities().filter(o => o?.type === String(type ?? ''));
 }
 
 function usableFacilities(type) { return getUsableFacilitiesByType(type); }
@@ -719,55 +740,109 @@ function estimatePathCostBetweenPoints(from, to, reason = 'facility') {
   }, 0);
 }
 
-function getBestFacilityForSeal(seal, preferredTypes) {
-  if (!seal) return null;
-  const types = (Array.isArray(preferredTypes) && preferredTypes.length > 0 ? preferredTypes : Object.keys(CONFIG.facilities ?? {})).map(String);
+function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
+  if (!seal || !facility || !isFacilityUsable(facility)) return -Infinity;
+  const allowed = {
+    heal: ['inn'], food: ['restaurant'], spend: ['restaurant', 'blacksmith'], equipment: ['blacksmith', 'restaurant']
+  }[purpose] ?? Object.keys(CONFIG.facilities ?? {});
+  if (!allowed.includes(facility.type)) return -Infinity;
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
-  const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
-  const scored = [];
-  types.forEach((type, typeIndex) => {
-    for (const facility of getUsableFacilitiesByType(type)) {
-      if (type === 'inn' && seal.carriedG < (CONFIG.facilities.inn?.fee ?? 0) && hpRatio > CONFIG.seal.innHpThreshold) continue;
-      const hasAffordableUpgrade = chooseBestAffordableEquipmentUpgrade(seal, facility) !== null;
-      if (type !== 'inn' && seal.carriedG <= 0 && !hasAffordableUpgrade) continue;
-      const target = facilityInteractionPoint(facility);
-      const pathCost = estimatePathCostBetweenPoints({ x: seal.x, y: seal.y }, target, 'facility');
-      if (!Number.isFinite(pathCost)) continue;
-      let score = pathCost + typeIndex * 18;
-      score += (seal.facilityUseCounts?.[type] ?? 0) * 12;
-      score -= facilityBonus(facility) * 30;
-      if (type === 'inn') {
-        if (hpRatio <= CONFIG.seal.innHpThreshold) score -= 80;
-        else if (hpRatio <= CONFIG.seal.mediumHpRatio) score -= 20;
-        if ((seal.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) score -= 18;
-      }
-      if (type !== 'inn' && hpRatio <= CONFIG.seal.lowHpRatio) score += 80;
-      score += Math.random() * 6;
-      scored.push({ facility, score });
-    }
-  });
-  scored.sort((a, b) => a.score - b.score);
+  const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal.hp, 0, 0) / effectiveMaxHp : 0;
+  const carriedG = safeFiniteNumber(seal.carriedG, 0, 0);
+  const gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0);
+  if (purpose === 'heal' && facility.type === 'inn' && carriedG < (CONFIG.facilities.inn?.fee ?? 0) && hpRatio > CONFIG.seal.innHpThreshold) return -Infinity;
+  if (purpose === 'food' && facility.type === 'restaurant' && carriedG <= 0) return -Infinity;
+  if (purpose === 'spend' && carriedG <= 0 && !chooseBestAffordableEquipmentUpgrade(seal, facility)) return -Infinity;
+  if (purpose === 'equipment' && (gearBudget <= 0 || !chooseBestAffordableEquipmentUpgrade(seal, facility))) return -Infinity;
+  const target = facilityInteractionPoint(facility);
+  const pathCost = estimatePathCostBetweenPoints({ x: seal.x, y: seal.y }, target, 'facility');
+  if (!Number.isFinite(pathCost)) return -Infinity;
+  let score = (CONFIG.EQUIPMENT?.FACILITY_BASE_SCORE ?? 1000) - pathCost * (CONFIG.EQUIPMENT?.FACILITY_DISTANCE_WEIGHT ?? 1);
+  score += facilityBonus(facility) * (CONFIG.EQUIPMENT?.FACILITY_BONUS_WEIGHT ?? 36);
+  score -= (seal.facilityUseCounts?.[facility.type] ?? 0) * (CONFIG.EQUIPMENT?.RECENT_USAGE_PENALTY ?? 18);
+  if (facility.id && seal.lastFacilityId === facility.id) score -= (CONFIG.EQUIPMENT?.RECENT_USAGE_PENALTY ?? 18);
+  if (purpose === 'heal') score += (1 - hpRatio) * (CONFIG.EQUIPMENT?.FACILITY_HEAL_WEIGHT ?? 140);
+  if (purpose === 'food') score += Math.min(carriedG, CONFIG.facilities.restaurant?.spendPerVisit ?? carriedG) * (CONFIG.EQUIPMENT?.FACILITY_FOOD_G_WEIGHT ?? 0.2) + (CONFIG.seal.mediumHpRatio - hpRatio) * (CONFIG.EQUIPMENT?.FACILITY_FOOD_HP_WEIGHT ?? 20);
+  if (purpose === 'spend') score += Math.min(carriedG, CONFIG.facilities.blacksmith?.spendPerVisit ?? carriedG) * (CONFIG.EQUIPMENT?.FACILITY_SPEND_G_WEIGHT ?? 0.15);
+  if (purpose === 'equipment') score += Math.min(gearBudget, Math.max(...Object.values(CONFIG.ITEMS ?? {}).map(item => safeFiniteNumber(item?.price, 0, 0)), 1)) * (CONFIG.EQUIPMENT?.FACILITY_EQUIPMENT_GEAR_WEIGHT ?? 0.12) + getEquipmentScoreForSeal(seal, chooseBestAffordableEquipmentUpgrade(seal, facility));
+  score += Math.random() * (CONFIG.EQUIPMENT?.RANDOM_TIEBREAKER ?? 4);
+  return score;
+}
+
+function chooseBestFacility(seal, purpose = 'spend', allowedTypes = null) {
+  const types = Array.isArray(allowedTypes) && allowedTypes.length > 0 ? allowedTypes.map(String) : Object.keys(CONFIG.facilities ?? {});
+  const scored = getUsableFacilities()
+    .filter(facility => types.includes(String(facility?.type ?? '')))
+    .map(facility => ({ facility, score: scoreFacilityForSeal(seal, facility, purpose) }))
+    .filter(entry => Number.isFinite(entry.score));
+  scored.sort((a, b) => b.score - a.score);
   return scored[0]?.facility ?? null;
 }
 
-function chooseInnForSeal(seal) { return getBestFacilityForSeal(seal, ['inn']); }
-function chooseSpendingFacilityForSeal(seal) { return getBestFacilityForSeal(seal, ['restaurant', 'blacksmith']); }
+function isFacilityStillValidTarget(seal, facilityId, purpose = 'spend') {
+  const facility = (gameState.world.objects ?? []).find(o => o?.id === facilityId && o?.kind === 'facility');
+  return Number.isFinite(scoreFacilityForSeal(seal, facility, purpose));
+}
+
+function getBestFacilityForSeal(seal, preferredTypes) {
+  const types = Array.isArray(preferredTypes) && preferredTypes.length > 0 ? preferredTypes : Object.keys(CONFIG.facilities ?? {});
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
+  const purpose = types.length === 1 && types[0] === 'inn' ? 'heal'
+    : (types.length === 1 && types[0] === 'restaurant' ? 'food'
+      : (types.some(type => type === 'blacksmith' || type === 'restaurant') && safeFiniteNumber(seal?.gearBudget, 0, 0) > 0 && hpRatio > CONFIG.seal.innHpThreshold ? 'equipment' : 'spend'));
+  return chooseBestFacility(seal, purpose, types) ?? chooseBestFacility(seal, 'spend', types);
+}
+
+function chooseInnForSeal(seal) { return chooseBestFacility(seal, 'heal', ['inn']); }
+function chooseSpendingFacilityForSeal(seal) { return chooseBestFacility(seal, 'spend', ['restaurant', 'blacksmith']); }
 function chooseFacilityAfterHunt(seal) {
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
-  if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseInnForSeal(seal) ?? chooseSpendingFacilityForSeal(seal);
-  const blacksmith = getBestFacilityForSeal(seal, ['blacksmith']);
-  const hasEquipmentBudget = blacksmith && chooseBestAffordableEquipmentUpgrade(seal, blacksmith);
-  if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return getBestFacilityForSeal(seal, ['inn', 'restaurant', 'blacksmith']);
-  if (seal?.carriedG >= (CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) {
-    return getBestFacilityForSeal(seal, ['inn', 'restaurant', 'blacksmith']);
-  }
-  if (hasEquipmentBudget) return blacksmith;
+  if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseBestFacility(seal, 'food', ['restaurant']) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
+  const equipmentShop = chooseBestFacility(seal, 'equipment', ['blacksmith', 'restaurant']);
+  if (equipmentShop) return equipmentShop;
+  if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseBestFacility(seal, 'food', ['restaurant']) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
+  if (seal?.carriedG >= (CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseBestFacility(seal, 'food', ['restaurant']);
   const personality = getPersonalityConfig(seal);
   const preferred = personality?.maxHuntsPerTrip > CONFIG.personalities.balanced.maxHuntsPerTrip
     ? ['blacksmith', 'restaurant', 'inn']
     : (personality?.maxHuntsPerTrip < CONFIG.personalities.balanced.maxHuntsPerTrip ? ['inn', 'restaurant', 'blacksmith'] : ['restaurant', 'blacksmith', 'inn']);
-  return getBestFacilityForSeal(seal, preferred);
+  return chooseBestFacility(seal, 'spend', preferred) ?? chooseBestFacility(seal, 'heal', preferred) ?? chooseBestFacility(seal, 'food', preferred);
+}
+
+function clearLegacyReturnTarget(seal) {
+  if (!seal) return;
+  const reason = String(seal.target?.reason ?? '');
+  const tile = seal.target ? worldToGrid(seal.target.x, seal.target.y) : null;
+  const isLegacyHub = ['village-route', 'safe-marker', 'return-flag', 'village-center'].includes(reason)
+    || (tile && ((tile.x === CONFIG.world.safeX && tile.y === CONFIG.world.safeY) || (tile.x === CONFIG.world.villageEntryX && tile.y === CONFIG.world.villageEntryY)) && seal.state === 'returningFromHunt');
+  if (isLegacyHub) { seal.target = null; seal.path = []; seal.pathTargetKey = null; seal.targetId = null; }
+}
+
+function routeSealDirectlyToFacility(seal, facilityId, reason = 'facility') {
+  const facility = (gameState.world.objects ?? []).find(o => o?.id === facilityId && o?.kind === 'facility');
+  if (!seal || !facility || !isFacilityStillValidTarget(seal, facilityId, reason === 'heal' ? 'heal' : reason === 'equipment' ? 'equipment' : 'spend')) return false;
+  seal.targetId = facility.id;
+  seal.currentAction = `${CONFIG.facilities[facility.type]?.label ?? '施設'}へ向かっています`;
+  if (!setSealDestination(seal, facilityInteractionPoint(facility), 'facility')) { seal.targetId = null; return false; }
+  seal.state = 'movingToFacility';
+  return true;
+}
+
+function choosePostHuntAction(seal) {
+  if (!seal) return false;
+  clearLegacyReturnTarget(seal);
+  const facility = chooseFacilityAfterHunt(seal);
+  if (facility && routeSealDirectlyToFacility(seal, facility.id, facility.type === 'inn' ? 'heal' : (chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend'))) return true;
+  if (seal.type === 'visitor' && visitorShouldLeave(seal)) { seal.currentAction = '海へ帰っています'; seal.state = 'leavingToSea'; return buildRouteToVillage(seal); }
+  if (seal.type === 'visitor' && shouldContinueHunting(seal)) { updateChoosingHuntArea(seal); return true; }
+  if (seal.type === 'resident' && shouldContinueHunting(seal)) { updateChoosingHuntArea(seal); return true; }
+  seal.wanderTimer = CONFIG.seal.wanderSeconds;
+  setSealDestination(seal, villageWanderPoint(), 'village-wander');
+  seal.currentAction = '村で過ごしています';
+  seal.state = seal.type === 'visitor' ? 'idle' : 'choosingFacility';
+  return true;
 }
 
 function nearestFacility(type, x, y) {
@@ -779,6 +854,37 @@ function centerOfObject(obj) { return { x: ((obj?.x ?? 0) + (obj?.w ?? 1) / 2) *
 function distance(ax, ay, bx, by) { return Math.hypot((bx ?? 0) - (ax ?? 0), (by ?? 0) - (ay ?? 0)); }
 function randomRange(min, max) { return min + Math.random() * (max - min); }
 function randomCoastPoint() { return gridToWorld(Math.floor(randomRange(CONFIG.world.coastX, CONFIG.world.coastX + CONFIG.world.coastW)), Math.floor(randomRange(CONFIG.world.coastY, CONFIG.world.coastY + CONFIG.world.coastH))); }
+
+function isVisitorProfileUnlocked(profile) {
+  if (!profile) return false;
+  return profile.unlocked === true || safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0) >= safeFiniteNumber(profile.unlockedAtKnownness, 0, 0);
+}
+
+function getNextUnlockProfile() {
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  return (gameState.visitorProfiles ?? [])
+    .filter(profile => profile && !isVisitorProfileUnlocked(profile) && safeFiniteNumber(profile.unlockedAtKnownness, 0, 0) > knownness)
+    .sort((a, b) => safeFiniteNumber(a.unlockedAtKnownness, 0, 0) - safeFiniteNumber(b.unlockedAtKnownness, 0, 0))[0] ?? null;
+}
+
+function getNextKnownnessGoal() {
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  const profileGoal = getNextUnlockProfile()?.unlockedAtKnownness;
+  const thresholdGoal = (CONFIG.KNOWNNESS?.UNLOCK_THRESHOLDS ?? []).map(Number).filter(value => Number.isFinite(value) && value > knownness).sort((a, b) => a - b)[0];
+  const goals = [profileGoal, thresholdGoal].map(Number).filter(Number.isFinite);
+  return goals.length > 0 ? Math.min(...goals) : Math.max(knownness, 0);
+}
+
+function updateVisitorUnlocks() {
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  for (const profile of gameState.visitorProfiles ?? []) {
+    if (!profile || profile.unlocked || knownness < safeFiniteNumber(profile.unlockedAtKnownness, 0, 0)) continue;
+    profile.unlocked = true;
+    logMessage(`${profile.name}が村を知りました（知名度${Math.floor(knownness)}）。`);
+  }
+}
+
+function unlockKnownVisitors() { updateVisitorUnlocks(); }
 
 function createResidentSeal(name) {
   const safe = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
