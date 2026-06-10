@@ -20,7 +20,7 @@ function getSerializableGameState() {
       decorations: cloneSerializable(objects.filter(o => o?.kind === 'decoration'), []),
       nextObjectId: clampInteger(gameState.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1)
     },
-    seals: cloneSerializable((gameState.seals ?? []).map(seal => { const copy = { ...seal }; delete copy.path; delete copy.pathTargetKey; return copy; }), []),
+    seals: cloneSerializable((gameState.seals ?? []).map(seal => { const copy = { ...seal }; delete copy.path; delete copy.pathTargetKey; delete copy.targetFacility; return copy; }), []),
     visitorProfiles: cloneSerializable(gameState.visitorProfiles, []),
     village: { knownness: safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0), clearCount: clampInteger(gameState.village?.clearCount, 0, Number.MAX_SAFE_INTEGER, 0) },
     time: { timeScale: clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE) },
@@ -139,7 +139,6 @@ function applyLoadedGameState(data) {
   gameState.world.objects = normalizeObjects([...(loaded.world?.facilities ?? []), ...(loaded.world?.decorations ?? [])]);
   gameState.world.nextObjectId = Math.max(nextObjectNumber(gameState.world.objects), clampInteger(loaded.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1));
   gameState.seals = normalizeSeals(loaded.seals);
-  rebuildLoadedSealRoutes();
   enforceSingleResidentSeal();
   gameState.visitorProfiles = normalizeVisitorProfiles(loaded.visitorProfiles);
   gameState.village.knownness = safeFiniteNumber(loaded.village?.knownness, CONFIG.knownness.initial, 0);
@@ -153,6 +152,7 @@ function applyLoadedGameState(data) {
   gameState.stats.monthlyKnownnessGained = safeFiniteNumber(loaded.stats?.monthlyKnownnessGained, 0, 0);
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(loaded.stats?.monthlyPlayerIncome, 0, 0);
   gameState.monsters = normalizeMonsters(loaded.monsters);
+  rebuildLoadedSealRoutes();
   gameState.logs = Array.isArray(loaded.logs) ? loaded.logs.map(text => String(text)).slice(0, CONFIG.MAX_LOGS) : [];
   gameState.timers.spawn = safeFiniteNumber(loaded.timers?.spawn, 0, 0);
   gameState.timers.monsterSpawn = safeFiniteNumber(loaded.timers?.monsterSpawn, loaded.timers?.spawn ?? 0, 0);
@@ -220,6 +220,6 @@ function rebuildLoadedSealRoutes() {
     if (seal.state === 'movingToHuntExit') { if (!buildRouteToArea(seal, seal.selectedHuntAreaId ?? 'coast')) seal.state = 'idle'; continue; }
     if (seal.state === 'returningFromHunt' || seal.state === 'leaving') { if (!buildRouteToVillage(seal)) seal.state = seal.type === 'visitor' ? 'leaving' : 'idle'; continue; }
     if (seal.state === 'movingToMonster') { const monster = (gameState.monsters ?? []).find(item => item?.id === seal.targetId); if (monster) setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster'); else seal.state = 'hunting'; continue; }
-    if (seal.state === 'movingToFacility') { const facility = (gameState.world.objects ?? []).find(item => item?.id === seal.targetId); if (facility) setSealDestination(seal, centerOfObject(facility), 'facility'); else seal.state = 'choosingFacility'; }
+    if (seal.state === 'movingToFacility') { const facility = (gameState.world.objects ?? []).find(item => item?.id === seal.targetId); if (facility && isFacilityUsable(facility)) setSealDestination(seal, facilityInteractionPoint(facility), 'facility'); else { seal.targetId = null; seal.state = 'choosingFacility'; } }
   }
 }

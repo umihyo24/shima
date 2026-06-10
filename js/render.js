@@ -39,7 +39,7 @@ function drawWorld() {
       ctx.strokeStyle = CONFIG.render.gridLine; ctx.strokeRect(wx, wy, CONFIG.world.tile, CONFIG.world.tile);
     }
   }
-  drawOpenCorridors();
+  if (gameState.ui?.debugRouteHints === true) drawOpenCorridors();
   drawExpansionBoundary();
   drawLabel('島エリア（緑=建設可 / 濃緑=未開拓）', CONFIG.world.islandX * CONFIG.world.tile + 10, CONFIG.world.islandY * CONFIG.world.tile + 24, '#123');
   drawLabel('外の冒険エリア：coast（カニ出現）', CONFIG.world.coastX * CONFIG.world.tile + 10, CONFIG.world.coastY * CONFIG.world.tile + 24, '#e8fbff');
@@ -48,8 +48,8 @@ function drawWorld() {
 
 function drawOpenCorridors() {
   ctx.save();
-  ctx.strokeStyle = CONFIG.render.corridor;
-  ctx.lineWidth = CONFIG.world.tile * (CONFIG.map.corridorWidth * 2 + 1);
+  ctx.strokeStyle = CONFIG.render.debugRouteHint ?? CONFIG.render.corridor;
+  ctx.lineWidth = Math.max(1, CONFIG.world.tile * 0.08 / Math.max(gameState.camera.zoom, 0.1));
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   for (const route of [getEntryCorridor(), ...(CONFIG.ROUTES?.huntingCorridors ?? [])]) {
@@ -260,5 +260,5 @@ function updateHud() {
   }).join('');
   updateToolButtons();
 }
-function stateLabel(state) { return ({ arriving:'到着', choosingHuntArea:'狩猟先選択', movingToHuntExit:'狩猟通路へ移動', hunting:'狩猟探索', movingToMonster:'カニへ移動', fighting:'戦闘中', returningFromHunt:'村へ帰還', choosingFacility:'施設選択', movingToFacility:'施設へ移動', usingFacility:'施設利用中', leaving:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
+function stateLabel(state) { return ({ arriving:'到着', choosingHuntArea:'狩猟先選択', movingToHuntExit:'狩猟エリアへ移動', hunting:'狩猟探索', movingToMonster:'カニへ移動', fighting:'戦闘中', returningFromHunt:'村へ帰還', choosingFacility:'施設選択', movingToFacility:'施設へ移動', usingFacility:'施設利用中', leaving:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
 

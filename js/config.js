@@ -3,7 +3,7 @@
 const CONFIG = Object.freeze({
   canvas: { minDevicePixelRatio: 1, maxDevicePixelRatio: 2 },
   phase: { start: 'start', playing: 'playing', gameover: 'gameover' },
-  world: { cols: 54, rows: 34, tile: 44, islandX: 4, islandY: 10, islandW: 28, islandH: 18, coastX: 34, coastY: 5, coastW: 16, coastH: 24, safeX: 14, safeY: 18 },
+  world: { cols: 54, rows: 34, tile: 44, islandX: 4, islandY: 10, islandW: 28, islandH: 18, coastX: 34, coastY: 5, coastW: 16, coastH: 24, safeX: 14, safeY: 18, villageEntryX: 14, villageEntryY: 17 },
   expansion: { startX: 6, startY: 12, startW: 20, startH: 13, regionX: 5, regionY: 11, regionW: 26, regionH: 16 },
   CLEARING: { BASE_COST: 260, COST_STEP: 75, RADIUS: 1 },
   map: {
@@ -52,7 +52,7 @@ const CONFIG = Object.freeze({
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   knownness: { initial: 0, huntRewardPerMonthlyHunt: 4, monthlyBaseReward: 2, satisfyingVisitReward: 3, unlockTargetId: 'visitor-tategoto' },
-  movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['hunt-wander', 'monster', 'rescue', 'carry'] },
+  movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['rescue', 'carry'] },
   timing: { targetFps: 60, maxDt: 0.05, uiMs: 120 },
   placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75 },
   directions: [ { name: 'N', dx: 0, dy: -1 }, { name: 'E', dx: 1, dy: 0 }, { name: 'S', dx: 0, dy: 1 }, { name: 'W', dx: -1, dy: 0 } ],
@@ -73,7 +73,7 @@ const CONFIG = Object.freeze({
     blacksmith: { label: '鍛冶屋', spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05 }
   },
   ROUTES: { entryCorridor: { id: 'south_entry', type: 'entry', waypoints: [{ x: 14, y: 30 }, { x: 14, y: 24 }, { x: 14, y: 17 }] }, huntingCorridors: [ { id: 'coast_exit', type: 'hunting', areaId: 'coast', waypoints: [{ x: 14, y: 17 }, { x: 24, y: 17 }, { x: 24, y: 16 }, { x: 34, y: 16 }, { x: 38, y: 16 }] } ] },
-  visitor: { maxActive: 2, spawnInterval: 16, spawnIntervalFavorReduction: 0.04, minSpawnIntervalMultiplier: 0.55, returnBaseWeight: 1, returnFavorWeight: 0.18, inactiveWeightBonus: 3, safeLeaveFavor: 2, minStayMs: 45000, maxStayMs: 110000, maxStayFavorBonusMs: 25000, maxStayFavorMsPerFavor: 1000, satisfyingMinFacilities: 1, satisfyingMinHunts: 1, enoughHuntsForLeave: 2, profiles: [
+  visitor: { maxActive: 2, spawnInterval: 16, spawnIntervalFavorReduction: 0.04, minSpawnIntervalMultiplier: 0.55, returnBaseWeight: 1, returnFavorWeight: 0.18, inactiveWeightBonus: 3, safeLeaveFavor: 2, entrySpawn: { x: 14, y: 24 }, spawnSearchRadius: 8, minStayMs: 45000, maxStayMs: 110000, maxStayFavorBonusMs: 25000, maxStayFavorMsPerFavor: 1000, satisfyingMinFacilities: 1, satisfyingMinHunts: 1, enoughHuntsForLeave: 2, profiles: [
     { id: 'visitor-goma', name: 'ゴマ', personality: 'balanced', unlockedAtKnownness: 0, baseStats: { maxHp: 130, attack: 18, defense: 5 }, favor: 0, visits: 0, level: 1, exp: 0 },
     { id: 'visitor-kurakake', name: 'クラカケ', personality: 'cautious', unlockedAtKnownness: 0, baseStats: { maxHp: 120, attack: 17, defense: 6 }, favor: 0, visits: 0, level: 1, exp: 0 },
     { id: 'visitor-tategoto', name: 'タテゴト', personality: 'brave', unlockedAtKnownness: 100, baseStats: { maxHp: 145, attack: 20, defense: 5 }, favor: 0, visits: 0, level: 1, exp: 0 }
