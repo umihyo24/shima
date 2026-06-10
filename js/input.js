@@ -28,6 +28,21 @@ function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionInd
 function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
 function setGameSpeed(speed) { gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; updateToolButtons(); updateHud(); }
 
+function handleDungeonPanelAction(event) {
+  const button = event.target?.closest?.('[data-dungeon-action]');
+  if (!button || !sealCardsEl?.contains(button)) return;
+  if (event.type === 'click' && button.__dungeonActionHandled === true) return;
+  if (event.type === 'pointerdown') button.__dungeonActionHandled = true;
+  event.preventDefault();
+  event.stopPropagation();
+  const action = button.dataset?.dungeonAction;
+  if (action === 'start') startDungeon(button.dataset?.dungeonId);
+  if (action === 'close') {
+    gameState.ui.selectedDungeonId = null;
+    updateHud();
+  }
+}
+
 function sealAtWorldPoint(point) {
   if (!point) return null;
   return [...(gameState.seals ?? [])].reverse().find(seal => seal && distance(point.x, point.y, seal.x, seal.y) <= CONFIG.seal.contactDistance * 1.4) ?? null;
@@ -100,10 +115,7 @@ startBtn.addEventListener('click', startNewGame);
 loadBtn.addEventListener('click', loadGame);
 zoomInBtn.addEventListener('click', () => setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep));
 zoomOutBtn.addEventListener('click', () => setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep));
-sealCardsEl.addEventListener('click', e => {
-  const action = e.target?.dataset?.dungeonAction;
-  if (action === 'start') startDungeon(e.target?.dataset?.dungeonId);
-  if (action === 'close') { gameState.ui.selectedDungeonId = null; updateHud(); }
-});
+sealCardsEl.addEventListener('pointerdown', handleDungeonPanelAction);
+sealCardsEl.addEventListener('click', handleDungeonPanelAction);
 
 }
