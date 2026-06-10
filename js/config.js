@@ -60,14 +60,14 @@ const CONFIG = Object.freeze({
   CALENDAR: { WEEK_DURATION_MS: 12000, WEEKS_PER_MONTH: 4, MONTHS_PER_YEAR: 12 },
   TIME: { SPEED_OPTIONS: [0, 1, 2, 4], DEFAULT_SCALE: 1 },
   ASSETS: { paths: {
-    'seals.goma': '/assets/seals/seal_white_goma_idle.png',
-    'seals.kurakake': '/assets/seals/seal_spotted_kurakake_idle.png',
-    'seals.tategoto': '/assets/seals/seal_harp_tategoto_idle.png',
-    'seals.resident': '/assets/seals/seal_white_resident_idle.png',
-    'monsters.crab': '/assets/monsters/monster_water_coast_crab.png',
-    'cards.facility_neutral_inn_idle': '/assets/cards/facility_neutral_inn_idle.png',
-    'cards.facility_neutral_restaurant_idle': '/assets/cards/facility_neutral_restaurant_idle.png',
-    'cards.facility_neutral_blacksmith_idle': '/assets/cards/facility_neutral_blacksmith_idle.png'
+    'seals.goma': 'assets/seals/seal_white_goma_idle.png',
+    'seals.kurakake': 'assets/seals/seal_spotted_kurakake_idle.png',
+    'seals.tategoto': 'assets/seals/seal_harp_tategoto_idle.png',
+    'seals.resident': 'assets/seals/seal_white_resident_idle.png',
+    'monsters.crab': 'assets/monsters/monster_water_coast_crab.png',
+    'cards.facility_neutral_inn_idle': 'assets/cards/facility_neutral_inn_idle.png',
+    'cards.facility_neutral_restaurant_idle': 'assets/cards/facility_neutral_restaurant_idle.png',
+    'cards.facility_neutral_blacksmith_idle': 'assets/cards/facility_neutral_blacksmith_idle.png'
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   KNOWNNESS: { UNLOCK_THRESHOLDS: [100, 200, 300, 400, 500], PANEL_WIDTH: 210, PANEL_HEIGHT: 74, PANEL_MARGIN: 18 },

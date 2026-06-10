@@ -1003,6 +1003,7 @@ function completeDungeon(dungeon) {
   const participants = normalizeDungeonParticipantIds(dungeon.participantIds);
   for (const participant of participants) {
     const seal = participant.sealId ? (gameState.seals ?? []).find(item => item?.id === participant.sealId) : null;
+    const profile = participant.profileId ? getVisitorProfileById(participant.profileId) : null;
     if (seal) {
       seal.exp = safeFiniteNumber(seal.exp, 0, 0) + rewardExp;
       addFavor(seal, CONFIG.dungeon?.participant?.clearFavor ?? 2);
@@ -1012,11 +1013,11 @@ function completeDungeon(dungeon) {
       seal.questingReturnState = null;
       seal.questingDungeonId = null;
       seal.currentAction = '攻略から帰還しました';
+      if (profile) profile.dungeonClears = clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+      continue;
     }
-    const profile = participant.profileId ? getVisitorProfileById(participant.profileId) : null;
     if (profile) {
-      profile.exp = safeFiniteNumber(profile.exp, 0, 0) + rewardExp;
-      profile.favor = safeFiniteNumber(profile.favor, 0, 0) + safeFiniteNumber(CONFIG.dungeon?.participant?.clearFavor, 0, 0);
+      addDungeonRewardToProfile(profile, rewardExp, CONFIG.dungeon?.participant?.clearFavor ?? 2);
       profile.dungeonClears = clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
     }
   }
@@ -1027,6 +1028,17 @@ function completeDungeon(dungeon) {
   unlockKnownVisitors();
   logMessage(`${dungeon.name}を攻略完了！ ${Math.floor(rewardG)}G / EXP${Math.floor(rewardExp)} / 知名度+${Math.floor(rewardKnownness)} / ${drops.map(drop => `${getItemDef(drop.itemId)?.name ?? drop.itemId}x${drop.count}`).join('、') || 'ドロップなし'}`);
   updateHud();
+}
+
+function addDungeonRewardToProfile(profile, rewardExp, rewardFavor) {
+  if (!profile) return;
+  profile.exp = safeFiniteNumber(profile.exp, 0, 0) + safeFiniteNumber(rewardExp, 0, 0);
+  profile.favor = safeFiniteNumber(profile.favor, 0, 0) + safeFiniteNumber(rewardFavor, 0, 0);
+  while (safeFiniteNumber(profile.exp, 0, 0) >= clampInteger(profile.level, 1, Number.MAX_SAFE_INTEGER, 1) * CONFIG.seal.levelExp) {
+    profile.level = clampInteger(profile.level, 1, Number.MAX_SAFE_INTEGER, 1) + 1;
+    profile.favor = safeFiniteNumber(profile.favor, 0, 0) + CONFIG.seal.favorLevelUp;
+    logMessage(`${profile.name}がLv.${profile.level}になりました！`);
+  }
 }
 
 function rollDungeonDrops(dropTableId) {
