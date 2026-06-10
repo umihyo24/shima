@@ -48,7 +48,7 @@
       WASD/矢印: カメラ移動<br>
       ドラッグ: カメラ移動 / 短いクリック: 配置<br>
       ホイール: ズーム<br>
-      R: 施設入口を回転<br>
+      R: 施設入口を回転<br>開拓: 未開拓の草木岩をGで除去<br>
       <div class="zoomBtns"><button id="zoomOut">−</button><button id="zoomIn">＋</button></div>
     </div>
     <div class="sealCards" id="sealCards"></div>
@@ -68,7 +68,9 @@
 const CONFIG = Object.freeze({
   canvas: { minDevicePixelRatio: 1, maxDevicePixelRatio: 2 },
   phase: { start: 'start', playing: 'playing', gameover: 'gameover' },
-  world: { cols: 54, rows: 34, tile: 44, islandX: 4, islandY: 10, islandW: 22, islandH: 16, coastX: 27, coastY: 5, coastW: 23, coastH: 24, safeX: 14, safeY: 18 },
+  world: { cols: 54, rows: 34, tile: 44, islandX: 4, islandY: 10, islandW: 28, islandH: 18, coastX: 34, coastY: 5, coastW: 16, coastH: 24, safeX: 14, safeY: 18 },
+  expansion: { startX: 6, startY: 12, startW: 18, startH: 12, regionX: 5, regionY: 11, regionW: 26, regionH: 16, clearCost: 120, clearRadius: 1, obstacleSeedA: 17, obstacleSeedB: 31, obstacleModulo: 10, grassLimit: 4, treeLimit: 7 },
+  tileState: { terrainWater: 'water', terrainLand: 'land', terrainOutside: 'outside', buildBlocked: 'blocked', buildable: 'buildable', obstacleGrass: 'grass', obstacleTree: 'tree', obstacleRock: 'rock' },
   village: { roadY: 16, roadX: 14, roadStartX: 7, roadEndX: 22, roadStartY: 16, roadEndY: 22, defaults: [
     { type: 'inn', x: 8, y: 14, directionIndex: 2 },
     { type: 'restaurant', x: 14, y: 14, directionIndex: 2 },
@@ -88,6 +90,7 @@ const CONFIG = Object.freeze({
     { id: 'flower', label: '🌼 花', kind: 'decoration', w: 1, h: 1 },
     { id: 'tree', label: '🌲 木', kind: 'decoration', w: 1, h: 1 },
     { id: 'rock', label: '🪨 岩', kind: 'decoration', w: 1, h: 1 },
+    { id: 'clear', label: '⛏️ 開拓', kind: 'clear', w: 1, h: 1 },
     { id: 'delete', label: '❌ 削除', kind: 'delete', w: 1, h: 1 }
   ],
   facilities: {
@@ -98,7 +101,7 @@ const CONFIG = Object.freeze({
   seal: { count: 3, maxHp: 130, attack: 18, defense: 5, baseSpeed: 50, roadSpeedMultiplier: 1.55, lowHpRatio: 0.4, fallenRecoveryPerSecond: 3, standHpRatio: 0.36, restTargetRatio: 0.88, contactDistance: 15, rescueScanDistance: 380, spendSeconds: 1.4, restSeconds: 1, startG: 12, spread: 24 },
   monster: { cap: 7, spawnInterval: 2.4, hp: 64, attack: 13, defense: 3, rewardG: 28, rewardExp: 16, contactDistance: 18 },
   combat: { sealAttackSeconds: 0.75, monsterAttackSeconds: 1.0, minDamage: 1 },
-  render: { gridLine: 'rgba(255,255,255,.13)', island: '#79b85c', coast: '#1b90a9', beach: '#d9c887', road: '#b28a56', invalid: 'rgba(255,50,50,.45)', valid: 'rgba(80,255,140,.35)', shadow: 'rgba(0,0,0,.24)', font: '13px system-ui', bigFont: '18px system-ui', minimapW: 220, minimapH: 128 }
+  render: { gridLine: 'rgba(255,255,255,.13)', island: '#79b85c', buildableLand: '#8dcc68', blockedLand: '#4e7f3d', outside: '#1b90a9', water: '#126d8b', beach: '#d9c887', boundary: 'rgba(255,255,255,.46)', road: '#b28a56', invalid: 'rgba(255,50,50,.45)', valid: 'rgba(80,255,140,.35)', shadow: 'rgba(0,0,0,.24)', font: '13px system-ui', bigFont: '18px system-ui', minimapW: 220, minimapH: 128, boundaryDash: 0.35, boundaryGap: 0.18, boundaryLine: 3, obstacle: { center: 0.5, shadowX: 2, shadowY: 10, shadowW: 14, shadowH: 6, grassLine: 3, grassBaseY: 10, grassReachX: 13, grassTipY: -2, grassReachY: 8, trunkX: 4, trunkY: 0, trunkW: 8, trunkH: 15, treeRadius: 15, treeY: -5, rockY: 4, rockW: 15, rockH: 11, rockTilt: -0.35 } }
 });
 
 const canvas = document.getElementById('game');
@@ -117,7 +120,7 @@ const gameState = {
   camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
   input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
   ui: { selectedTool: 'road', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0 },
-  world: { roads: [], objects: [], nextObjectId: 1 },
+  world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
   seals: [],
   monsters: [],
   images: {},
@@ -160,6 +163,7 @@ function logMessage(text) {
 function initGame() {
   gameState.phase = CONFIG.phase.playing;
   gameState.player.g = 0;
+  gameState.world.tiles = createWorldTiles();
   gameState.world.roads = [];
   gameState.world.objects = [];
   gameState.world.nextObjectId = 1;
@@ -192,6 +196,7 @@ function initGame() {
 }
 
 function addDefaultVillage() {
+  for (const item of CONFIG.village.defaults) unlockFootprint(item.x, item.y, getTool(item.type)?.w ?? CONFIG.placement.decorationSize, getTool(item.type)?.h ?? CONFIG.placement.decorationSize);
   for (let x = CONFIG.village.roadStartX; x <= CONFIG.village.roadEndX; x += 1) gameState.world.roads.push({ x, y: CONFIG.village.roadY });
   for (let y = CONFIG.village.roadStartY; y <= CONFIG.village.roadEndY; y += 1) gameState.world.roads.push({ x: CONFIG.village.roadX, y });
   for (const item of CONFIG.village.defaults) placeObject(item.type, item.x, item.y, item.directionIndex ?? 0, true);
@@ -206,6 +211,131 @@ function worldToGrid(x, y) {
 }
 
 function inRect(gx, gy, x, y, w, h) { return gx >= x && gy >= y && gx < x + w && gy < y + h; }
+function isInExpansionRegion(gx, gy) { return inRect(gx, gy, CONFIG.expansion.regionX, CONFIG.expansion.regionY, CONFIG.expansion.regionW, CONFIG.expansion.regionH); }
+function isInStartingVillage(gx, gy) { return inRect(gx, gy, CONFIG.expansion.startX, CONFIG.expansion.startY, CONFIG.expansion.startW, CONFIG.expansion.startH); }
+
+function createWorldTiles() {
+  return Array.from({ length: CONFIG.world.rows }, (_, y) => Array.from({ length: CONFIG.world.cols }, (_, x) => createTile(x, y)));
+}
+
+function createTile(x, y) {
+  const state = CONFIG.tileState;
+  if (isCoastTile(x, y)) return { terrain: state.terrainOutside, buildState: state.buildBlocked, obstacle: null, unlocked: false };
+  if (!isIslandTile(x, y)) return { terrain: state.terrainWater, buildState: state.buildBlocked, obstacle: null, unlocked: false };
+  const startsBuildable = isInStartingVillage(x, y);
+  return {
+    terrain: state.terrainLand,
+    buildState: startsBuildable ? state.buildable : state.buildBlocked,
+    obstacle: startsBuildable ? null : obstacleForTile(x, y),
+    unlocked: startsBuildable
+  };
+}
+
+function obstacleForTile(x, y) {
+  const roll = Math.abs((x * CONFIG.expansion.obstacleSeedA + y * CONFIG.expansion.obstacleSeedB) % CONFIG.expansion.obstacleModulo);
+  if (roll < CONFIG.expansion.grassLimit) return CONFIG.tileState.obstacleGrass;
+  if (roll < CONFIG.expansion.treeLimit) return CONFIG.tileState.obstacleTree;
+  return CONFIG.tileState.obstacleRock;
+}
+
+function getTile(x, y) {
+  return gameState.world.tiles?.[y]?.[x] ?? null;
+}
+
+function isBuildableTile(x, y) {
+  const tile = getTile(x, y);
+  return tile?.terrain === CONFIG.tileState.terrainLand
+    && tile?.buildState === CONFIG.tileState.buildable
+    && tile?.obstacle === null
+    && tile?.unlocked === true
+    && isInExpansionRegion(x, y);
+}
+
+function isBlockedLandTile(x, y) {
+  const tile = getTile(x, y);
+  return tile?.terrain === CONFIG.tileState.terrainLand
+    && tile?.buildState === CONFIG.tileState.buildBlocked
+    && tile?.obstacle !== null
+    && isInExpansionRegion(x, y);
+}
+
+function unlockFootprint(gx, gy, w, h) {
+  for (let y = gy; y < gy + h; y += 1) {
+    for (let x = gx; x < gx + w; x += 1) {
+      const tile = getTile(x, y);
+      if (tile?.terrain !== CONFIG.tileState.terrainLand) continue;
+      tile.buildState = CONFIG.tileState.buildable;
+      tile.obstacle = null;
+      tile.unlocked = true;
+    }
+  }
+}
+
+function getTilesInRadius(tileX, tileY, radius) {
+  const tiles = [];
+  for (let y = tileY - radius; y <= tileY + radius; y += 1) {
+    for (let x = tileX - radius; x <= tileX + radius; x += 1) {
+      if (distance(tileX, tileY, x, y) <= radius) tiles.push({ x, y, tile: getTile(x, y) });
+    }
+  }
+  return tiles;
+}
+
+function canPlaceAt(tileX, tileY, objectDef) {
+  const tool = objectDef ?? getTool(gameState.ui.selectedTool);
+  if (tool?.kind === 'delete') return { ok: true, reason: '' };
+  if (tool?.kind === 'clear') return { ok: false, reason: '開拓ツールでは配置できません。' };
+  const w = tool?.w ?? CONFIG.placement.decorationSize;
+  const h = tool?.h ?? CONFIG.placement.decorationSize;
+  for (let y = tileY; y < tileY + h; y += 1) {
+    for (let x = tileX; x < tileX + w; x += 1) {
+      const tile = getTile(x, y);
+      if (!tile) return { ok: false, reason: 'マップ外です。' };
+      if (tile?.terrain === CONFIG.tileState.terrainWater) return { ok: false, reason: '水上には配置できません。' };
+      if (tile?.terrain === CONFIG.tileState.terrainOutside) return { ok: false, reason: '外の冒険エリアには配置できません。' };
+      if (!isInExpansionRegion(x, y)) return { ok: false, reason: '村の開拓範囲外です。' };
+      if (!isBuildableTile(x, y)) return { ok: false, reason: '未開拓または障害物がある土地です。' };
+      if (objectAt(x, y)) return { ok: false, reason: '他の物があります。' };
+      if (tool?.kind !== 'road' && roadAt(x, y)) return { ok: false, reason: '道路の上には置けません。' };
+    }
+  }
+  return { ok: true, reason: '' };
+}
+
+function canClearAt(tileX, tileY) {
+  const tile = getTile(tileX, tileY);
+  if (!tile) return { ok: false, reason: 'マップ外です。' };
+  if (tile?.terrain !== CONFIG.tileState.terrainLand) return { ok: false, reason: '水辺や外の冒険エリアは開拓できません。' };
+  if (!isInExpansionRegion(tileX, tileY)) return { ok: false, reason: '村の開拓範囲外です。' };
+  if (!isBlockedLandTile(tileX, tileY)) return { ok: false, reason: 'ここは開拓対象の障害物付き土地ではありません。' };
+  if (gameState.player.g < CONFIG.expansion.clearCost) return { ok: false, reason: `${CONFIG.expansion.clearCost}G必要です。` };
+  return { ok: true, reason: '' };
+}
+
+function clearLandAt(tileX, tileY) {
+  const result = canClearAt(tileX, tileY);
+  if (!result.ok) {
+    logMessage(`開拓できません：${result.reason}`);
+    gameState.ui.placementFeedback = { x: tileX, y: tileY, ok: false, text: result.reason, timer: CONFIG.placement.feedbackSeconds };
+    return false;
+  }
+  gameState.player.g -= CONFIG.expansion.clearCost;
+  let cleared = 0;
+  for (const entry of getTilesInRadius(tileX, tileY, CONFIG.expansion.clearRadius)) {
+    const x = entry?.x ?? 0;
+    const y = entry?.y ?? 0;
+    const tile = entry?.tile;
+    if (tile?.terrain !== CONFIG.tileState.terrainLand || !isInExpansionRegion(x, y) || objectAt(x, y) || roadAt(x, y)) continue;
+    tile.buildState = CONFIG.tileState.buildable;
+    tile.obstacle = null;
+    tile.unlocked = true;
+    cleared += 1;
+  }
+  logMessage(`${CONFIG.expansion.clearCost}Gで${cleared}マスを開拓しました。`);
+  gameState.ui.placementFeedback = { x: tileX, y: tileY, ok: true, text: '開拓しました。', timer: CONFIG.placement.feedbackSeconds };
+  return true;
+}
+
 function isIslandTile(gx, gy) { return inRect(gx, gy, CONFIG.world.islandX, CONFIG.world.islandY, CONFIG.world.islandW, CONFIG.world.islandH); }
 function isCoastTile(gx, gy) { return inRect(gx, gy, CONFIG.world.coastX, CONFIG.world.coastY, CONFIG.world.coastW, CONFIG.world.coastH); }
 function roadAt(gx, gy) { return gameState.world.roads.some(r => r?.x === gx && r?.y === gy); }
@@ -214,20 +344,7 @@ function objectAt(gx, gy) { return gameState.world.objects.find(o => gx >= o?.x 
 function getTool(id) { return CONFIG.tools.find(t => t.id === id) ?? CONFIG.tools[0]; }
 
 function canPlace(type, gx, gy) {
-  const tool = getTool(type);
-  if (tool?.kind === 'delete') return { ok: true, reason: '' };
-  if (!isIslandTile(gx, gy)) return { ok: false, reason: '島の中だけに配置できます。' };
-  const w = tool?.w ?? CONFIG.placement.decorationSize;
-  const h = tool?.h ?? CONFIG.placement.decorationSize;
-  for (let y = gy; y < gy + h; y += 1) {
-    for (let x = gx; x < gx + w; x += 1) {
-      if (!isIslandTile(x, y)) return { ok: false, reason: '島からはみ出しています。' };
-      if (objectAt(x, y)) return { ok: false, reason: '他の物があります。' };
-      if (tool?.kind !== 'road' && roadAt(x, y)) return { ok: false, reason: '道路の上には置けません。' };
-    }
-  }
-  if (tool?.kind === 'road' && objectAt(gx, gy)) return { ok: false, reason: '施設や飾りがあります。' };
-  return { ok: true, reason: '' };
+  return canPlaceAt(gx, gy, getTool(type));
 }
 
 function placeObject(type, gx, gy, directionIndex, silent) {
@@ -555,15 +672,47 @@ function drawWorld() {
   for (let y = 0; y < CONFIG.world.rows; y += 1) {
     for (let x = 0; x < CONFIG.world.cols; x += 1) {
       const wx = x * CONFIG.world.tile, wy = y * CONFIG.world.tile;
-      ctx.fillStyle = isIslandTile(x, y) ? CONFIG.render.island : isCoastTile(x, y) ? CONFIG.render.coast : '#126d8b';
-      if (isIslandTile(x, y) && (x === CONFIG.world.islandX || y === CONFIG.world.islandY || x === CONFIG.world.islandX + CONFIG.world.islandW - 1 || y === CONFIG.world.islandY + CONFIG.world.islandH - 1)) ctx.fillStyle = CONFIG.render.beach;
+      const tile = getTile(x, y);
+      ctx.fillStyle = tile?.terrain === CONFIG.tileState.terrainLand
+        ? (isBuildableTile(x, y) ? CONFIG.render.buildableLand : CONFIG.render.blockedLand)
+        : tile?.terrain === CONFIG.tileState.terrainOutside ? CONFIG.render.outside : CONFIG.render.water;
+      if (tile?.terrain === CONFIG.tileState.terrainLand && (x === CONFIG.world.islandX || y === CONFIG.world.islandY || x === CONFIG.world.islandX + CONFIG.world.islandW - 1 || y === CONFIG.world.islandY + CONFIG.world.islandH - 1)) ctx.fillStyle = CONFIG.render.beach;
       ctx.fillRect(wx, wy, CONFIG.world.tile, CONFIG.world.tile);
+      if (tile?.terrain === CONFIG.tileState.terrainLand && tile?.buildState === CONFIG.tileState.buildBlocked) drawObstacle(tile.obstacle, wx, wy);
       ctx.strokeStyle = CONFIG.render.gridLine; ctx.strokeRect(wx, wy, CONFIG.world.tile, CONFIG.world.tile);
     }
   }
-  drawLabel('島エリア', CONFIG.world.islandX * CONFIG.world.tile + 10, CONFIG.world.islandY * CONFIG.world.tile + 24, '#123');
+  drawExpansionBoundary();
+  drawLabel('島エリア（緑=建設可 / 濃緑=未開拓）', CONFIG.world.islandX * CONFIG.world.tile + 10, CONFIG.world.islandY * CONFIG.world.tile + 24, '#123');
   drawLabel('外の冒険エリア：coast（カニ出現）', CONFIG.world.coastX * CONFIG.world.tile + 10, CONFIG.world.coastY * CONFIG.world.tile + 24, '#e8fbff');
   const safe = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY); drawFlag(safe.x, safe.y);
+}
+
+function drawExpansionBoundary() {
+  ctx.save();
+  ctx.strokeStyle = CONFIG.render.boundary;
+  ctx.setLineDash([CONFIG.world.tile * CONFIG.render.boundaryDash, CONFIG.world.tile * CONFIG.render.boundaryGap]);
+  ctx.lineWidth = CONFIG.render.boundaryLine / gameState.camera.zoom;
+  ctx.strokeRect(CONFIG.expansion.regionX * CONFIG.world.tile, CONFIG.expansion.regionY * CONFIG.world.tile, CONFIG.expansion.regionW * CONFIG.world.tile, CONFIG.expansion.regionH * CONFIG.world.tile);
+  ctx.restore();
+}
+
+function drawObstacle(type, wx, wy) {
+  const style = CONFIG.render.obstacle;
+  const cx = wx + CONFIG.world.tile * style.center;
+  const cy = wy + CONFIG.world.tile * style.center;
+  ctx.fillStyle = CONFIG.render.shadow; ctx.beginPath(); ctx.ellipse(cx + style.shadowX, cy + style.shadowY, style.shadowW, style.shadowH, 0, 0, Math.PI * 2); ctx.fill();
+  if (type === CONFIG.tileState.obstacleGrass) {
+    ctx.strokeStyle = '#b8e279'; ctx.lineWidth = style.grassLine / gameState.camera.zoom;
+    for (const dir of CONFIG.directions) { ctx.beginPath(); ctx.moveTo(cx, cy + style.grassBaseY); ctx.lineTo(cx + dir.dx * style.grassReachX, cy + style.grassTipY + dir.dy * style.grassReachY); ctx.stroke(); }
+    return;
+  }
+  if (type === CONFIG.tileState.obstacleTree) {
+    ctx.fillStyle = '#6b401f'; ctx.fillRect(cx - style.trunkX, cy + style.trunkY, style.trunkW, style.trunkH);
+    ctx.fillStyle = '#165f31'; ctx.beginPath(); ctx.arc(cx, cy + style.treeY, style.treeRadius, 0, Math.PI * 2); ctx.fill();
+    return;
+  }
+  ctx.fillStyle = '#8d9089'; ctx.beginPath(); ctx.ellipse(cx, cy + style.rockY, style.rockW, style.rockH, style.rockTilt, 0, Math.PI * 2); ctx.fill();
 }
 
 function drawRoads() {
@@ -622,11 +771,24 @@ function drawPlacementPreview() {
   const gx = gameState.input.mouseTile.x, gy = gameState.input.mouseTile.y;
   const tool = getTool(gameState.ui.selectedTool);
   if (gx < 0 || gy < 0) return;
-  const result = canPlace(tool.id, gx, gy);
-  ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
-  ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, (tool.w ?? 1) * CONFIG.world.tile, (tool.h ?? 1) * CONFIG.world.tile);
+  if (tool?.kind === 'clear') drawClearPreview(gx, gy);
+  else {
+    const result = canPlaceAt(gx, gy, tool);
+    ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
+    ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, (tool?.w ?? 1) * CONFIG.world.tile, (tool?.h ?? 1) * CONFIG.world.tile);
+  }
   const fb = gameState.ui.placementFeedback;
   if (fb) drawLabel(fb.text, fb.x * CONFIG.world.tile, fb.y * CONFIG.world.tile - 8, fb.ok ? '#d8ffe0' : '#ffd6d6');
+}
+
+function drawClearPreview(gx, gy) {
+  const result = canClearAt(gx, gy);
+  ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
+  for (const entry of getTilesInRadius(gx, gy, CONFIG.expansion.clearRadius)) {
+    if (entry?.tile?.terrain !== CONFIG.tileState.terrainLand || !isInExpansionRegion(entry.x, entry.y)) continue;
+    ctx.fillRect(entry.x * CONFIG.world.tile, entry.y * CONFIG.world.tile, CONFIG.world.tile, CONFIG.world.tile);
+  }
+  drawLabel(result.ok ? `${CONFIG.expansion.clearCost}Gで開拓` : result.reason, gx * CONFIG.world.tile, gy * CONFIG.world.tile - 8, result.ok ? '#d8ffe0' : '#ffd6d6');
 }
 
 function drawCrab(x, y) {
@@ -643,15 +805,17 @@ function drawMinimap() {
   const w = CONFIG.render.minimapW, h = CONFIG.render.minimapH, x = 14, y = canvas.clientHeight - h - 154;
   ctx.fillStyle = 'rgba(5,18,28,.82)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.strokeRect(x, y, w, h);
   const sx = w / (CONFIG.world.cols * CONFIG.world.tile), sy = h / (CONFIG.world.rows * CONFIG.world.tile);
-  ctx.fillStyle = '#79b85c'; ctx.fillRect(x + CONFIG.world.islandX * CONFIG.world.tile * sx, y + CONFIG.world.islandY * CONFIG.world.tile * sy, CONFIG.world.islandW * CONFIG.world.tile * sx, CONFIG.world.islandH * CONFIG.world.tile * sy);
-  ctx.fillStyle = '#1b90a9'; ctx.fillRect(x + CONFIG.world.coastX * CONFIG.world.tile * sx, y + CONFIG.world.coastY * CONFIG.world.tile * sy, CONFIG.world.coastW * CONFIG.world.tile * sx, CONFIG.world.coastH * CONFIG.world.tile * sy);
+  ctx.fillStyle = CONFIG.render.blockedLand; ctx.fillRect(x + CONFIG.world.islandX * CONFIG.world.tile * sx, y + CONFIG.world.islandY * CONFIG.world.tile * sy, CONFIG.world.islandW * CONFIG.world.tile * sx, CONFIG.world.islandH * CONFIG.world.tile * sy);
+  ctx.fillStyle = CONFIG.render.buildableLand;
+  for (let ty = 0; ty < CONFIG.world.rows; ty += 1) for (let tx = 0; tx < CONFIG.world.cols; tx += 1) if (isBuildableTile(tx, ty)) ctx.fillRect(x + tx * CONFIG.world.tile * sx, y + ty * CONFIG.world.tile * sy, CONFIG.world.tile * sx, CONFIG.world.tile * sy);
+  ctx.fillStyle = CONFIG.render.outside; ctx.fillRect(x + CONFIG.world.coastX * CONFIG.world.tile * sx, y + CONFIG.world.coastY * CONFIG.world.tile * sy, CONFIG.world.coastW * CONFIG.world.tile * sx, CONFIG.world.coastH * CONFIG.world.tile * sy);
   ctx.fillStyle = '#ff3b30'; for (const m of gameState.monsters) ctx.fillRect(x + m.x * sx - 2, y + m.y * sy - 2, 4, 4);
   ctx.fillStyle = '#fff'; for (const s of gameState.seals) ctx.fillRect(x + s.x * sx - 2, y + s.y * sy - 2, 4, 4);
   ctx.strokeStyle = '#fff'; ctx.strokeRect(x + (gameState.camera.x - canvas.clientWidth / (2 * gameState.camera.zoom)) * sx, y + (gameState.camera.y - canvas.clientHeight / (2 * gameState.camera.zoom)) * sy, canvas.clientWidth / gameState.camera.zoom * sx, canvas.clientHeight / gameState.camera.zoom * sy);
 }
 
 function updateHud() {
-  statsEl.innerHTML = `<b>${gameState.player.g} G</b><br>ズーム: ${gameState.camera.zoom.toFixed(2)}<br>ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<div class="log">${gameState.logs.map(l => `・${l}`).join('<br>')}</div>`;
+  statsEl.innerHTML = `<b>${gameState.player.g} G</b><br>ズーム: ${gameState.camera.zoom.toFixed(2)}<br>ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${CONFIG.expansion.clearCost}G / 半径${CONFIG.expansion.clearRadius}<br>入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<div class="log">${gameState.logs.map(l => `・${l}`).join('<br>')}</div>`;
   sealCardsEl.innerHTML = gameState.seals.map(s => `<div class="panel sealCard"><b>${s.name}</b><br>HP ${Math.ceil(s.hp)} / ${s.maxHp}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, s.hp / s.maxHp * 100))}%"></div></div>所持G: ${s.carriedG}<br>EXP: ${s.exp}<br>状態: ${stateLabel(s.state)}</div>`).join('');
 }
 function stateLabel(state) { return ({ exploring:'探索中', movingToMonster:'カニへ移動', fighting:'戦闘中', returningToIsland:'島へ帰還', spending:'利用中', movingToInn:'宿屋へ移動', resting:'休憩中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中' })[state] ?? state; }
@@ -696,7 +860,9 @@ window.addEventListener('mouseup', e => {
   if (gameState.camera.dragMoved || gameState.phase !== CONFIG.phase.playing) return;
   updateMouse(e.clientX, e.clientY);
   const t = getTool(gameState.ui.selectedTool);
-  if (t.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y); else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
+  if (t?.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
+  else if (t?.kind === 'clear') clearLandAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
+  else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
   updateHud();
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
@@ -715,6 +881,7 @@ function loop(now) {
   requestAnimationFrame(loop);
 }
 
+gameState.world.tiles = createWorldTiles();
 buildTools();
 updateHud();
 requestAnimationFrame(loop);
