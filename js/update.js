@@ -234,7 +234,7 @@ function shouldReturnFromHunt(seal) {
   const favorBonus = Math.min(CONFIG.seal.maxFavorHuntDurationBonus, safeFiniteNumber(seal?.favor, 0, 0) * CONFIG.seal.favorHuntDurationBonus);
   const durationLimit = CONFIG.seal.huntDurationLimit + (seal?.type === 'visitor' ? favorBonus : 0);
   if (safeFiniteNumber(seal?.huntTimer, 0, 0) >= durationLimit) return true;
-  if (safeFiniteNumber(seal?.noMonsterTimer, 0, 0) >= CONFIG.seal.noMonsterExploreSeconds && huntCount > 0) return true;
+  if (safeFiniteNumber(seal?.noMonsterTimer, 0, 0) >= CONFIG.seal.noMonsterExploreSeconds) return true;
   if (huntCount < personality.preferredMinHunts && hpRatio > personality.returnHpRatio) return false;
   if (hpRatio <= personality.returnHpRatio && Math.random() < personality.returnChance) return true;
   if (safeFiniteNumber(seal?.carriedG, 0, 0) >= CONFIG.seal.carriedGReturnThreshold && Math.random() < CONFIG.seal.carriedGReturnChance) return true;
@@ -791,7 +791,7 @@ function advanceSealStateAfterArrival(seal) {
     addFavor(seal, CONFIG.visitor.safeLeaveFavor);
     if (clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) >= CONFIG.visitor.satisfyingMinFacilities || clampInteger(seal.huntsThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) >= CONFIG.visitor.satisfyingMinHunts) {
       addFavor(seal, CONFIG.knownness.satisfyingVisitReward);
-      gameState.village.knownness += CONFIG.knownness.satisfyingVisitReward;
+      gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + CONFIG.knownness.satisfyingVisitReward;
       unlockKnownVisitors();
     }
     persistAndRemoveVisitor(seal);
