@@ -509,10 +509,10 @@ function renderPeoplePanel() {
   const unlockedVisitors = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked).length;
   const filters = [
     ['all', '全員'], ['resident', '住民'], ['activeVisitors', '訪問中'],
-    ['hunting', '狩猟中'], ['resting', '休憩中'], ['unlockedVisitors', '解放済み']
+    ['hunting', '狩猟中'], ['resting', '休憩中'], ['unlockedVisitors', '解放済み'], ['lockedVisitors', '未解放']
   ].map(([id, label]) => `<button data-seal-filter="${id}" class="${state.filter === id ? 'active' : 'subtle'}">${label}</button>`).join('');
   return `<div class="people-panel">
-    <div class="people-controls"><div class="people-filter-buttons">${filters}</div><div class="people-counts">訪問中 ${activeVisitors} / ${CONFIG.visitor.maxActive} ・ 解放済み ${unlockedVisitors} / ${(gameState.visitorProfiles ?? []).length}</div></div>
+    <div class="people-controls"><div class="people-filter-buttons">${filters}</div><div class="people-counts">訪問中: ${activeVisitors} / 解放済み: ${unlockedVisitors} / 登録: ${(gameState.visitorProfiles ?? []).length}</div></div>
     ${renderPeopleTable(rows)}
     ${renderSelectedPersonDetail(getSelectedPerson())}
   </div>`;
@@ -548,27 +548,28 @@ function getPeopleRosterRows() {
     });
   }
   for (const profile of gameState.visitorProfiles ?? []) {
-    if (!profile || !isVisitorProfileUnlocked(profile) || activeProfileIds.has(profile.id)) continue;
+    if (!profile || activeProfileIds.has(profile.id)) continue;
+    const unlocked = isVisitorProfileUnlocked(profile);
     rows.push({
       rosterId: `profile:${profile.id}`,
-      kind: 'profile',
+      kind: unlocked ? 'profile' : 'lockedProfile',
       entity: profile,
       seal: null,
       profile,
       name: profile.name,
       type: '訪問者',
-      typeOrder: 2,
+      typeOrder: unlocked ? 2 : 3,
       hpRate: 0,
       level: clampInteger(profile.level, 1, Number.MAX_SAFE_INTEGER, 1),
       favor: safeFiniteNumber(profile.favor, 0, 0),
-      state: '未訪問',
-      rawState: 'notVisiting',
+      state: unlocked ? '未訪問' : '未解放',
+      rawState: unlocked ? 'notVisiting' : 'locked',
       stayTime: 0,
       hunts: 0,
       facilitiesUsed: 0,
-      weapon: formatEquipmentSlotName(profile, 'weapon'),
-      armor: formatEquipmentSlotName(profile, 'armor'),
-      accessory: formatEquipmentSlotName(profile, 'accessory')
+      weapon: unlocked ? formatEquipmentSlotName(profile, 'weapon') : '-',
+      armor: unlocked ? formatEquipmentSlotName(profile, 'armor') : '-',
+      accessory: unlocked ? formatEquipmentSlotName(profile, 'accessory') : '-'
     });
   }
   const filter = getSealListState().filter;
@@ -576,6 +577,8 @@ function getPeopleRosterRows() {
     if (filter === 'resident') return row.seal?.type === 'resident';
     if (filter === 'activeVisitors') return row.seal?.type === 'visitor';
     if (filter === 'unlockedVisitors') return row.kind === 'profile' || row.seal?.type === 'visitor';
+    if (filter === 'lockedVisitors') return row.kind === 'lockedProfile';
+    if (row.kind === 'lockedProfile') return false;
     if (filter === 'hunting') return ['hunting', 'movingToMonster', 'fighting', 'returningFromHunt', 'movingToHuntArea'].includes(row.rawState);
     if (filter === 'questing') return ['questing', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon'].includes(row.rawState);
     if (filter === 'resting') return ['resting', 'movingToInn', 'usingFacility', 'choosingFacility', 'movingToFacility'].includes(row.rawState);
@@ -639,7 +642,7 @@ function renderSelectedPersonDetail(person) {
   const personality = getPersonalityConfig(entity)?.label ?? entity?.personality ?? 'balanced';
   const stay = seal?.type === 'visitor' ? `<br>滞在: ${formatStayTime(seal)} / 最短${Math.floor(safeFiniteNumber(seal.minStayMs, 0, 0) / 1000)}秒 / 最長${Math.floor(safeFiniteNumber(seal.maxStayMs, 0, 0) / 1000)}秒` : '';
   return `<div class="people-detail compactCard"><b>${escapeHtml(entity?.name ?? '不明')}</b>（${seal?.type === 'resident' ? '住民' : '訪問者'}）<br>
-    性格: ${escapeHtml(personality)} / 状態: ${escapeHtml(seal ? formatPeopleSealState(seal) : '未訪問')}<br>
+    性格: ${escapeHtml(personality)} / 状態: ${escapeHtml(seal ? formatPeopleSealState(seal) : (isVisitorProfileUnlocked(profile) ? '未訪問' : '未解放'))}<br>
     HP: ${formatHp(entity)} / 所持G: ${seal ? Math.floor(safeFiniteNumber(seal.carriedG, 0, 0)) : '-'} / 装備予算: ${Math.floor(safeFiniteNumber(entity?.gearBudget, 0, 0))}<br>
     Lv: ${clampInteger(entity?.level, 1, Number.MAX_SAFE_INTEGER, 1)} / EXP: ${Math.floor(safeFiniteNumber(entity?.exp, 0, 0))} / 好感度: ${Math.floor(safeFiniteNumber(entity?.favor, 0, 0))}${stay}<br>
     訪問狩猟/施設: ${seal?.huntsThisVisit ?? 0}/${seal?.facilitiesUsedThisVisit ?? 0} / 総訪問: ${profile?.visits ?? '-'} / ダンジョン攻略: ${profile?.dungeonClears ?? 0}<br>
@@ -798,7 +801,7 @@ function formatSealTarget(seal) {
   if (seal?.target?.reason) return seal?.currentAction || seal.target.reason;
   return seal?.currentAction || 'なし';
 }
-function stateLabel(state) { return ({ movingToDungeon:'遠征集合中', waitingAtDungeon:'入口で待機中', expeditionRunning:'遠征中', returningFromDungeon:'遠征帰還中', questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'探索中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
+function stateLabel(state) { return ({ movingToDungeon:'遠征集合中', waitingAtDungeon:'入口で待機中', expeditionRunning:'遠征中', returningFromDungeon:'遠征帰還中', questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'狩猟中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
 
 function drawDungeon(context, dungeon) {
   if (!context || !dungeon) return;

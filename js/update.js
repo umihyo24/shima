@@ -114,8 +114,10 @@ function updateMonsterSpawner(dt) {
 }
 
 function updateVisitorSpawner(dt) {
+  updateVisitorUnlocks();
   const activeVisitors = (gameState.seals ?? []).filter(seal => seal?.type === 'visitor').length;
-  if (activeVisitors >= CONFIG.visitor.maxActive) return;
+  const safetyMax = clampInteger(CONFIG.visitor?.safetyMaxActive, 1, Number.MAX_SAFE_INTEGER, 30);
+  if (activeVisitors >= safetyMax) return;
   const totalFavor = (gameState.visitorProfiles ?? []).reduce((sum, profile) => sum + safeFiniteNumber(profile?.favor, 0, 0), 0);
   const intervalMultiplier = Math.max(CONFIG.visitor.minSpawnIntervalMultiplier, 1 - totalFavor * CONFIG.visitor.spawnIntervalFavorReduction);
   const interval = CONFIG.visitor.spawnInterval * intervalMultiplier;
@@ -125,29 +127,32 @@ function updateVisitorSpawner(dt) {
   spawnVisitor();
 }
 
-function chooseUnlockedVisitorProfile() {
-  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
-  const activeIds = new Set((gameState.seals ?? []).filter(seal => seal?.type === 'visitor').map(seal => seal.profileId));
-  const candidates = (gameState.visitorProfiles ?? []).filter(profile => profile && knownness >= safeFiniteNumber(profile.unlockedAtKnownness, 0, 0));
-  const available = candidates.filter(profile => !activeIds.has(profile.id));
-  const pool = available.length > 0 ? available : candidates;
-  const weighted = pool.map(profile => ({
-    profile,
-    weight: CONFIG.visitor.returnBaseWeight
-      + safeFiniteNumber(profile?.favor, 0, 0) * CONFIG.visitor.returnFavorWeight
-      + (activeIds.has(profile?.id) ? 0 : CONFIG.visitor.inactiveWeightBonus)
-  }));
-  const total = weighted.reduce((sum, item) => sum + Math.max(0, item.weight), 0);
-  let roll = Math.random() * Math.max(total, 1);
+function chooseVisitorProfileToSpawn() {
+  const candidates = getVisitorSpawnCandidates();
+  if (CONFIG.visitor?.debugSpawnCandidates) console.debug(`Visitor candidates: ${candidates.map(profile => profile?.name).filter(Boolean).join(', ') || 'なし'}`);
+  if (candidates.length <= 0) return null;
+  const maxVisits = candidates.reduce((max, profile) => Math.max(max, clampInteger(profile?.visits, 0, Number.MAX_SAFE_INTEGER, 0)), 0);
+  const weighted = candidates.map(profile => {
+    const visitGap = Math.max(0, maxVisits - clampInteger(profile?.visits, 0, Number.MAX_SAFE_INTEGER, 0));
+    return {
+      profile,
+      weight: CONFIG.visitor.returnBaseWeight
+        + CONFIG.visitor.inactiveWeightBonus
+        + safeFiniteNumber(profile?.favor, 0, 0) * CONFIG.visitor.returnFavorWeight
+        + visitGap * safeFiniteNumber(CONFIG.visitor?.fewerVisitsWeight, 0, 0)
+    };
+  });
+  const total = weighted.reduce((sum, item) => sum + Math.max(0.01, item.weight), 0);
+  let roll = Math.random() * Math.max(total, 0.01);
   for (const item of weighted) {
-    roll -= Math.max(0, item.weight);
+    roll -= Math.max(0.01, item.weight);
     if (roll <= 0) return item.profile;
   }
   return weighted[0]?.profile ?? null;
 }
 
 function spawnVisitorFromProfile(profile) {
-  if (!profile) return null;
+  if (!profile || !isVisitorProfileUnlocked(profile) || isVisitorProfileActive(profile.id)) return null;
   const start = getVisitorPreferredSpawnPoint();
   if (!start || !isWaterWorldPoint(start)) {
     logVisitorIssue(null, 'no-sea-spawn', '訪問者の海上出現地点がないため、今回は来訪を見送りました。');
@@ -157,7 +162,7 @@ function spawnVisitorFromProfile(profile) {
   gameState.warnings.visitorSpawnBlocked = false;
   profile.visits = clampInteger(profile.visits, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
   profile.unlocked = true;
-  const base = profile.baseStats ?? {};
+  const base = normalizeVisitorBaseStats(profile.baseStats);
   const favorBonus = Math.min(CONFIG.visitor.maxStayFavorBonusMs, safeFiniteNumber(profile.favor, 0, 0) * CONFIG.visitor.maxStayFavorMsPerFavor);
   const visitor = normalizeSeal({
     id: `visitor-${profile.id}-${Date.now()}`,
@@ -170,8 +175,8 @@ function spawnVisitorFromProfile(profile) {
     x: start.x,
     y: start.y,
     hp: safeFiniteNumber(base.maxHp, CONFIG.seal.maxHp, 1),
-    maxHp: safeFiniteNumber(base.maxHp, CONFIG.seal.maxHp, 1) + Math.max(0, profile.level - 1) * CONFIG.seal.levelHpGain,
-    attack: safeFiniteNumber(base.attack, CONFIG.seal.attack, 0) + Math.max(0, profile.level - 1) * CONFIG.seal.levelAttackGain,
+    maxHp: safeFiniteNumber(base.maxHp, CONFIG.seal.maxHp, 1) + Math.max(0, clampInteger(profile.level, 1, Number.MAX_SAFE_INTEGER, 1) - 1) * CONFIG.seal.levelHpGain,
+    attack: safeFiniteNumber(base.attack, CONFIG.seal.attack, 0) + Math.max(0, clampInteger(profile.level, 1, Number.MAX_SAFE_INTEGER, 1) - 1) * CONFIG.seal.levelAttackGain,
     defense: safeFiniteNumber(base.defense, CONFIG.seal.defense, 0),
     carriedG: Math.floor(randomRange(CONFIG.VISITORS.ARRIVAL.initialCarriedGMin, CONFIG.VISITORS.ARRIVAL.initialCarriedGMax + 1)),
     gearBudget: safeFiniteNumber(profile.gearBudget, 0, 0),
@@ -188,12 +193,12 @@ function spawnVisitorFromProfile(profile) {
   visitor.hp = Math.max(1, Math.min(visitor.maxHp, visitor.maxHp * hpRatio));
   visitor.currentAction = '海から島へ向かっています';
   gameState.seals.push(visitor);
-  logMessage(`${visitor.name}が海から島へ泳いできました。`);
+  logMessage(`${visitor.name} が島へ泳いできました。`);
   return visitor;
 }
 
 function spawnVisitor() {
-  return spawnVisitorFromProfile(chooseUnlockedVisitorProfile());
+  return spawnVisitorFromProfile(chooseVisitorProfileToSpawn());
 }
 
 function writeBackVisitorProfile(seal) {
@@ -655,7 +660,7 @@ function updateLeaving(seal, dt) { updateLeavingToSea(seal, dt); }
 function persistAndRemoveVisitor(seal) {
   if (seal?.type !== 'visitor') return;
   writeBackVisitorProfile(seal);
-  logMessage(`${seal.name}が海へ帰りました。`);
+  logMessage(`${seal.name} が帰っていきました。`);
   gameState.seals = (gameState.seals ?? []).filter(item => item?.id !== seal.id);
   if (gameState.ui?.selectedSealId === seal.id) gameState.ui.selectedSealId = null;
 }

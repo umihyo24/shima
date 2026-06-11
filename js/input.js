@@ -35,7 +35,7 @@ const BUILD_CATEGORIES = Object.freeze([
   { id: 'utility', label: '管理', toolIds: ['clear', 'delete'] }
 ]);
 
-const SEAL_LIST_FILTERS = Object.freeze(['all', 'resident', 'activeVisitors', 'unlockedVisitors', 'hunting', 'questing', 'resting']);
+const SEAL_LIST_FILTERS = Object.freeze(['all', 'resident', 'activeVisitors', 'unlockedVisitors', 'lockedVisitors', 'hunting', 'questing', 'resting']);
 const SEAL_LIST_SORT_KEYS = Object.freeze(['name', 'type', 'hpRate', 'level', 'favor', 'state', 'stayTime', 'hunts', 'weapon', 'armor', 'accessory']);
 
 function getSealListState() {
