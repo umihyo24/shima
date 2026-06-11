@@ -89,6 +89,7 @@ function buildTools() {
 function setActiveBottomTab(tabId) {
   const next = BOTTOM_TABS.some(tab => tab.id === tabId) ? tabId : null;
   if (!gameState.ui) return;
+  if (gameState.ui?.roadEdit?.active && next !== gameState.ui.activeBottomTab) clearRoadEdit();
   gameState.ui.activeBottomTab = next;
   gameState.ui.panelCollapsed = next === null;
   markUIDirty('tab');
@@ -99,6 +100,7 @@ function closeBottomPanel() { setActiveBottomTab(null); }
 function setSelectedTool(toolId) {
   const tool = CONFIG.tools.find(t => t?.id === toolId) ?? null;
   if (!gameState.ui) return;
+  if (gameState.ui?.roadEdit?.active && gameState.ui.selectedTool !== (tool?.id ?? null)) clearRoadEdit();
   gameState.ui.selectedTool = tool?.id ?? null;
   gameState.ui.placementCategory = categoryForTool(tool) ?? gameState.ui.placementCategory ?? 'facility';
   if (tool?.id && gameState.ui.activeBottomTab !== 'build') setActiveBottomTab('build');
@@ -107,6 +109,7 @@ function setSelectedTool(toolId) {
 }
 function clearSelectedTool() {
   if (!gameState.ui) return;
+  if (gameState.ui?.roadEdit?.active) clearRoadEdit();
   gameState.ui.selectedTool = null;
   markUIDirty('tool');
   renderUI();
@@ -232,6 +235,33 @@ function isPlacementModeActive() {
   return ['road', 'facility', 'decoration', 'clear', 'delete'].includes(kind);
 }
 
+
+function handlePlacementClick(tool, tile) {
+  const normalized = normalizeRoadTile(tile);
+  if (!tool || !normalized || !getTile(normalized.x, normalized.y)) return false;
+  if (gameState.ui?.roadEdit?.active) {
+    confirmRoadEdit();
+    markUIDirty('all');
+    renderUI();
+    return true;
+  }
+  gameState.ui.selectedDungeonId = null;
+  if (tool?.kind === 'road') {
+    if (!startRoadEdit('place', normalized)) {
+      const result = canPlaceAt(normalized.x, normalized.y, tool);
+      logMessage(`道路の始点にできません：${result.reason || '配置できないマスです。'}`);
+      gameState.ui.placementFeedback = { x: normalized.x, y: normalized.y, ok: false, text: result.reason || '始点にできません。', timer: CONFIG.placement.feedbackSeconds };
+    }
+  } else if (tool?.kind === 'delete') {
+    if (hasRoadAt(normalized.x, normalized.y)) startRoadEdit('delete', normalized);
+    else deleteAt(normalized.x, normalized.y);
+  } else if (tool?.kind === 'clear') clearLandAt(normalized.x, normalized.y);
+  else placeObject(tool.id, normalized.x, normalized.y, gameState.ui?.directionIndex ?? 0, false);
+  markUIDirty('all');
+  renderUI();
+  return true;
+}
+
 function bindInputEvents() {
   if (gameState.ui?.inputEventsBound) return;
   if (gameState.ui) gameState.ui.inputEventsBound = true;
@@ -240,6 +270,7 @@ function bindInputEvents() {
   canvas.addEventListener('mousemove', e => {
     if (isPointerOverUI(e)) return;
     updateMouse(e.clientX, e.clientY);
+    if (gameState.ui?.roadEdit?.active && !gameState.camera.dragging) updateRoadEditPreview(gameState.input?.mouseTile);
     if (gameState.camera.dragging) {
       gameState.camera.x -= e.movementX / gameState.camera.zoom;
       gameState.camera.y -= e.movementY / gameState.camera.zoom;
@@ -249,6 +280,7 @@ function bindInputEvents() {
 
   canvas.addEventListener('mousedown', e => {
     if (isPointerOverUI(e)) return;
+    if (e.button === 2) { clearRoadEdit(); e.preventDefault(); return; }
     if (e.button !== CONFIG.camera.dragButton) return;
     updateMouse(e.clientX, e.clientY);
     gameState.camera.dragging = true;
@@ -269,12 +301,7 @@ function bindInputEvents() {
     updateMouse(e.clientX, e.clientY);
     const t = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
     if (placementClickHasPriority(t, gameState.input.mouseTile)) {
-      gameState.ui.selectedDungeonId = null;
-      if (t?.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
-      else if (t?.kind === 'clear') clearLandAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
-      else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
-      markUIDirty('all');
-      renderUI();
+      handlePlacementClick(t, gameState.input.mouseTile);
       return;
     }
     const clickedDungeon = selectDungeonAtWorldPosition(gameState.input.mouseWorld?.x, gameState.input.mouseWorld?.y);
@@ -300,7 +327,7 @@ function bindInputEvents() {
     renderUI();
   });
 
-  canvas.addEventListener('contextmenu', e => e.preventDefault());
+  canvas.addEventListener('contextmenu', e => { clearRoadEdit(); e.preventDefault(); });
   canvas.addEventListener('wheel', e => {
     if (isPointerOverUI(e)) return;
     e.preventDefault();
@@ -311,6 +338,7 @@ function bindInputEvents() {
     gameState.input.keys[e.code] = true;
     if (e.code === 'KeyR') rotateTool();
     if (e.code === 'Escape') {
+      if (gameState.ui?.roadEdit?.active) clearRoadEdit();
       clearSelectedTool();
       if (gameState.ui?.activeBottomTab) closeBottomPanel();
     }

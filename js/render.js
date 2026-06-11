@@ -8,11 +8,11 @@ function render() {
   ctx.translate(-gameState.camera.x, -gameState.camera.y);
   drawWorld();
   drawRoads();
+  drawPlacementPreview();
   drawObjects();
   drawMonsters();
   drawDungeons();
   drawSeals();
-  drawPlacementPreview();
   ctx.restore();
   ctx.save();
   ctx.scale(devicePixelRatioClamped(), devicePixelRatioClamped());
@@ -269,17 +269,50 @@ function drawSeals() {
 }
 
 function drawPlacementPreview() {
-  const gx = gameState.input.mouseTile.x, gy = gameState.input.mouseTile.y;
-  const tool = CONFIG.tools.find(t => t?.id === gameState.ui?.selectedTool) ?? null;
-  if (gx < 0 || gy < 0 || !tool) return;
-  if (tool?.kind === 'clear') drawClearPreview(gx, gy);
+  const edit = gameState.ui?.roadEdit;
+  if (edit?.active) drawRoadRoutePreview(edit);
   else {
-    const result = canPlaceAt(gx, gy, tool);
-    ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
-    ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, (tool?.w ?? 1) * CONFIG.world.tile, (tool?.h ?? 1) * CONFIG.world.tile);
+    const gx = gameState.input?.mouseTile?.x ?? -1;
+    const gy = gameState.input?.mouseTile?.y ?? -1;
+    const tool = CONFIG.tools.find(t => t?.id === gameState.ui?.selectedTool) ?? null;
+    if (gx >= 0 && gy >= 0 && tool) {
+      if (tool?.kind === 'clear') drawClearPreview(gx, gy);
+      else if (tool?.kind !== 'road' || getTile(gx, gy)) {
+        const result = canPlaceAt(gx, gy, tool);
+        ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
+        ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, (tool?.w ?? 1) * CONFIG.world.tile, (tool?.h ?? 1) * CONFIG.world.tile);
+      }
+    }
   }
-  const fb = gameState.ui.placementFeedback;
+  const fb = gameState.ui?.placementFeedback;
   if (fb) drawLabel(fb.text, fb.x * CONFIG.world.tile, fb.y * CONFIG.world.tile - 8, fb.ok ? '#d8ffe0' : '#ffd6d6');
+}
+
+function drawRoadRoutePreview(edit) {
+  const style = CONFIG.render ?? {};
+  const validColor = edit?.mode === 'delete' ? style.roadPreviewDelete : style.roadPreviewValid;
+  const invalidColor = edit?.mode === 'delete' ? style.roadPreviewDeleteInvalid : style.roadPreviewInvalid;
+  drawRoadRouteTileList(edit?.invalidTiles, invalidColor);
+  drawRoadRouteTileList(edit?.validTiles, validColor);
+  const start = edit?.startTile;
+  if (start && getTile(start.x, start.y)) {
+    const inset = Math.max(3, CONFIG.world.tile * 0.12);
+    ctx.save();
+    ctx.strokeStyle = style.roadPreviewStart ?? '#fff';
+    ctx.lineWidth = Math.max(2, 3 / Math.max(gameState.camera?.zoom ?? 1, 0.1));
+    ctx.strokeRect(start.x * CONFIG.world.tile + inset, start.y * CONFIG.world.tile + inset, CONFIG.world.tile - inset * 2, CONFIG.world.tile - inset * 2);
+    ctx.restore();
+  }
+}
+
+function drawRoadRouteTileList(tiles, color) {
+  if (!Array.isArray(tiles) || !color) return;
+  const inset = Math.max(2, CONFIG.world.tile * 0.08);
+  ctx.fillStyle = color;
+  for (const tile of tiles) {
+    if (!tile || !getTile(tile.x, tile.y)) continue;
+    ctx.fillRect(tile.x * CONFIG.world.tile + inset, tile.y * CONFIG.world.tile + inset, CONFIG.world.tile - inset * 2, CONFIG.world.tile - inset * 2);
+  }
 }
 
 function drawClearPreview(gx, gy) {

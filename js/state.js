@@ -5,7 +5,7 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
+    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, roadEdit: createRoadEditState(), lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
@@ -27,6 +27,18 @@ function createNewGameState() {
   };
 }
 
+function createRoadEditState() {
+  return {
+    active: false,
+    mode: null,
+    startTile: null,
+    currentTile: null,
+    previewTiles: [],
+    validTiles: [],
+    invalidTiles: [],
+    routeStyle: 'auto'
+  };
+}
 
 function normalizeVisitorBaseStats(baseStats) {
   return {
@@ -639,6 +651,7 @@ function initGame(residentName) {
   gameState.ui.selectedSealId = null;
   gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
+  clearRoadEdit();
   gameState.logs = [];
   gameState.village.knownness = CONFIG.knownness.initial;
   gameState.village.clearCount = 0;
@@ -666,8 +679,8 @@ function initGame(residentName) {
 
 function addDefaultVillage() {
   for (const item of CONFIG.village.defaults) unlockFootprint(item.x, item.y, getTool(item.type)?.w ?? CONFIG.placement.decorationSize, getTool(item.type)?.h ?? CONFIG.placement.decorationSize);
-  for (let x = CONFIG.village.roadStartX; x <= CONFIG.village.roadEndX; x += 1) gameState.world.roads.push({ x, y: CONFIG.village.roadY });
-  for (let y = CONFIG.village.roadStartY; y <= CONFIG.village.roadEndY; y += 1) gameState.world.roads.push({ x: CONFIG.village.roadX, y });
+  for (let x = CONFIG.village.roadStartX; x <= CONFIG.village.roadEndX; x += 1) if (!hasRoadAt(x, CONFIG.village.roadY)) gameState.world.roads.push({ x, y: CONFIG.village.roadY });
+  for (let y = CONFIG.village.roadStartY; y <= CONFIG.village.roadEndY; y += 1) if (!hasRoadAt(CONFIG.village.roadX, y)) gameState.world.roads.push({ x: CONFIG.village.roadX, y });
   for (const item of CONFIG.village.defaults) placeObject(item.type, item.x, item.y, item.directionIndex ?? 0, true);
 }
 
@@ -869,6 +882,199 @@ function clearLandAt(tileX, tileY) {
 function isIslandTile(gx, gy) { return inRect(gx, gy, CONFIG.world.islandX, CONFIG.world.islandY, CONFIG.world.islandW, CONFIG.world.islandH); }
 function isCoastTile(gx, gy) { return inRect(gx, gy, CONFIG.world.coastX, CONFIG.world.coastY, CONFIG.world.coastW, CONFIG.world.coastH); }
 function roadAt(gx, gy) { return gameState.world.roads.some(r => r?.x === gx && r?.y === gy); }
+function hasRoadAt(x, y) { return roadAt(x, y); }
+
+function normalizeRoadTile(tile) {
+  if (!tile || !Number.isFinite(tile?.x) || !Number.isFinite(tile?.y)) return null;
+  return { x: Math.trunc(tile.x), y: Math.trunc(tile.y) };
+}
+
+function sameRoadTile(a, b) {
+  return a?.x === b?.x && a?.y === b?.y;
+}
+
+function isRoadPlaceableTile(x, y) {
+  const roadTool = getTool('road');
+  const routeRules = CONFIG.placement?.roadRoute ?? {};
+  const tile = getTile(x, y);
+  if (!tile) return false;
+  if (hasRoadAt(x, y)) return routeRules.allowExistingRoads !== false;
+  if (routeRules.requireBuildableLand !== false && !isBuildableTile(x, y)) return false;
+  if (routeRules.blockObjects !== false && objectAt(x, y)) return false;
+  return canPlaceAt(x, y, roadTool).ok === true;
+}
+
+function placeRoadAt(x, y) {
+  if (!isRoadPlaceableTile(x, y) || hasRoadAt(x, y)) return false;
+  gameState.world.roads.push({ x, y });
+  return true;
+}
+
+function deleteRoadAt(x, y) {
+  const before = gameState.world.roads.length;
+  gameState.world.roads = gameState.world.roads.filter(r => !(r?.x === x && r?.y === y));
+  return gameState.world.roads.length !== before;
+}
+
+function clearRoadEdit() {
+  if (!gameState.ui) return;
+  gameState.ui.roadEdit = createRoadEditState();
+}
+
+function getOrthogonalLineTiles(a, b) {
+  const start = normalizeRoadTile(a);
+  const end = normalizeRoadTile(b);
+  if (!start || !end) return [];
+  const tiles = [];
+  const dx = Math.sign(end.x - start.x);
+  const dy = Math.sign(end.y - start.y);
+  if (start.y === end.y) {
+    for (let x = start.x; dx >= 0 ? x <= end.x : x >= end.x; x += dx || 1) tiles.push({ x, y: start.y });
+    return tiles;
+  }
+  if (start.x === end.x) {
+    for (let y = start.y; dy >= 0 ? y <= end.y : y >= end.y; y += dy || 1) tiles.push({ x: start.x, y });
+  }
+  return tiles;
+}
+
+function appendUniqueRoadTile(tiles, tile) {
+  const normalized = normalizeRoadTile(tile);
+  if (!normalized) return;
+  if (!sameRoadTile(tiles[tiles.length - 1], normalized)) tiles.push(normalized);
+}
+
+function getLShapedRouteTiles(start, end, order) {
+  const a = normalizeRoadTile(start);
+  const b = normalizeRoadTile(end);
+  if (!a || !b) return [];
+  if (a.x === b.x || a.y === b.y) return getOrthogonalLineTiles(a, b);
+  const corner = order === 'vertical-first' ? { x: a.x, y: b.y } : { x: b.x, y: a.y };
+  const tiles = [];
+  for (const tile of getOrthogonalLineTiles(a, corner)) appendUniqueRoadTile(tiles, tile);
+  for (const tile of getOrthogonalLineTiles(corner, b)) appendUniqueRoadTile(tiles, tile);
+  return tiles;
+}
+
+function roadRouteTileIsValid(tile, mode, index = 0) {
+  const normalized = normalizeRoadTile(tile);
+  const maxTiles = clampInteger(CONFIG.placement?.roadRoute?.maxTiles, 1, Number.MAX_SAFE_INTEGER, 32);
+  if (!normalized || index >= maxTiles) return false;
+  if (mode === 'delete') return hasRoadAt(normalized.x, normalized.y);
+  return isRoadPlaceableTile(normalized.x, normalized.y);
+}
+
+function splitRoadRouteValidity(tiles, mode) {
+  const previewTiles = Array.isArray(tiles) ? tiles.map(normalizeRoadTile).filter(Boolean) : [];
+  const validTiles = [];
+  const invalidTiles = [];
+  previewTiles.forEach((tile, index) => {
+    if (roadRouteTileIsValid(tile, mode, index)) validTiles.push(tile);
+    else invalidTiles.push(tile);
+  });
+  return { previewTiles, validTiles, invalidTiles };
+}
+
+function countRoadRouteTurns(tiles) {
+  let turns = 0;
+  let previousDirection = null;
+  for (let i = 1; i < (tiles?.length ?? 0); i += 1) {
+    const a = tiles[i - 1];
+    const b = tiles[i];
+    const direction = Math.abs((b?.x ?? 0) - (a?.x ?? 0)) > 0 ? 'h' : 'v';
+    if (previousDirection && direction !== previousDirection) turns += 1;
+    previousDirection = direction;
+  }
+  return turns;
+}
+
+function isRoadRouteBlockedTile(tile, mode, index) {
+  const normalized = normalizeRoadTile(tile);
+  if (!normalized) return true;
+  if (mode === 'delete') return !hasRoadAt(normalized.x, normalized.y);
+  if (index >= clampInteger(CONFIG.placement?.roadRoute?.maxTiles, 1, Number.MAX_SAFE_INTEGER, 32)) return true;
+  const worldTile = getTile(normalized.x, normalized.y);
+  return !worldTile || objectAt(normalized.x, normalized.y) || worldTile?.terrain !== CONFIG.tileState.terrainLand || worldTile?.buildState !== CONFIG.tileState.buildable || worldTile?.obstacle !== null || worldTile?.unlocked !== true;
+}
+
+function scoreRoadRouteTiles(tiles, mode) {
+  const routeRules = CONFIG.placement?.roadRoute ?? {};
+  const invalidCount = splitRoadRouteValidity(tiles, mode).invalidTiles.length;
+  const blockedCount = (tiles ?? []).reduce((count, tile, index) => count + (isRoadRouteBlockedTile(tile, mode, index) ? 1 : 0), 0);
+  const turnCount = countRoadRouteTurns(tiles);
+  const existingRoadCount = (tiles ?? []).reduce((count, tile) => count + (hasRoadAt(tile?.x, tile?.y) ? 1 : 0), 0);
+  return invalidCount * safeFiniteNumber(routeRules.scoreInvalidWeight, 1000, 0)
+    + blockedCount * safeFiniteNumber(routeRules.scoreBlockedWeight, 100, 0)
+    + turnCount * safeFiniteNumber(routeRules.scoreTurnWeight, 10, 0)
+    - existingRoadCount * safeFiniteNumber(routeRules.scoreExistingRoadBonus, 2, 0);
+}
+
+function buildRoadRoute(startTile, endTile, mode) {
+  const start = normalizeRoadTile(startTile);
+  const end = normalizeRoadTile(endTile);
+  if (!start || !end || !getTile(start.x, start.y) || !getTile(end.x, end.y)) return [];
+  const candidates = start.x === end.x || start.y === end.y
+    ? [getOrthogonalLineTiles(start, end)]
+    : [getLShapedRouteTiles(start, end, 'horizontal-first'), getLShapedRouteTiles(start, end, 'vertical-first')];
+  return candidates.reduce((best, route) => {
+    if (!best) return route;
+    const diff = scoreRoadRouteTiles(route, mode) - scoreRoadRouteTiles(best, mode);
+    if (diff < 0) return route;
+    if (diff === 0 && route.length < best.length) return route;
+    return best;
+  }, null) ?? [];
+}
+
+function updateRoadEditPreview(tile) {
+  const edit = gameState.ui?.roadEdit;
+  const current = normalizeRoadTile(tile);
+  if (!edit?.active || !current || !getTile(current.x, current.y)) return false;
+  edit.currentTile = current;
+  const route = buildRoadRoute(edit.startTile, current, edit.mode);
+  const split = splitRoadRouteValidity(route, edit.mode);
+  edit.previewTiles = split.previewTiles;
+  edit.validTiles = split.validTiles;
+  edit.invalidTiles = split.invalidTiles;
+  return true;
+}
+
+function startRoadEdit(mode, tile) {
+  const start = normalizeRoadTile(tile);
+  if (!gameState.ui || !start || !getTile(start.x, start.y)) return false;
+  if (mode === 'place' && !isRoadPlaceableTile(start.x, start.y)) return false;
+  if (mode === 'delete' && !hasRoadAt(start.x, start.y)) return false;
+  gameState.ui.roadEdit = createRoadEditState();
+  gameState.ui.roadEdit.active = true;
+  gameState.ui.roadEdit.mode = mode;
+  gameState.ui.roadEdit.startTile = start;
+  gameState.ui.roadEdit.currentTile = start;
+  updateRoadEditPreview(start);
+  return true;
+}
+
+function confirmRoadEdit() {
+  const edit = gameState.ui?.roadEdit;
+  if (!edit?.active) return false;
+  const mode = edit.mode === 'delete' ? 'delete' : 'place';
+  const route = buildRoadRoute(edit.startTile, edit.currentTile ?? edit.startTile, mode);
+  const { validTiles, invalidTiles } = splitRoadRouteValidity(route, mode);
+  let changed = 0;
+  for (const tile of validTiles) {
+    changed += mode === 'delete' ? (deleteRoadAt(tile.x, tile.y) ? 1 : 0) : (placeRoadAt(tile.x, tile.y) ? 1 : 0);
+  }
+  const feedbackTile = validTiles[0] ?? edit.startTile ?? { x: 0, y: 0 };
+  if (validTiles.length <= 0) {
+    logMessage(mode === 'delete' ? '道路削除できるマスがありません。' : '道路を配置できるマスがありません。');
+    gameState.ui.placementFeedback = { x: feedbackTile.x, y: feedbackTile.y, ok: false, text: '有効な道路マスがありません。', timer: CONFIG.placement.feedbackSeconds };
+    clearRoadEdit();
+    return false;
+  }
+  logMessage(mode === 'delete' ? `${changed}マスの道路を削除しました。` : `${changed}マスの道路を配置しました。`);
+  gameState.ui.placementFeedback = { x: feedbackTile.x, y: feedbackTile.y, ok: true, text: mode === 'delete' ? '道路を削除しました。' : '道路を配置しました。', timer: CONFIG.placement.feedbackSeconds };
+  clearRoadEdit();
+  return invalidTiles.length <= 0 || changed > 0;
+}
+
 function objectAt(gx, gy) { return gameState.world.objects.find(o => gx >= o?.x && gy >= o?.y && gx < (o?.x ?? 0) + (o?.w ?? 1) && gy < (o?.y ?? 0) + (o?.h ?? 1)); }
 
 function getTool(id) { return CONFIG.tools.find(t => t.id === id) ?? CONFIG.tools[0]; }
