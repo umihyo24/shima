@@ -23,6 +23,8 @@ function update(deltaMs) {
 
 function clearMissingSelectedSeal() {
   if (gameState.ui?.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === gameState.ui.selectedSealId)) gameState.ui.selectedSealId = null;
+  if (gameState.ui?.selectedPersonRosterId?.startsWith?.('seal:') && !getSealById(gameState.ui.selectedPersonRosterId.slice('seal:'.length))) gameState.ui.selectedPersonRosterId = null;
+  if (gameState.ui?.selectedPersonRosterId?.startsWith?.('profile:') && !getVisitorProfileById(gameState.ui.selectedPersonRosterId.slice('profile:'.length))) gameState.ui.selectedPersonRosterId = null;
 }
 
 function updateCalendar(deltaMs) {

@@ -35,6 +35,48 @@ const BUILD_CATEGORIES = Object.freeze([
   { id: 'utility', label: '管理', toolIds: ['clear', 'delete'] }
 ]);
 
+const SEAL_LIST_FILTERS = Object.freeze(['all', 'resident', 'activeVisitors', 'unlockedVisitors', 'hunting', 'questing', 'resting']);
+const SEAL_LIST_SORT_KEYS = Object.freeze(['name', 'type', 'hpRate', 'level', 'favor', 'state', 'stayTime', 'hunts', 'weapon', 'armor', 'accessory']);
+
+function getSealListState() {
+  if (!gameState.ui) return { filter: 'all', sortKey: 'name', sortDir: 'asc' };
+  gameState.ui.sealList = gameState.ui.sealList ?? { filter: 'all', sortKey: 'name', sortDir: 'asc' };
+  if (!SEAL_LIST_FILTERS.includes(gameState.ui.sealList.filter)) gameState.ui.sealList.filter = 'all';
+  if (!SEAL_LIST_SORT_KEYS.includes(gameState.ui.sealList.sortKey)) gameState.ui.sealList.sortKey = 'name';
+  if (!['asc', 'desc'].includes(gameState.ui.sealList.sortDir)) gameState.ui.sealList.sortDir = 'asc';
+  return gameState.ui.sealList;
+}
+
+function selectPersonByRosterId(rosterId) {
+  const id = String(rosterId ?? '');
+  if (!gameState.ui || !id) return;
+  const sealId = id.startsWith('seal:') ? id.slice('seal:'.length) : null;
+  gameState.ui.selectedPersonRosterId = id;
+  gameState.ui.selectedSealId = sealId && getSealById(sealId) ? sealId : null;
+  gameState.ui.selectedDungeonId = null;
+  markUIDirty('selection');
+  renderUI();
+}
+
+function setSealListFilter(filter) {
+  const next = SEAL_LIST_FILTERS.includes(filter) ? filter : 'all';
+  getSealListState().filter = next;
+  markPanelDirty('people-filter');
+  renderUI();
+}
+
+function setSealListSort(sortKey) {
+  if (!SEAL_LIST_SORT_KEYS.includes(sortKey)) return;
+  const state = getSealListState();
+  if (state.sortKey === sortKey) state.sortDir = state.sortDir === 'asc' ? 'desc' : 'asc';
+  else {
+    state.sortKey = sortKey;
+    state.sortDir = ['hpRate', 'level', 'favor', 'stayTime', 'hunts'].includes(sortKey) ? 'desc' : 'asc';
+  }
+  markPanelDirty('people-sort');
+  renderUI();
+}
+
 function buildTools() {
   if (bottomTabBarEl) bottomTabBarEl.innerHTML = BOTTOM_TABS.map(tab => `<button data-tab="${tab.id}">${tab.label}</button>`).join('');
   if (speedHudEl) {
@@ -89,15 +131,18 @@ function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${sp
 function setGameSpeed(speed) { if (!gameState.time) return; gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; markUIDirty('speed'); renderUI(); }
 
 function handleUiAction(event, options = {}) {
-  const target = event?.target?.closest?.('button');
-  if (!target || (event?.currentTarget && !event.currentTarget.contains(target))) return false;
+  const actionTarget = event?.target?.closest?.('button, [data-roster-id]');
+  if (!actionTarget || (event?.currentTarget && !event.currentTarget.contains(actionTarget))) return false;
 
-  const tab = target.dataset?.tab ?? target.dataset?.bottomTab;
-  const tool = target.dataset?.tool;
-  const speed = target.dataset?.speed;
-  const action = target.dataset?.action;
-  const dungeonAction = target.dataset?.dungeonAction;
-  const hasUiAction = Boolean(tab || tool || speed !== undefined || action || dungeonAction);
+  const tab = actionTarget.dataset?.tab ?? actionTarget.dataset?.bottomTab;
+  const tool = actionTarget.dataset?.tool;
+  const speed = actionTarget.dataset?.speed;
+  const action = actionTarget.dataset?.action;
+  const dungeonAction = actionTarget.dataset?.dungeonAction;
+  const sealFilter = actionTarget.dataset?.sealFilter;
+  const sealSort = actionTarget.dataset?.sealSort;
+  const rosterId = actionTarget.dataset?.rosterId;
+  const hasUiAction = Boolean(tab || tool || speed !== undefined || action || dungeonAction || sealFilter || sealSort || rosterId);
   if (!hasUiAction) return false;
 
   event.preventDefault();
@@ -114,9 +159,12 @@ function handleUiAction(event, options = {}) {
   else if (action === 'zoomIn') setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
   else if (action === 'close-panel' || action === 'closeBottom') closeBottomPanel();
-  else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; markUIDirty('selection'); renderUI(); }
-  else if (dungeonAction === 'start') startDungeon(target.dataset?.dungeonId);
+  else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; gameState.ui.selectedPersonRosterId = null; markUIDirty('selection'); renderUI(); }
+  else if (dungeonAction === 'start') startDungeon(actionTarget.dataset?.dungeonId);
   else if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; markUIDirty('selection'); renderUI(); }
+  else if (sealFilter) setSealListFilter(sealFilter);
+  else if (sealSort) setSealListSort(sealSort);
+  else if (rosterId) selectPersonByRosterId(rosterId);
   else return false;
 
   if (options.fromPointer && gameState.ui) gameState.ui.suppressUiClickUntil = Date.now() + 350;
@@ -231,13 +279,15 @@ function bindInputEvents() {
     }
     if (clickedSeal?.id) {
       gameState.ui.selectedSealId = clickedSeal.id;
+      gameState.ui.selectedPersonRosterId = `seal:${clickedSeal.id}`;
       gameState.ui.selectedDungeonId = null;
       setActiveBottomTab('seals');
       return;
     }
     if (!isPlacementModeActive()) {
-      const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedDungeonId);
+      const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId);
       gameState.ui.selectedSealId = null;
+      gameState.ui.selectedPersonRosterId = null;
       gameState.ui.selectedDungeonId = null;
       if (hadSelection) markUIDirty('selection');
     }
