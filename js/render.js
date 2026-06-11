@@ -305,17 +305,46 @@ function renderBottomTabs() {
   }
 }
 
+function getBottomPanelScrollElement() {
+  return bottomPanelEl?.querySelector?.('.bottom-panel-content') ?? null;
+}
+
+function saveBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab ?? gameState.ui?.renderedBottomPanelTab ?? null) {
+  const scrollElement = getBottomPanelScrollElement();
+  if (!scrollElement || !tabId || !gameState.ui) return;
+  gameState.ui.panelScrollTopByTab = gameState.ui.panelScrollTopByTab ?? {};
+  gameState.ui.panelScrollTopByTab[tabId] = scrollElement.scrollTop;
+}
+
+function restoreBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab ?? null) {
+  const scrollElement = getBottomPanelScrollElement();
+  if (!scrollElement || !tabId) return;
+  const saved = safeFiniteNumber(gameState.ui?.panelScrollTopByTab?.[tabId], 0, 0);
+  scrollElement.scrollTop = saved;
+}
+
 function renderBottomPanel() {
   if (!bottomPanelEl) return;
+  const previousTab = gameState.ui?.renderedBottomPanelTab ?? null;
+  saveBottomPanelScrollPosition(previousTab);
+
   const active = gameState.ui?.activeBottomTab ?? null;
   bottomPanelEl.hidden = !active;
   if (!active) {
     bottomPanelEl.innerHTML = '';
+    if (gameState.ui) gameState.ui.renderedBottomPanelTab = null;
     return;
   }
+
+  const tabChanged = previousTab !== active;
+  if (!getBottomPanelScrollElement() || tabChanged) bottomPanelEl.innerHTML = '<div class="bottom-panel-content"></div>';
+  if (gameState.ui) gameState.ui.renderedBottomPanelTab = active;
+
   const renderers = { build: renderBuildPanel, seals: renderSealsPanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
   const content = renderers[active]?.() ?? '';
-  bottomPanelEl.innerHTML = `<div class="bottom-panel-content">${content}</div>`;
+  const scrollElement = getBottomPanelScrollElement();
+  if (scrollElement) scrollElement.innerHTML = content;
+  restoreBottomPanelScrollPosition(active);
 }
 
 function panelHeader(title, hint = '') {

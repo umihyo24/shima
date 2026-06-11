@@ -10,10 +10,16 @@ function devicePixelRatioClamped() { return Math.max(CONFIG.canvas.minDevicePixe
 
 function markUIDirty(reason = 'all') {
   if (!gameState.ui) return;
-  const panelReasons = new Set(['all', 'panel', 'tab', 'tool', 'selection', 'dungeon', 'tick']);
+  const panelReasons = new Set(['all', 'panel', 'tab', 'tool', 'selection', 'dungeon']);
   const hudReasons = new Set(['all', 'hud', 'tab', 'tool', 'selection', 'speed', 'save', 'message', 'tick']);
   if (hudReasons.has(reason)) gameState.ui.needsHudUpdate = true;
-  if (panelReasons.has(reason) && (reason !== 'tick' || gameState.ui.activeBottomTab)) gameState.ui.needsPanelUpdate = true;
+  if (panelReasons.has(reason)) markPanelDirty(reason);
+}
+
+function markPanelDirty(reason = 'panel') {
+  if (!gameState.ui) return;
+  gameState.ui.needsPanelUpdate = true;
+  gameState.ui.lastPanelDirtyReason = reason;
 }
 
 const BOTTOM_TABS = Object.freeze([
@@ -152,6 +158,7 @@ function bindUIEvents() {
     element.addEventListener('mouseup', consumeUiPointerEvent);
     element.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
   }
+  bottomPanelEl?.addEventListener('scroll', () => saveBottomPanelScrollPosition(), true);
 }
 
 function sealAtWorldPoint(point) {

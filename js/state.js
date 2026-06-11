@@ -5,7 +5,7 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedDungeonId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0 },
+    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedDungeonId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
