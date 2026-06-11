@@ -8,6 +8,14 @@ function setZoom(next, clientX, clientY) { const before = screenToWorld(clientX 
 function resizeCanvas() { const dpr = devicePixelRatioClamped(); const w = Math.floor(canvas.clientWidth * dpr), h = Math.floor(canvas.clientHeight * dpr); if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } }
 function devicePixelRatioClamped() { return Math.max(CONFIG.canvas.minDevicePixelRatio, Math.min(CONFIG.canvas.maxDevicePixelRatio, window.devicePixelRatio || 1)); }
 
+function markUIDirty(reason = 'all') {
+  if (!gameState.ui) return;
+  const panelReasons = new Set(['all', 'panel', 'tab', 'tool', 'selection', 'dungeon', 'tick']);
+  const hudReasons = new Set(['all', 'hud', 'tab', 'tool', 'selection', 'speed', 'save', 'message', 'tick']);
+  if (hudReasons.has(reason)) gameState.ui.needsHudUpdate = true;
+  if (panelReasons.has(reason) && (reason !== 'tick' || gameState.ui.activeBottomTab)) gameState.ui.needsPanelUpdate = true;
+}
+
 const BOTTOM_TABS = Object.freeze([
   { id: 'build', label: '建設' },
   { id: 'seals', label: '人物' },
@@ -22,7 +30,7 @@ const BUILD_CATEGORIES = Object.freeze([
 ]);
 
 function buildTools() {
-  if (bottomTabBarEl) bottomTabBarEl.innerHTML = BOTTOM_TABS.map(tab => `<button data-bottom-tab="${tab.id}">${tab.label}</button>`).join('');
+  if (bottomTabBarEl) bottomTabBarEl.innerHTML = BOTTOM_TABS.map(tab => `<button data-tab="${tab.id}">${tab.label}</button>`).join('');
   if (speedHudEl) {
     const speedButtons = CONFIG.TIME.SPEED_OPTIONS.map(speed => `<button data-speed="${speed}">${speed === 0 ? '⏸' : `x${speed}`}</button>`).join('');
     speedHudEl.innerHTML = `<div class="speedTitle"><b>速度</b><span id="speedStatus"></span></div><div class="speedButtons">${speedButtons}</div>`;
@@ -32,24 +40,27 @@ function buildTools() {
 
 function setActiveBottomTab(tabId) {
   const next = BOTTOM_TABS.some(tab => tab.id === tabId) ? tabId : null;
+  if (!gameState.ui) return;
   gameState.ui.activeBottomTab = next;
   gameState.ui.panelCollapsed = next === null;
-  gameState.ui.needsHudUpdate = true;
+  markUIDirty('tab');
   renderUI();
 }
 function toggleBottomTab(tabId) { setActiveBottomTab(gameState.ui?.activeBottomTab === tabId ? null : tabId); }
 function closeBottomPanel() { setActiveBottomTab(null); }
 function setSelectedTool(toolId) {
   const tool = CONFIG.tools.find(t => t?.id === toolId) ?? null;
+  if (!gameState.ui) return;
   gameState.ui.selectedTool = tool?.id ?? null;
   gameState.ui.placementCategory = categoryForTool(tool) ?? gameState.ui.placementCategory ?? 'facility';
   if (tool?.id && gameState.ui.activeBottomTab !== 'build') setActiveBottomTab('build');
-  gameState.ui.needsHudUpdate = true;
+  markUIDirty('tool');
   renderUI();
 }
 function clearSelectedTool() {
+  if (!gameState.ui) return;
   gameState.ui.selectedTool = null;
-  gameState.ui.needsHudUpdate = true;
+  markUIDirty('tool');
   renderUI();
 }
 function categoryForTool(tool) {
@@ -61,21 +72,21 @@ function categoryForTool(tool) {
   return null;
 }
 function updateToolButtons() {
-  for (const b of bottomTabBarEl?.querySelectorAll('button[data-bottom-tab]') ?? []) b.classList.toggle('active', b.dataset.bottomTab === gameState.ui?.activeBottomTab);
+  for (const b of bottomTabBarEl?.querySelectorAll('button[data-tab], button[data-bottom-tab]') ?? []) b.classList.toggle('active', (b.dataset.tab ?? b.dataset.bottomTab) === gameState.ui?.activeBottomTab);
   for (const b of bottomPanelEl?.querySelectorAll('button[data-tool]') ?? []) b.classList.toggle('active', b.dataset.tool === gameState.ui?.selectedTool);
   for (const b of speedHudEl?.querySelectorAll('button[data-speed]') ?? []) b.classList.toggle('active', Number(b.dataset.speed) === clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE));
   const speedStatus = document.getElementById('speedStatus');
   if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
 }
-function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionIndex + 1) % CONFIG.directions.length; gameState.ui.needsHudUpdate = true; renderUI(); }
+function rotateTool() { if (!gameState.ui) return; gameState.ui.directionIndex = (gameState.ui.directionIndex + 1) % CONFIG.directions.length; markUIDirty('tool'); renderUI(); }
 function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
-function setGameSpeed(speed) { if (!gameState.time) return; gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; updateToolButtons(); renderUI(); }
+function setGameSpeed(speed) { if (!gameState.time) return; gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; markUIDirty('speed'); renderUI(); }
 
 function handleUiAction(event, options = {}) {
   const target = event?.target?.closest?.('button');
   if (!target || (event?.currentTarget && !event.currentTarget.contains(target))) return false;
 
-  const tab = target.dataset?.bottomTab;
+  const tab = target.dataset?.tab ?? target.dataset?.bottomTab;
   const tool = target.dataset?.tool;
   const speed = target.dataset?.speed;
   const action = target.dataset?.action;
@@ -96,10 +107,10 @@ function handleUiAction(event, options = {}) {
   else if (action === 'clearTool') clearSelectedTool();
   else if (action === 'zoomIn') setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
-  else if (action === 'closeBottom') closeBottomPanel();
-  else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; renderUI(); }
+  else if (action === 'close-panel' || action === 'closeBottom') closeBottomPanel();
+  else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; markUIDirty('selection'); renderUI(); }
   else if (dungeonAction === 'start') startDungeon(target.dataset?.dungeonId);
-  else if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; renderUI(); }
+  else if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; markUIDirty('selection'); renderUI(); }
   else return false;
 
   if (options.fromPointer && gameState.ui) gameState.ui.suppressUiClickUntil = Date.now() + 350;
@@ -110,6 +121,9 @@ function handleUiPointerUp(event) {
   if (event?.button !== undefined && event.button !== 0) return;
   handleUiAction(event, { fromPointer: true });
 }
+
+function handleUIRootClick(event) { return handleUiAction(event); }
+function setupBottomPanelDelegation() { return bottomPanelEl ?? null; }
 
 
 function isPointerOverUI(event) {
@@ -132,39 +146,10 @@ function bindUIEvents() {
   const uiContainers = [statsEl, speedHudEl, bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
   for (const element of uiContainers) {
     element.addEventListener('pointerup', handleUiPointerUp);
-    element.addEventListener('click', handleUiAction);
+    element.addEventListener('click', handleUIRootClick);
     element.addEventListener('pointerdown', consumeUiPointerEvent);
     element.addEventListener('mousedown', consumeUiPointerEvent);
     element.addEventListener('mouseup', consumeUiPointerEvent);
-    element.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
-  }
-}
-
-
-function isPointerOverUI(event) {
-  const target = event?.target;
-  if (!target?.closest) return false;
-  return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .start'));
-}
-
-function consumeUiPointerEvent(event) {
-  if (!isPointerOverUI(event)) return;
-  event.stopPropagation();
-}
-
-function bindUIEvents() {
-  if (gameState.ui?.eventsBound) return;
-  if (gameState.ui) gameState.ui.eventsBound = true;
-  startBtn?.addEventListener('click', event => { event.stopPropagation(); startNewGame(); });
-  loadBtn?.addEventListener('click', event => { event.stopPropagation(); loadGame(); });
-
-  const uiContainers = [statsEl, speedHudEl, bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
-  for (const element of uiContainers) {
-    element.addEventListener('click', handleUiAction);
-    element.addEventListener('pointerdown', consumeUiPointerEvent);
-    element.addEventListener('mousedown', consumeUiPointerEvent);
-    element.addEventListener('mouseup', consumeUiPointerEvent);
-    element.addEventListener('pointerup', consumeUiPointerEvent);
     element.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
   }
 }
@@ -227,6 +212,7 @@ function bindInputEvents() {
       if (t?.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
       else if (t?.kind === 'clear') clearLandAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
       else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
+      markUIDirty('all');
       renderUI();
       return;
     }
@@ -243,8 +229,10 @@ function bindInputEvents() {
       return;
     }
     if (!isPlacementModeActive()) {
+      const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedDungeonId);
       gameState.ui.selectedSealId = null;
       gameState.ui.selectedDungeonId = null;
+      if (hadSelection) markUIDirty('selection');
     }
     renderUI();
   });

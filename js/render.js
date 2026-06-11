@@ -252,15 +252,35 @@ function drawMinimap() {
 function getResidentSeal() { return (gameState.seals ?? []).find(seal => seal?.type === 'resident') ?? null; }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>\"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;' }[char] ?? char)); }
 
-function updateHud() { renderUI(); }
+function updateHud() { markUIDirty('all'); renderUI(); }
 
 function renderUI() {
-  clearContextSelectionIfInvalid();
-  renderHUD();
-  renderSpeedControls();
-  renderBottomTabs();
-  renderBottomPanel();
-  updateToolButtons();
+  if (!gameState.ui) return;
+  const selectionChanged = clearContextSelectionIfInvalid();
+  if (selectionChanged) markUIDirty('selection');
+
+  const shouldUpdateHud = gameState.ui.needsHudUpdate === true;
+  const shouldUpdatePanel = gameState.ui.needsPanelUpdate === true;
+  if (!shouldUpdateHud && !shouldUpdatePanel) return;
+
+  try {
+    if (shouldUpdateHud) {
+      renderHUD();
+      renderSpeedControls();
+    }
+    if (shouldUpdatePanel) {
+      renderBottomTabs();
+      renderBottomPanel();
+    }
+    updateToolButtons();
+    if (shouldUpdateHud) gameState.ui.needsHudUpdate = false;
+    if (shouldUpdatePanel) gameState.ui.needsPanelUpdate = false;
+  } catch (error) {
+    console.error('UI render error:', error);
+    gameState.ui.needsHudUpdate = false;
+    gameState.ui.needsPanelUpdate = false;
+    gameState.ui.message = `UIエラー: ${error?.message ?? error}`;
+  }
 }
 
 function renderHUD() {
@@ -280,8 +300,8 @@ function renderSpeedControls() {
 }
 
 function renderBottomTabs() {
-  for (const button of bottomTabBarEl?.querySelectorAll('button[data-bottom-tab]') ?? []) {
-    button.classList.toggle('active', button.dataset?.bottomTab === (gameState.ui?.activeBottomTab ?? null));
+  for (const button of bottomTabBarEl?.querySelectorAll('button[data-tab], button[data-bottom-tab]') ?? []) {
+    button.classList.toggle('active', (button.dataset?.tab ?? button.dataset?.bottomTab) === (gameState.ui?.activeBottomTab ?? null));
   }
 }
 
@@ -299,7 +319,7 @@ function renderBottomPanel() {
 }
 
 function panelHeader(title, hint = '') {
-  return `<div class="panelHeader"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="closeBottom" class="subtle">閉じる</button></div>`;
+  return `<div class="panelHeader"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button></div>`;
 }
 
 function renderBuildPanel() {
@@ -391,11 +411,14 @@ function renderSelectedSealPanel(seal) {
 
 function clearContextSelectionIfInvalid() {
   const ui = gameState.ui ?? {};
-  if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) ui.selectedSealId = null;
-  if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) ui.selectedDungeonId = null;
-  if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) ui.selectedTool = null;
-  if (ui.activeBottomTab && !BOTTOM_TABS.some(tab => tab.id === ui.activeBottomTab)) ui.activeBottomTab = null;
-  ui.panelCollapsed = !ui.activeBottomTab;
+  let changed = false;
+  if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) { ui.selectedSealId = null; changed = true; }
+  if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) { ui.selectedDungeonId = null; changed = true; }
+  if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) { ui.selectedTool = null; changed = true; }
+  if (ui.activeBottomTab && !BOTTOM_TABS.some(tab => tab.id === ui.activeBottomTab)) { ui.activeBottomTab = null; changed = true; }
+  const collapsed = !ui.activeBottomTab;
+  if (ui.panelCollapsed !== collapsed) { ui.panelCollapsed = collapsed; changed = true; }
+  return changed;
 }
 
 function equipmentText(seal, slot) {
