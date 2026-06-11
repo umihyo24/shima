@@ -105,15 +105,38 @@ function getItemDef(itemId) {
   return CONFIG.ITEMS?.[id] ?? null;
 }
 
+function getEquipmentSlotForItem(itemDef) {
+  const type = String(itemDef?.type ?? '');
+  return (CONFIG.EQUIPMENT?.SLOT_TYPES ?? []).includes(type) ? type : null;
+}
+
 function getEquippedItem(seal, slot) {
-  return getItemDef(seal?.equipment?.[slot]);
+  const normalizedSlot = (CONFIG.EQUIPMENT?.SLOT_TYPES ?? []).includes(String(slot ?? '')) ? String(slot) : null;
+  return normalizedSlot ? getItemDef(seal?.equipment?.[normalizedSlot]) : null;
+}
+
+function getEquipmentScore(itemDef) {
+  if (!itemDef) return 0;
+  const type = String(itemDef?.type ?? '');
+  const attack = safeFiniteNumber(itemDef?.attackBonus, 0, 0);
+  const defense = safeFiniteNumber(itemDef?.defenseBonus, 0, 0);
+  const hp = safeFiniteNumber(itemDef?.hpBonus, 0, 0);
+  const favor = safeFiniteNumber(itemDef?.favorBonus, 0, 0);
+  if (type === 'weapon') return attack * CONFIG.EQUIPMENT.SCORE_ATTACK_WEIGHT + defense + hp * 0.1 + favor * CONFIG.EQUIPMENT.SCORE_FAVOR_WEIGHT;
+  if (type === 'armor') return defense * CONFIG.EQUIPMENT.SCORE_DEFENSE_WEIGHT + hp * CONFIG.EQUIPMENT.SCORE_HP_WEIGHT + attack + favor * CONFIG.EQUIPMENT.SCORE_FAVOR_WEIGHT;
+  if (type === 'accessory') return attack * CONFIG.EQUIPMENT.SCORE_ATTACK_WEIGHT + defense * CONFIG.EQUIPMENT.SCORE_DEFENSE_WEIGHT + hp * CONFIG.EQUIPMENT.SCORE_HP_WEIGHT + favor * CONFIG.EQUIPMENT.SCORE_FAVOR_WEIGHT;
+  return 0;
+}
+
+function getCurrentEquipmentScore(seal, slot) {
+  return getEquipmentScore(getEquippedItem(seal, slot));
 }
 
 function getSealEffectiveStats(seal) {
   const baseAttack = safeFiniteNumber(seal?.attack, CONFIG.seal.attack, 0);
   const baseDefense = safeFiniteNumber(seal?.defense, CONFIG.seal.defense, 0);
   const baseMaxHp = safeFiniteNumber(seal?.maxHp, CONFIG.seal.maxHp, 1);
-  const items = ['weapon', 'armor', 'accessory'].map(slot => getEquippedItem(seal, slot)).filter(Boolean);
+  const items = (CONFIG.EQUIPMENT?.SLOT_TYPES ?? []).map(slot => getEquippedItem(seal, slot)).filter(Boolean);
   return items.reduce((stats, item) => ({
     attack: stats.attack + safeFiniteNumber(item?.attackBonus, 0, 0),
     defense: stats.defense + safeFiniteNumber(item?.defenseBonus, 0, 0),
@@ -122,48 +145,74 @@ function getSealEffectiveStats(seal) {
 }
 
 function getEquipmentScoreForSeal(seal, itemDef) {
-  if (!seal || !itemDef) return 0;
-  return safeFiniteNumber(itemDef.attackBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_ATTACK_WEIGHT + safeFiniteNumber(itemDef.defenseBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_DEFENSE_WEIGHT + safeFiniteNumber(itemDef.hpBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_HP_WEIGHT + safeFiniteNumber(itemDef.favorBonus, 0, 0) * CONFIG.EQUIPMENT.SCORE_FAVOR_WEIGHT;
+  return seal && itemDef ? getEquipmentScore(itemDef) : 0;
+}
+
+function getEquipmentUpgradeValueForSeal(seal, itemDef) {
+  const slot = getEquipmentSlotForItem(itemDef);
+  if (!seal || !slot) return 0;
+  return getEquipmentScore(itemDef) - getCurrentEquipmentScore(seal, slot);
 }
 
 function isEquipmentUpgradeForSeal(seal, itemDef) {
-  if (!seal || !itemDef) return false;
-  const slot = itemDef.type;
-  if (!['weapon', 'armor', 'accessory'].includes(slot)) return false;
-  const current = getEquippedItem(seal, slot);
-  return getEquipmentScoreForSeal(seal, itemDef) > getEquipmentScoreForSeal(seal, current);
+  return getEquipmentUpgradeValueForSeal(seal, itemDef) > 0;
 }
 
 function facilitySellsItem(facility, itemDef) {
   if (!facility || !isFacilityUsable(facility) || !itemDef) return false;
-  if (facility.type === 'blacksmith') return ['weapon', 'armor'].includes(itemDef.type);
-  if (facility.type === 'restaurant') return itemDef.type === 'accessory';
-  return itemDef.shopType === facility.type;
+  const slot = getEquipmentSlotForItem(itemDef);
+  const soldTypes = CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES?.[facility?.type] ?? [];
+  return !!slot && soldTypes.includes(slot);
+}
+
+function getShopItemCandidatesForFacility(facility) {
+  if (!facility || !isFacilityUsable(facility)) return [];
+  const unlockedIds = new Set((gameState.shopCatalog?.unlockedItemIds ?? []).filter(id => getItemDef(id)).map(String));
+  const starterMaxTier = safeFiniteNumber(CONFIG.EQUIPMENT?.STARTER_MAX_TIER, 0, 0);
+  const items = Object.values(CONFIG.ITEMS ?? {}).filter(item => {
+    if (!facilitySellsItem(facility, item)) return false;
+    if (unlockedIds.has(String(item?.id ?? ''))) return true;
+    return safeFiniteNumber(item?.tier, Number.POSITIVE_INFINITY, 0) <= starterMaxTier;
+  });
+  items.sort((a, b) => safeFiniteNumber(a?.price, 0, 0) - safeFiniteNumber(b?.price, 0, 0));
+  return items;
 }
 
 function getUnlockedShopItemsForFacility(facility) {
-  if (!facility || !isFacilityUsable(facility)) return [];
-  return (gameState.shopCatalog?.unlockedItemIds ?? []).map(getItemDef).filter(item => item && facilitySellsItem(facility, item));
+  return getShopItemCandidatesForFacility(facility);
 }
 
-function chooseBestAffordableEquipmentUpgrade(seal, facility) {
+function chooseCheapestAffordableUpgrade(seal, facility) {
   const budget = safeFiniteNumber(seal?.gearBudget, 0, 0);
-  const candidates = getUnlockedShopItemsForFacility(facility).filter(item => safeFiniteNumber(item.price, 0, 0) <= budget && isEquipmentUpgradeForSeal(seal, item));
-  candidates.sort((a, b) => (getEquipmentScoreForSeal(seal, b) - getEquipmentScoreForSeal(seal, a)) || (safeFiniteNumber(a.price, 0, 0) - safeFiniteNumber(b.price, 0, 0)));
+  const candidates = getShopItemCandidatesForFacility(facility)
+    .filter(item => safeFiniteNumber(item?.price, 0, 0) <= budget)
+    .filter(item => isEquipmentUpgradeForSeal(seal, item));
+  candidates.sort((a, b) => (safeFiniteNumber(a?.price, 0, 0) - safeFiniteNumber(b?.price, 0, 0)) || (getEquipmentUpgradeValueForSeal(seal, b) - getEquipmentUpgradeValueForSeal(seal, a)));
   return candidates[0] ?? null;
 }
 
-function buyAndEquipItem(seal, itemId, facility) {
-  const item = getItemDef(itemId);
-  if (!seal || !item || !facilitySellsItem(facility, item) || !isEquipmentUpgradeForSeal(seal, item)) return false;
-  const price = safeFiniteNumber(item.price, 0, 0);
-  if (safeFiniteNumber(seal.gearBudget, 0, 0) < price) return false;
-  seal.gearBudget -= price;
-  seal.equipment = normalizeEquipment({ ...seal.equipment, [item.type]: item.id });
+function chooseBestAffordableEquipmentUpgrade(seal, facility) {
+  return chooseCheapestAffordableUpgrade(seal, facility);
+}
+
+function buyEquipmentUpgrade(seal, itemDef, facility) {
+  const item = typeof itemDef === 'string' ? getItemDef(itemDef) : getItemDef(itemDef?.id);
+  const slot = getEquipmentSlotForItem(item);
+  if (!seal || !item || !slot || !facilitySellsItem(facility, item) || !isEquipmentUpgradeForSeal(seal, item)) return false;
+  const price = safeFiniteNumber(item?.price, 0, 0);
+  if (safeFiniteNumber(seal?.gearBudget, 0, 0) < price) return false;
+  const oldItem = getEquippedItem(seal, slot);
+  seal.gearBudget = safeFiniteNumber(seal?.gearBudget, 0, 0) - price;
+  seal.equipment = normalizeEquipment({ ...seal.equipment, [slot]: item.id });
   addPlayerIncome(price);
-  addFavor(seal, safeFiniteNumber(item.favorBonus, 0, 0));
-  logMessage(`${seal.name}が${(CONFIG.facilities ?? CONFIG.FACILITIES)[facility.type]?.label ?? '店'}で${item.name}を購入しました。`);
+  addFavor(seal, safeFiniteNumber(CONFIG.EQUIPMENT?.PURCHASE_FAVOR_GAIN, 0, 0) + safeFiniteNumber(item?.favorBonus, 0, 0));
+  logMessage(`${seal.name} が ${item.name} を購入して装備しました`);
+  if (oldItem) logMessage('古い装備は破棄されました');
   return true;
+}
+
+function buyAndEquipItem(seal, itemId, facility) {
+  return buyEquipmentUpgrade(seal, itemId, facility);
 }
 
 function unlockCatalogItem(itemId, source = '') {
@@ -1208,7 +1257,7 @@ function estimatePathCostBetweenPoints(from, to, reason = 'facility') {
 function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   if (!seal || !facility || !isFacilityUsable(facility)) return -Infinity;
   const allowed = {
-    heal: ['inn'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith'], equipment: ['blacksmith', 'restaurant']
+    heal: ['inn'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith'], equipment: Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {})
   }[purpose] ?? Object.keys(CONFIG.facilities ?? {});
   if (!allowed.includes(facility.type)) return -Infinity;
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
@@ -1217,8 +1266,8 @@ function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   const gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0);
   if (purpose === 'heal' && facility.type === 'inn' && carriedG < getFacilityPrice(facility) && hpRatio > CONFIG.seal.innHpThreshold) return -Infinity;
   if (purpose === 'food' && ['restaurant', 'manjuShop'].includes(facility.type) && carriedG < Math.min(getFacilityPrice(facility), 1)) return -Infinity;
-  if (purpose === 'spend' && carriedG <= 0 && !chooseBestAffordableEquipmentUpgrade(seal, facility)) return -Infinity;
-  if (purpose === 'equipment' && (gearBudget <= 0 || !chooseBestAffordableEquipmentUpgrade(seal, facility))) return -Infinity;
+  if (purpose === 'spend' && carriedG <= 0 && !chooseCheapestAffordableUpgrade(seal, facility)) return -Infinity;
+  if (purpose === 'equipment' && (gearBudget <= 0 || !chooseCheapestAffordableUpgrade(seal, facility))) return -Infinity;
   const target = facilityInteractionPoint(facility);
   const pathCost = estimatePathCostBetweenPoints({ x: seal.x, y: seal.y }, target, 'facility');
   if (!Number.isFinite(pathCost)) return -Infinity;
@@ -1239,7 +1288,7 @@ function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
     if (carriedG < price) score -= 80;
   }
   if (purpose === 'spend') score += Math.min(carriedG, getFacilityPrice(facility) || CONFIG.facilities.blacksmith?.spendPerVisit || carriedG) * (CONFIG.EQUIPMENT?.FACILITY_SPEND_G_WEIGHT ?? 0.15);
-  if (purpose === 'equipment') score += Math.min(gearBudget, Math.max(...Object.values(CONFIG.ITEMS ?? {}).map(item => safeFiniteNumber(item?.price, 0, 0)), 1)) * (CONFIG.EQUIPMENT?.FACILITY_EQUIPMENT_GEAR_WEIGHT ?? 0.12) + getEquipmentScoreForSeal(seal, chooseBestAffordableEquipmentUpgrade(seal, facility));
+  if (purpose === 'equipment') score += Math.min(gearBudget, Math.max(...Object.values(CONFIG.ITEMS ?? {}).map(item => safeFiniteNumber(item?.price, 0, 0)), 1)) * (CONFIG.EQUIPMENT?.FACILITY_EQUIPMENT_GEAR_WEIGHT ?? 0.12) + getEquipmentScore(chooseCheapestAffordableUpgrade(seal, facility));
   score += Math.random() * (CONFIG.EQUIPMENT?.RANDOM_TIEBREAKER ?? 4);
   return score;
 }
@@ -1265,7 +1314,7 @@ function getBestFacilityForSeal(seal, preferredTypes) {
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
   const purpose = types.length === 1 && types[0] === 'inn' ? 'heal'
     : (types.length === 1 && ['restaurant', 'manjuShop'].includes(types[0]) ? 'food'
-      : (types.some(type => type === 'blacksmith' || type === 'restaurant') && safeFiniteNumber(seal?.gearBudget, 0, 0) > 0 && hpRatio > CONFIG.seal.innHpThreshold ? 'equipment' : 'spend'));
+      : (types.some(type => Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}).includes(type)) && safeFiniteNumber(seal?.gearBudget, 0, 0) > 0 && hpRatio > CONFIG.seal.innHpThreshold ? 'equipment' : 'spend'));
   return chooseBestFacility(seal, purpose, types) ?? chooseBestFacility(seal, 'spend', types);
 }
 
@@ -1276,7 +1325,7 @@ function chooseFacilityAfterHunt(seal) {
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
   if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
-  const equipmentShop = chooseBestFacility(seal, 'equipment', ['blacksmith', 'restaurant']);
+  const equipmentShop = chooseBestFacility(seal, 'equipment', Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}));
   if (equipmentShop) return equipmentShop;
   if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
   if (seal?.carriedG >= (CONFIG.facilities.inn?.basePrice ?? CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal);
@@ -1291,7 +1340,7 @@ function chooseFacilityAfterHunt(seal) {
 function getFacilityPurposeForSeal(seal, facility) {
   if (facility?.type === 'inn') return 'heal';
   if (['restaurant', 'manjuShop'].includes(String(facility?.type ?? ''))) return 'food';
-  return chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend';
+  return chooseCheapestAffordableUpgrade(seal, facility) ? 'equipment' : 'spend';
 }
 
 function clearLegacyReturnTarget(seal) {

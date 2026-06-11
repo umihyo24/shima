@@ -373,8 +373,8 @@ function chooseArrivalActionForVisitor(seal) {
     const inn = getBestFacilityForSeal(seal, typeConfig.lowHp ?? ['inn']);
     if (inn) return { type: 'facility', facility: inn, action: '宿屋で回復します' };
   }
-  const blacksmith = getBestFacilityForSeal(seal, typeConfig.gear ?? ['blacksmith']);
-  if (blacksmith && chooseBestAffordableEquipmentUpgrade(seal, blacksmith)) return { type: 'facility', facility: blacksmith, action: '鍛冶屋で装備を見ます' };
+  const equipmentShop = getBestFacilityForSeal(seal, typeConfig.gear ?? Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}));
+  if (equipmentShop && chooseCheapestAffordableUpgrade(seal, equipmentShop)) return { type: 'facility', facility: equipmentShop, action: `${CONFIG.facilities?.[equipmentShop.type]?.label ?? '店'}で装備を見ます` };
   if (hpRatio < safeFiniteNumber(arrival.restaurantHpRatio, 0.82, 0) || Math.random() < safeFiniteNumber(arrival.preHuntFacilityChance, 0, 0)) {
     const facility = getBestFacilityForSeal(seal, hpRatio < safeFiniteNumber(arrival.restaurantHpRatio, 0.82, 0) ? (typeConfig.reducedHp ?? ['restaurant', 'inn']) : (typeConfig.optional ?? ['restaurant', 'blacksmith', 'inn']));
     if (facility) return { type: 'facility', facility, action: `${CONFIG.facilities[facility.type]?.label ?? '施設'}へ向かいます` };
@@ -556,8 +556,8 @@ function updateUsingFacility(seal, dt) {
   if (!facility || !isFacilityStillValidTarget(seal, seal.targetId, purpose)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   seal.actionTimer -= dt;
   if (seal.actionTimer > 0) return;
-  const upgrade = chooseBestAffordableEquipmentUpgrade(seal, facility);
-  if (upgrade && buyAndEquipItem(seal, upgrade.id, facility)) {
+  const upgrade = chooseCheapestAffordableUpgrade(seal, facility);
+  if (upgrade && buyEquipmentUpgrade(seal, upgrade, facility)) {
     const paid = safeFiniteNumber(upgrade.price, 0, 0);
     const income = registerFacilityUse(facility, seal, paid);
     addPlayerIncome(Math.max(0, income - paid));
