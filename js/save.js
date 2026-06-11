@@ -150,6 +150,7 @@ function applyLoadedGameState(data) {
   for (const seal of gameState.seals ?? []) clearLegacyReturnTarget(seal);
   enforceSingleResidentSeal();
   gameState.visitorProfiles = normalizeVisitorProfiles(loaded.visitorProfiles);
+  sanitizeActiveVisitorSeals();
   const legacyInventory = Array.isArray(loaded.townInventory) ? loaded.townInventory : [];
   gameState.relicInventory = normalizeRelicInventory([...(loaded.relicInventory ?? []), ...legacyInventory]);
   gameState.shopCatalog = normalizeShopCatalog(loaded.shopCatalog, gameState.relicInventory);

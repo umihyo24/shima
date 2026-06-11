@@ -28,25 +28,36 @@ function createNewGameState() {
 }
 
 
+function normalizeVisitorBaseStats(baseStats) {
+  return {
+    maxHp: safeFiniteNumber(baseStats?.maxHp, CONFIG.seal.maxHp, 1),
+    attack: safeFiniteNumber(baseStats?.attack, CONFIG.seal.attack, 0),
+    defense: safeFiniteNumber(baseStats?.defense, CONFIG.seal.defense, 0)
+  };
+}
+
 function createDefaultVisitorProfiles() {
-  return (CONFIG.visitor?.profiles ?? []).map(profile => ({
-    id: String(profile?.id ?? ''),
-    name: String(profile?.name ?? CONFIG.resident.defaultName),
-    personality: String(profile?.personality ?? 'balanced'),
-    unlockedAtKnownness: safeFiniteNumber(profile?.unlockedAtKnownness, 0, 0),
-    baseStats: cloneSerializable(profile?.baseStats, { maxHp: CONFIG.seal.maxHp, attack: CONFIG.seal.attack, defense: CONFIG.seal.defense }),
-    level: clampInteger(profile?.level, 1, Number.MAX_SAFE_INTEGER, 1),
-    exp: safeFiniteNumber(profile?.exp, 0, 0),
-    favor: safeFiniteNumber(profile?.favor, 0, 0),
-    visits: clampInteger(profile?.visits, 0, Number.MAX_SAFE_INTEGER, 0),
-    unlocked: safeFiniteNumber(profile?.unlockedAtKnownness, 0, 0) <= CONFIG.knownness.initial,
-    equipment: normalizeEquipment(profile?.equipment),
-    gearBudget: safeFiniteNumber(profile?.gearBudget, 0, 0),
-    dungeonRuns: clampInteger(profile?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0),
-    dungeonClears: clampInteger(profile?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0),
-    dungeonBattles: clampInteger(profile?.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, 0),
-    chestsOpened: clampInteger(profile?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0)
-  }));
+  return (CONFIG.visitor?.profiles ?? []).map(profile => {
+    const threshold = safeFiniteNumber(profile?.unlockedAtKnownness, 0, 0);
+    return {
+      id: String(profile?.id ?? ''),
+      name: String(profile?.name ?? CONFIG.resident.defaultName),
+      personality: String(profile?.personality ?? 'balanced'),
+      unlockedAtKnownness: threshold,
+      baseStats: normalizeVisitorBaseStats(profile?.baseStats),
+      level: clampInteger(profile?.level, 1, Number.MAX_SAFE_INTEGER, 1),
+      exp: safeFiniteNumber(profile?.exp, 0, 0),
+      favor: safeFiniteNumber(profile?.favor, 0, 0),
+      visits: clampInteger(profile?.visits, 0, Number.MAX_SAFE_INTEGER, 0),
+      unlocked: threshold <= CONFIG.knownness.initial,
+      equipment: normalizeEquipment(profile?.equipment),
+      gearBudget: safeFiniteNumber(profile?.gearBudget, 0, 0),
+      dungeonRuns: clampInteger(profile?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0),
+      dungeonClears: clampInteger(profile?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0),
+      dungeonBattles: clampInteger(profile?.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, 0),
+      chestsOpened: clampInteger(profile?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0)
+    };
+  });
 }
 
 function normalizeEquipment(equipment) {
@@ -327,6 +338,7 @@ function normalizeVisitorProfiles(profiles) {
     const loaded = saved.find(p => p?.id === defaultProfile.id) ?? {};
     return {
       ...defaultProfile,
+      baseStats: normalizeVisitorBaseStats(defaultProfile.baseStats),
       level: clampInteger(loaded?.level, 1, Number.MAX_SAFE_INTEGER, defaultProfile.level),
       exp: safeFiniteNumber(loaded?.exp, defaultProfile.exp, 0),
       favor: safeFiniteNumber(loaded?.favor, defaultProfile.favor, 0),
@@ -992,11 +1004,6 @@ function distance(ax, ay, bx, by) { return Math.hypot((bx ?? 0) - (ax ?? 0), (by
 function randomRange(min, max) { return min + Math.random() * (max - min); }
 function randomCoastPoint() { return gridToWorld(Math.floor(randomRange(CONFIG.world.coastX, CONFIG.world.coastX + CONFIG.world.coastW)), Math.floor(randomRange(CONFIG.world.coastY, CONFIG.world.coastY + CONFIG.world.coastH))); }
 
-function isVisitorProfileUnlocked(profile) {
-  if (!profile) return false;
-  return profile.unlocked === true || safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0) >= safeFiniteNumber(profile.unlockedAtKnownness, 0, 0);
-}
-
 function getNextUnlockProfile() {
   const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
   return (gameState.visitorProfiles ?? [])
@@ -1012,12 +1019,55 @@ function getNextKnownnessGoal() {
   return goals.length > 0 ? Math.min(...goals) : Math.max(knownness, 0);
 }
 
+function isVisitorProfileUnlocked(profile) {
+  if (!profile) return false;
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  return profile.unlocked === true || knownness >= safeFiniteNumber(profile.unlockedAtKnownness, 0, 0);
+}
+
+function getUnlockedVisitorProfiles() {
+  return (gameState.visitorProfiles ?? []).filter(profile => profile && isVisitorProfileUnlocked(profile));
+}
+
+function getActiveVisitorProfileIds() {
+  return new Set((gameState.seals ?? []).filter(seal => seal?.type === 'visitor' && seal?.profileId && getVisitorProfileById(seal.profileId)).map(seal => seal.profileId));
+}
+
+function isVisitorProfileActive(profileId) {
+  return getActiveVisitorProfileIds().has(String(profileId ?? ''));
+}
+
+function getVisitorSpawnCandidates() {
+  const activeIds = getActiveVisitorProfileIds();
+  return getUnlockedVisitorProfiles().filter(profile => profile?.id && !activeIds.has(profile.id));
+}
+
+function sanitizeActiveVisitorSeals() {
+  const seenProfileIds = new Set();
+  const validSeals = [];
+  for (const seal of gameState.seals ?? []) {
+    if (!seal || seal.type !== 'visitor') { if (seal) validSeals.push(seal); continue; }
+    const profile = seal.profileId ? getVisitorProfileById(seal.profileId) : null;
+    if (!profile) continue;
+    seal.name = String(seal.name || profile.name || CONFIG.resident.defaultName);
+    seal.personality = String(seal.personality || profile.personality || 'balanced');
+    seal.assetKey = String(seal.assetKey || assetKeyForVisitorProfile(profile.id));
+    if (seenProfileIds.has(profile.id)) {
+      writeBackVisitorProfile(seal);
+      continue;
+    }
+    seenProfileIds.add(profile.id);
+    validSeals.push(seal);
+  }
+  gameState.seals = validSeals;
+}
+
 function updateVisitorUnlocks() {
   const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
   for (const profile of gameState.visitorProfiles ?? []) {
     if (!profile || profile.unlocked || knownness < safeFiniteNumber(profile.unlockedAtKnownness, 0, 0)) continue;
     profile.unlocked = true;
-    logMessage(`${profile.name}が村を知りました（知名度${Math.floor(knownness)}）。`);
+    logMessage(`${profile.name} が来訪候補に加わりました！`);
   }
 }
 
