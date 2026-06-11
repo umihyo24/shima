@@ -140,6 +140,35 @@ function bindUIEvents() {
   }
 }
 
+
+function isPointerOverUI(event) {
+  const target = event?.target;
+  if (!target?.closest) return false;
+  return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .start'));
+}
+
+function consumeUiPointerEvent(event) {
+  if (!isPointerOverUI(event)) return;
+  event.stopPropagation();
+}
+
+function bindUIEvents() {
+  if (gameState.ui?.eventsBound) return;
+  if (gameState.ui) gameState.ui.eventsBound = true;
+  startBtn?.addEventListener('click', event => { event.stopPropagation(); startNewGame(); });
+  loadBtn?.addEventListener('click', event => { event.stopPropagation(); loadGame(); });
+
+  const uiContainers = [statsEl, speedHudEl, bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
+  for (const element of uiContainers) {
+    element.addEventListener('click', handleUiAction);
+    element.addEventListener('pointerdown', consumeUiPointerEvent);
+    element.addEventListener('mousedown', consumeUiPointerEvent);
+    element.addEventListener('mouseup', consumeUiPointerEvent);
+    element.addEventListener('pointerup', consumeUiPointerEvent);
+    element.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
+  }
+}
+
 function sealAtWorldPoint(point) {
   if (!point) return null;
   return [...(gameState.seals ?? [])].reverse().find(seal => seal && distance(point.x, point.y, seal.x, seal.y) <= CONFIG.seal.contactDistance * 1.4) ?? null;
