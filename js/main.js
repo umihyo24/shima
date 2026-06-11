@@ -12,16 +12,23 @@ const startSaveInfoEl = document.getElementById('startSaveInfo');
 const gameState = createNewGameState();
 
 function loop(now) {
-  const realDeltaMs = Math.min(CONFIG.timing.maxDt * 1000, now - gameState.lastTime);
-  gameState.lastTime = now;
-  const timeScale = clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE);
-  update(realDeltaMs * timeScale);
-  if (gameState.ui.needsHudUpdate) {
-    renderUI();
-    gameState.ui.needsHudUpdate = false;
+  try {
+    const realDeltaMs = Math.min(CONFIG.timing.maxDt * 1000, now - gameState.lastTime);
+    gameState.lastTime = now;
+    const timeScale = clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE);
+    update(realDeltaMs * timeScale);
+    render();
+    if (gameState.ui?.needsHudUpdate || gameState.ui?.needsPanelUpdate) renderUI();
+  } catch (error) {
+    console.error('Game loop error:', error);
+    if (gameState.ui) {
+      gameState.ui.message = `エラー: ${error?.message ?? error}`;
+      gameState.ui.needsHudUpdate = false;
+      gameState.ui.needsPanelUpdate = false;
+    }
+  } finally {
+    requestAnimationFrame(loop);
   }
-  render();
-  requestAnimationFrame(loop);
 }
 
 initializeAssetRegistry();

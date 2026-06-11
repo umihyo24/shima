@@ -8,17 +8,17 @@
 
 </head>
 <body>
-  <canvas id="game"></canvas>
+  <canvas id="game" aria-label="ゲームキャンバス"></canvas>
 
-  <div class="topHud" aria-label="常時表示HUD">
+  <div class="topHud hud" aria-label="常時表示HUD">
     <div class="panel stats compactHud" id="stats"></div>
   </div>
 
-  <div class="panel speedHud" id="speedHud" aria-label="速度操作"></div>
+  <div class="panel speedHud speed-panel" id="speedHud" aria-label="速度操作"></div>
 
-  <div class="bottomUi" id="bottomUi" aria-label="下部タブUI">
-    <div class="bottomTabBar" id="bottomTabBar"></div>
-    <div class="panel bottomPanel" id="bottomPanel" hidden></div>
+  <div class="bottomUi bottom-ui" id="bottomUi" aria-label="下部タブUI">
+    <div class="panel bottomPanel bottom-panel" id="bottomPanel" hidden></div>
+    <div class="bottomTabBar bottom-tabs bottom-tab-bar" id="bottomTabBar"></div>
   </div>
 
   <div class="start" id="startScreen">

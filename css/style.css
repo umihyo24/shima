@@ -5,29 +5,37 @@
   --panel-border: rgba(255,255,255,.18);
   --accent: #ffe38a;
   --muted: #cdefff;
+  --bottom-panel-height: 300px;
+  --bottom-tab-height: 42px;
 }
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; background: #071d2a; color: #f7fbff; }
-canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; background: #0b5875; }
+#game, canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; background: #0b5875; }
+#game { position: fixed; inset: 0; z-index: 1; pointer-events: auto; touch-action: none; }
 .panel { background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: 0 8px 26px rgba(0,0,0,.3); border-radius: 10px; backdrop-filter: blur(6px); }
-button { appearance: none; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; background: linear-gradient(#1e5d75,#123848); color: #fff; padding: 7px 10px; font-weight: 800; cursor: pointer; box-shadow: inset 0 1px rgba(255,255,255,.16); touch-action: manipulation; }
+button { appearance: none; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; background: linear-gradient(#1e5d75,#123848); color: #fff; padding: 7px 10px; font-weight: 800; cursor: pointer; box-shadow: inset 0 1px rgba(255,255,255,.16); touch-action: manipulation; pointer-events: auto; }
 button:hover { filter: brightness(1.15); }
 button.active { background: linear-gradient(#f0a73a,#a86619); color: #1d1000; }
 button.subtle { background: rgba(255,255,255,.08); }
-.topHud { position: fixed; top: 12px; left: 12px; z-index: 30; pointer-events: none; }
-.compactHud { padding: 8px 11px; min-width: min(430px, calc(100vw - 196px)); line-height: 1.35; font-size: 13px; }
+.topHud, .hud { position: fixed; top: 12px; left: 12px; z-index: 40; pointer-events: auto; }
+.compactHud { padding: 8px 11px; min-width: min(430px, calc(100vw - 196px)); line-height: 1.35; font-size: 13px; pointer-events: auto; }
 .compactHud b { color: var(--accent); font-size: 16px; }
 .hudRow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .dateLine { color: #9ee8ff; font-weight: 800; }
 .hudMessage { margin-top: 4px; color: #d7efff; max-width: 640px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.speedHud { position: fixed; top: 12px; right: 12px; z-index: 35; padding: 8px; min-width: 172px; pointer-events: auto; }
+.speedHud, .speed-panel { position: fixed; top: 12px; right: 12px; z-index: 45; padding: 8px; min-width: 172px; pointer-events: auto; }
 .speedTitle { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
-.speedButtons { display: grid; grid-template-columns: repeat(4, minmax(34px, 1fr)); gap: 5px; }
+.speedButtons { display: grid; grid-template-columns: repeat(4, minmax(34px, 1fr)); gap: 5px; pointer-events: auto; }
 .speedButtons button { padding: 6px 7px; text-align: center; }
-.bottomUi { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 32; display: grid; gap: 8px; pointer-events: none; }
-.bottomTabBar { display: flex; gap: 7px; justify-content: center; pointer-events: auto; }
-.bottomTabBar button { min-width: 92px; padding: 8px 12px; }
-.bottomPanel { pointer-events: auto; max-height: min(36vh, 330px); min-height: 124px; overflow: auto; padding: 12px; }
+.bottomUi, .bottom-ui { position: fixed; left: 0; right: 0; bottom: 0; height: 0; z-index: 42; pointer-events: none; }
+.bottomTabBar, .bottom-tabs, .bottom-tab-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 44; display: flex; gap: 7px; justify-content: center; align-items: center; height: var(--bottom-tab-height); padding: 5px 12px; pointer-events: auto; background: linear-gradient(180deg, rgba(5,18,28,.2), rgba(5,18,28,.78)); }
+.bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 92px; padding: 8px 12px; }
+.bottomPanel, .bottom-panel { position: fixed; left: 0; right: 0; bottom: var(--bottom-tab-height); z-index: 43; pointer-events: auto; height: var(--bottom-panel-height); max-height: var(--bottom-panel-height); min-height: var(--bottom-panel-height); overflow: hidden; padding: 0; display: flex; flex-direction: column; border-radius: 10px 10px 0 0; }
+.bottomPanel[hidden], .bottom-panel[hidden] { display: none; pointer-events: none; }
+.bottom-panel-header { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px 9px; border-bottom: 1px solid rgba(255,255,255,.14); pointer-events: auto; }
+.bottom-panel-header h2 { margin: 0; font-size: 17px; }
+.bottom-panel-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; overscroll-behavior: contain; pointer-events: auto; }
+.bottomPanel button, .bottom-panel button, .bottom-panel-content button { pointer-events: auto; }
 .panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
 .panelHeader h2 { margin: 0; font-size: 17px; }
 .panelHint { color: var(--muted); font-size: 13px; }
@@ -55,19 +63,21 @@ button.subtle { background: rgba(255,255,255,.08); }
 .thresholdPill.done { background: rgba(110,231,168,.24); color: #bfffdc; }
 .log { margin-top: 8px; font-size: 13px; max-height: 74px; overflow: auto; color: #d7efff; }
 .start { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(23,112,145,.82), rgba(2,12,22,.96)); pointer-events: auto; z-index: 50; }
-.startCard { width: min(620px, calc(100vw - 36px)); padding: 30px; text-align: center; }
+.startCard { width: min(620px, calc(100vw - 36px)); padding: 30px; text-align: center; pointer-events: auto; }
 .startCard h1 { margin: 0 0 8px; font-size: clamp(30px, 6vw, 56px); }
 .startCard p { color: var(--muted); line-height: 1.7; }
 .startActions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
 .saveInfo { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.55; }
 @media (max-width: 760px) {
+  :root { --bottom-panel-height: min(42vh, 320px); --bottom-tab-height: 40px; }
   .compactHud { min-width: 0; max-width: calc(100vw - 116px); font-size: 12px; }
-  .speedHud { min-width: 96px; }
+  .speedHud, .speed-panel { min-width: 96px; }
   .speedTitle { font-size: 11px; }
   .speedButtons { grid-template-columns: repeat(2, 1fr); }
-  .bottomUi { left: 6px; right: 6px; bottom: 6px; }
-  .bottomTabBar { justify-content: stretch; gap: 4px; }
-  .bottomTabBar button { min-width: 0; flex: 1; padding: 7px 4px; }
-  .bottomPanel { max-height: 42vh; padding: 9px; }
+  .bottomUi, .bottom-ui { left: 0; right: 0; bottom: 0; }
+  .bottomTabBar, .bottom-tabs, .bottom-tab-bar { justify-content: stretch; gap: 4px; padding: 4px 6px; }
+  .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 0; flex: 1; padding: 7px 4px; }
+  .bottom-panel-header { padding: 9px 10px 7px; }
+  .bottom-panel-content { padding: 9px; }
   .buildPanel { grid-template-columns: 1fr; }
 }
