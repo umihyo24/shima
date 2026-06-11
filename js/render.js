@@ -249,7 +249,7 @@ function drawMonsters() {
 
 function drawSeals() {
   for (const seal of gameState.seals ?? []) {
-    if (!seal) continue;
+    if (!seal || seal.state === 'expeditionRunning') continue;
     drawSeal(ctx, seal);
   }
 }
@@ -687,11 +687,38 @@ function getPersonEffectiveStats(entity) {
   return stats;
 }
 
+
+function getVisibleDungeonParticipants(dungeon) {
+  const participants = normalizeDungeonParticipantIds(dungeon?.participantIds);
+  if (!dungeon || dungeon.state === 'completed' || dungeon.state === 'expired') return [];
+  if (dungeon.state === 'returning') {
+    return participants.filter(participant => {
+      const seal = getSealById(participant.sealId);
+      return seal && (seal.expeditionId === dungeon.id || seal.questingDungeonId === dungeon.id || seal.state === 'returningFromDungeon');
+    });
+  }
+  return participants.filter(participant => !!getSealById(participant.sealId));
+}
+
+function renderDungeonParticipantStatusText(dungeon) {
+  const participants = normalizeDungeonParticipantIds(dungeon?.participantIds);
+  if (participants.length <= 0) return '';
+  return participants.map(participant => {
+    const seal = getSealById(participant.sealId);
+    const name = participant.name || seal?.name || participant.id;
+    let status = '確認中';
+    if (!seal) status = '不在';
+    else if (seal.expeditionId === dungeon?.id || seal.questingDungeonId === dungeon?.id) status = stateLabel(seal.state);
+    else if (['returning', 'completed'].includes(dungeon?.state)) status = '帰還済み';
+    return `${escapeHtml(name)}（${escapeHtml(status)}）`;
+  }).join('、');
+}
+
 function renderDungeonsPanel() {
   const active = (gameState.dungeons ?? []).filter(dungeon => ['available', 'assembling', 'running', 'returning'].includes(dungeon?.state));
   const running = active.filter(dungeon => ['assembling', 'running', 'returning'].includes(dungeon?.state));
   const runningHtml = running.length ? running.map(dungeon => {
-    const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => escapeHtml(p.name || getSealById(p.sealId)?.name || p.id)).join('、') || '参加者確認中';
+    const participants = renderDungeonParticipantStatusText(dungeon) || '参加者確認中';
     const current = dungeon.nodes?.[dungeon.currentNodeIndex];
     const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon.state);
     return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><br>${escapeHtml(dungeonStateLabel(dungeon.state))}: ${escapeHtml(currentText)}<br>参加: ${participants}</div>`;
@@ -805,7 +832,7 @@ function drawDungeon(context, dungeon) {
   context.closePath();
   context.fill();
   if (['assembling', 'running', 'returning'].includes(dungeon.state)) {
-    const participants = normalizeDungeonParticipantIds(dungeon.participantIds);
+    const participants = getVisibleDungeonParticipants(dungeon);
     const nodes = dungeon.nodes ?? [];
     const total = nodes.reduce((sum, node) => sum + safeFiniteNumber(node?.durationMs, 0, 0), 0) || safeFiniteNumber(dungeon.durationMs, 1, 1);
     const ratio = Math.max(0, Math.min(1, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, total)));
@@ -822,26 +849,30 @@ function drawDungeon(context, dungeon) {
 function drawDungeonParticipantCluster(context, dungeon, participants) {
   if (!context || !dungeon || !Array.isArray(participants) || participants.length <= 0) return;
   context.save();
-  context.font = `${12 / Math.max(gameState.camera?.zoom ?? 1, 0.1)}px sans-serif`;
+  const zoom = Math.max(gameState.camera?.zoom ?? 1, 0.1);
+  context.font = `${11 / zoom}px sans-serif`;
   context.textAlign = 'center';
   context.textBaseline = 'middle';
-  const label = (CONFIG.dungeon?.labels?.participantCount ?? '探索中 {count}匹').replace('{count}', String(participants.length));
-  context.fillStyle = 'rgba(18,14,32,.78)';
-  context.fillRect(-38, -46, 76, 18);
+  const countKey = dungeon.state === 'assembling' ? 'assemblingCount' : (dungeon.state === 'returning' ? 'returningCount' : 'participantCount');
+  const countLabel = (CONFIG.dungeon?.labels?.[countKey] ?? CONFIG.dungeon?.labels?.participantCount ?? '探索中 {count}匹').replace('{count}', String(participants.length));
+  const names = participants.map(participant => String(participant?.name || getSealById(participant?.sealId)?.name || '').slice(0, 4)).filter(Boolean).join('・');
+  const label = names ? `${countLabel} ${names}` : countLabel;
+  const width = Math.min(140, Math.max(76, context.measureText(label).width + 16));
+  context.fillStyle = 'rgba(18,14,32,.82)';
+  context.fillRect(-width / 2, -50, width, 20);
   context.fillStyle = '#fff7d1';
-  context.fillText(label, 0, -37);
+  context.fillText(label, 0, -40);
   participants.slice(0, 4).forEach((participant, index) => {
-    const angle = (index / Math.max(1, Math.min(4, participants.length))) * Math.PI * 2 - Math.PI / 2;
-    const x = Math.cos(angle) * 30;
-    const y = Math.sin(angle) * 16 + 2;
+    const startX = -((Math.min(4, participants.length) - 1) * 12) / 2;
+    const x = startX + index * 12;
+    const y = 36;
     context.fillStyle = '#f7fbff';
     context.beginPath();
-    context.arc(x, y, 6, 0, Math.PI * 2);
+    context.arc(x, y, 4.5, 0, Math.PI * 2);
     context.fill();
     context.strokeStyle = '#5b4aa5';
+    context.lineWidth = 1.5 / zoom;
     context.stroke();
-    context.fillStyle = '#ffffff';
-    context.fillText(String(participant?.name || getSealById(participant?.sealId)?.name || '').slice(0, 4), x, y + 15);
   });
   context.restore();
 }
@@ -857,7 +888,7 @@ function drawDungeonPanel() {
   const type = getDungeonTypeDef(dungeon.type);
   const preview = dungeon.rewardPreview ?? getDungeonRewardPreview(dungeon);
   const remaining = Math.max(0, safeFiniteNumber(dungeon.expiresInMs, 0, 0));
-  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => escapeHtml(p.name || getSealById(p.sealId)?.name || p.id)).join('、') || '未編成（開始時に自動選出）';
+  const participants = renderDungeonParticipantStatusText(dungeon) || '未編成（開始時に自動選出）';
   const itemNames = (preview.itemIds ?? []).map(id => getItemDef(id)?.name ?? id).join(' / ') || 'なし';
   const canStart = canStartDungeon(dungeon);
   const startButton = dungeon.state === 'available' ? `<button data-dungeon-action="start" data-dungeon-id="${escapeHtml(dungeon.id)}">攻略開始</button>` : '';
@@ -873,7 +904,7 @@ function drawDungeonPanel() {
 function renderDungeonRoute(dungeon) {
   const nodes = Array.isArray(dungeon?.nodes) ? dungeon.nodes : [];
   if (nodes.length <= 0) return '';
-  const participantNames = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => p.name || getSealById(p.sealId)?.name || p.id).join(' / ');
+  const participantNames = getVisibleDungeonParticipants(dungeon).map(p => p.name || getSealById(p.sealId)?.name || p.id).join(' / ');
   const html = nodes.map((node, index) => {
     const classes = ['dungeonNode'];
     if (node?.resolved) classes.push('done');

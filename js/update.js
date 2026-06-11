@@ -1145,20 +1145,34 @@ function completeDungeon(dungeon) {
 function updateReturningDungeon(dungeon, deltaMs) {
   if (!dungeon || dungeon.state !== 'returning') return;
   dungeon.completedDisplayMs = safeFiniteNumber(dungeon.completedDisplayMs, CONFIG.dungeon?.returnDisplayMs ?? 0, 0) - safeFiniteNumber(deltaMs, 0, 0);
-  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => getSealById(p.sealId)).filter(Boolean);
-  if (participants.length <= 0) { dungeon.state = 'completed'; dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0; return; }
-  for (const seal of participants) {
+  const returningSeals = getDungeonParticipantSeals(dungeon).filter(seal => isSealStillOnDungeonExpedition(seal, dungeon));
+  if (returningSeals.length <= 0) { markDungeonReturned(dungeon); return; }
+  for (const seal of returningSeals) {
     if (seal.state !== 'returningFromDungeon') seal.state = 'returningFromDungeon';
     seal.expeditionId = dungeon.id;
     seal.questingDungeonId = dungeon.id;
     if (!seal.target) setSealDestination(seal, getDungeonReturnPoint(seal), 'dungeon-return');
     if (distance(seal.x, seal.y, seal.target?.x ?? seal.x, seal.target?.y ?? seal.y) <= CONFIG.seal.contactDistance && (!seal.path || seal.path.length <= 0)) finishSealDungeonReturn(seal, dungeon);
   }
-  if (participants.every(seal => seal.expeditionId !== dungeon.id)) {
-    dungeon.state = 'completed';
-    dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0;
-    addDungeonLog(dungeon, '参加したあざらしが村へ戻りました。');
-  }
+  if (getDungeonParticipantSeals(dungeon).every(seal => !isSealStillOnDungeonExpedition(seal, dungeon))) markDungeonReturned(dungeon);
+}
+
+function getDungeonParticipantSeals(dungeon) {
+  return normalizeDungeonParticipantIds(dungeon?.participantIds).map(participant => getSealById(participant.sealId)).filter(Boolean);
+}
+
+function isSealStillOnDungeonExpedition(seal, dungeon) {
+  if (!seal || !dungeon) return false;
+  if (seal.expeditionId === dungeon.id || seal.questingDungeonId === dungeon.id) return true;
+  return ['movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing'].includes(seal.state) && normalizeDungeonParticipantIds(dungeon.participantIds).some(participant => participant.sealId === seal.id);
+}
+
+function markDungeonReturned(dungeon) {
+  if (!dungeon || dungeon.state === 'completed') return;
+  dungeon.state = 'completed';
+  dungeon.currentNodeIndex = Array.isArray(dungeon.nodes) ? dungeon.nodes.length : safeFiniteNumber(dungeon.currentNodeIndex, 0, 0);
+  dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0;
+  addDungeonLog(dungeon, '参加したあざらしが村や岸辺へ戻りました。');
 }
 
 function finishSealDungeonReturn(seal, dungeon) {
@@ -1202,7 +1216,7 @@ function getDungeonEntrancePoint(dungeon) {
 }
 
 function getDungeonReturnPoint(seal) {
-  return seal?.type === 'visitor' ? getVisitorSeaExitPoint() : getVillageEntryPoint();
+  return seal?.type === 'visitor' ? getVisitorShoreLandingPoint() : getVillageEntryPoint();
 }
 
 function addDungeonLog(dungeon, text) {

@@ -53,7 +53,7 @@ const CONFIG = Object.freeze({
     nodeDurationsMs: { entrance: 3500, battle: 5200, chest: 3600, trap: 4200, event: 3800, boss: 6500, exit: 3200 },
     progressSpeedByPersonality: { cautious: 0.9, brave: 1.08, balanced: 1 },
     outcome: { battleDamage: 3, braveDamageBonus: 2, cautiousTrapDamageReduction: 2, trapDamage: 4, rewardBattleMultiplier: 0.12, rewardChestMultiplier: 0.18, rewardBossMultiplier: 0.3, rewardTrapPenaltyMultiplier: 0.08, expBattleBonus: 3 },
-    labels: { movingToDungeon: '遠征集合中', waitingAtDungeon: '入口で待機中', runningText: '探索中', returningText: '帰還中', peopleExpedition: '遠征中', participantCount: '探索中 {count}匹', noParticipants: '参加者なし', routeTitle: '遠征ルート', logTitle: '遠征ログ', completedReward: '獲得報酬' },
+    labels: { movingToDungeon: '遠征集合中', waitingAtDungeon: '入口で待機中', runningText: '探索中', returningText: '帰還中', peopleExpedition: '遠征中', participantCount: '探索中 {count}匹', assemblingCount: '集合中 {count}匹', returningCount: '帰還中 {count}匹', noParticipants: '参加者なし', routeTitle: '遠征ルート', logTitle: '遠征ログ', completedReward: '獲得報酬' },
     spawnAttempts: 40,
     minDistanceFromVillageTiles: 4,
     participant: { min: 1, max: 3, clearFavor: 2, allowUnlockedProfileRecruit: true, personalityBonus: { brave: 16, balanced: 8, cautious: 2 }, activeSealBonus: 12, residentBonus: 6 },

@@ -385,7 +385,7 @@ function normalizeDungeons(dungeons) {
       recruitCost: safeFiniteNumber(dungeon?.recruitCost, type.recruitCost, 0),
       participantIds: normalizeDungeonParticipantIds(dungeon?.participantIds),
       nodes,
-      currentNodeIndex: clampInteger(dungeon?.currentNodeIndex, 0, Math.max(0, nodes.length - 1), 0),
+      currentNodeIndex: clampInteger(dungeon?.currentNodeIndex, 0, ['returning', 'completed'].includes(state) ? nodes.length : Math.max(0, nodes.length - 1), 0),
       nodeTimerMs: safeFiniteNumber(dungeon?.nodeTimerMs, 0, 0),
       expeditionLog: normalizeDungeonLog(dungeon?.expeditionLog),
       reward: normalizeDungeonReward(dungeon?.reward),
