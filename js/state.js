@@ -43,7 +43,9 @@ function createDefaultVisitorProfiles() {
     equipment: normalizeEquipment(profile?.equipment),
     gearBudget: safeFiniteNumber(profile?.gearBudget, 0, 0),
     dungeonRuns: clampInteger(profile?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0),
-    dungeonClears: clampInteger(profile?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0)
+    dungeonClears: clampInteger(profile?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0),
+    dungeonBattles: clampInteger(profile?.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, 0),
+    chestsOpened: clampInteger(profile?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0)
   }));
 }
 
@@ -302,7 +304,12 @@ function normalizeSeal(s, index) {
     pathTargetKey: null,
     warnedPathFallback: s?.warnedPathFallback === true,
     questingReturnState: s?.questingReturnState ? String(s.questingReturnState) : null,
-    questingDungeonId: s?.questingDungeonId ? String(s.questingDungeonId) : null
+    questingDungeonId: s?.questingDungeonId ? String(s.questingDungeonId) : null,
+    expeditionId: s?.expeditionId ? String(s.expeditionId) : (s?.questingDungeonId ? String(s.questingDungeonId) : null),
+    dungeonRuns: clampInteger(s?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0),
+    dungeonClears: clampInteger(s?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0),
+    dungeonBattles: clampInteger(s?.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, 0),
+    chestsOpened: clampInteger(s?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0)
   };
 }
 
@@ -328,7 +335,9 @@ function normalizeVisitorProfiles(profiles) {
       equipment: normalizeEquipment(loaded?.equipment ?? defaultProfile.equipment),
       gearBudget: safeFiniteNumber(loaded?.gearBudget, defaultProfile.gearBudget, 0),
       dungeonRuns: clampInteger(loaded?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, defaultProfile.dungeonRuns ?? 0),
-      dungeonClears: clampInteger(loaded?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, defaultProfile.dungeonClears ?? 0)
+      dungeonClears: clampInteger(loaded?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, defaultProfile.dungeonClears ?? 0),
+      dungeonBattles: clampInteger(loaded?.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, defaultProfile.dungeonBattles ?? 0),
+      chestsOpened: clampInteger(loaded?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, defaultProfile.chestsOpened ?? 0)
     };
   });
 }
@@ -352,7 +361,7 @@ function assetKeyForVisitorProfile(profileId) {
 
 function normalizeDungeons(dungeons) {
   if (!Array.isArray(dungeons)) return [];
-  const states = ['available', 'running', 'completed', 'expired'];
+  const states = Object.values(CONFIG.dungeon?.states ?? { available: 'available', assembling: 'assembling', running: 'running', returning: 'returning', completed: 'completed', expired: 'expired' });
   return dungeons.map((dungeon, index) => {
     const type = getDungeonTypeDef(dungeon?.type);
     const area = getDungeonAreaDef(dungeon?.areaId);
@@ -361,6 +370,7 @@ function normalizeDungeons(dungeons) {
     if (!point) return null;
     const state = states.includes(dungeon?.state) ? dungeon.state : 'available';
     const rewardPreview = getDungeonRewardPreview({ type: type.id, dropTableId: type.dropTableId });
+    const nodes = normalizeDungeonNodes(dungeon?.nodes, type);
     return {
       id: String(dungeon?.id || `dungeon-${Date.now()}-${index}`),
       type: type.id,
@@ -374,6 +384,13 @@ function normalizeDungeons(dungeons) {
       durationMs: safeFiniteNumber(dungeon?.durationMs, type.durationMs, 1),
       recruitCost: safeFiniteNumber(dungeon?.recruitCost, type.recruitCost, 0),
       participantIds: normalizeDungeonParticipantIds(dungeon?.participantIds),
+      nodes,
+      currentNodeIndex: clampInteger(dungeon?.currentNodeIndex, 0, ['returning', 'completed'].includes(state) ? nodes.length : Math.max(0, nodes.length - 1), 0),
+      nodeTimerMs: safeFiniteNumber(dungeon?.nodeTimerMs, 0, 0),
+      expeditionLog: normalizeDungeonLog(dungeon?.expeditionLog),
+      reward: normalizeDungeonReward(dungeon?.reward),
+      startedAt: safeFiniteNumber(dungeon?.startedAt, null, 0) || null,
+      completedAt: safeFiniteNumber(dungeon?.completedAt, null, 0) || null,
       rewardPreview,
       enemyRefs: Array.isArray(dungeon?.enemyRefs) ? dungeon.enemyRefs.map(String) : [],
       enemyTypes: Array.isArray(dungeon?.enemyTypes) ? dungeon.enemyTypes.map(String) : (type.enemyTypes ?? []).map(String),
@@ -381,6 +398,36 @@ function normalizeDungeons(dungeons) {
       completedDisplayMs: safeFiniteNumber(dungeon?.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0)
     };
   }).filter(Boolean);
+}
+
+function normalizeDungeonNodes(nodes, type) {
+  const valid = Object.values(CONFIG.dungeon?.nodeTypes ?? {});
+  const source = Array.isArray(nodes) && nodes.length > 0 ? nodes : (CONFIG.dungeon?.routeTemplate ?? []).map(nodeType => ({ type: nodeType }));
+  return source.map((node, index) => {
+    const nodeType = valid.includes(node?.type) ? node.type : (CONFIG.dungeon?.routeTemplate?.[index] ?? 'event');
+    return {
+      id: String(node?.id || `node-${index}-${nodeType}`),
+      type: nodeType,
+      durationMs: safeFiniteNumber(node?.durationMs, CONFIG.dungeon?.nodeDurationsMs?.[nodeType] ?? Math.max(1, safeFiniteNumber(type?.durationMs, 1, 1) / Math.max(1, source.length)), 1),
+      resolved: node?.resolved === true,
+      logText: String(node?.logText ?? ''),
+      rewardPart: normalizeDungeonReward(node?.rewardPart)
+    };
+  });
+}
+
+function normalizeDungeonReward(reward) {
+  return {
+    g: safeFiniteNumber(reward?.g, 0, 0),
+    exp: safeFiniteNumber(reward?.exp, 0, 0),
+    knownness: safeFiniteNumber(reward?.knownness, 0, 0),
+    items: Array.isArray(reward?.items) ? reward.items.map(item => ({ itemId: String(item?.itemId ?? ''), count: clampInteger(item?.count, 1, Number.MAX_SAFE_INTEGER, 1) })).filter(item => getItemDef(item.itemId)) : []
+  };
+}
+
+function normalizeDungeonLog(log) {
+  const max = clampInteger(CONFIG.dungeon?.logMax, 1, Number.MAX_SAFE_INTEGER, 8);
+  return Array.isArray(log) ? log.map(String).filter(Boolean).slice(0, max) : [];
 }
 
 function normalizeDungeonParticipantIds(ids) {

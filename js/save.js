@@ -233,6 +233,14 @@ function formatSaveTime(value) {
 function rebuildLoadedSealRoutes() {
   for (const seal of gameState.seals ?? []) {
     if (!seal) continue;
+    if (seal.expeditionId && ['movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing'].includes(seal.state)) {
+      const dungeon = getDungeonById(seal.expeditionId);
+      if (!dungeon) { clearSealExpeditionState(seal); continue; }
+      if (seal.state === 'movingToDungeon') setSealDestination(seal, getDungeonEntrancePoint(dungeon), 'dungeon-entrance');
+      else if (seal.state === 'returningFromDungeon') setSealDestination(seal, getDungeonReturnPoint(seal), 'dungeon-return');
+      else { seal.path = []; seal.target = null; }
+      continue;
+    }
     if (seal.state === 'arriving') { seal.path = []; seal.target = null; continue; }
     if (seal.state === 'movingToHuntExit') { if (!buildRouteToArea(seal, seal.selectedHuntAreaId ?? 'coast')) seal.state = 'idle'; continue; }
     if (seal.state === 'returningFromHunt') { clearLegacyReturnTarget(seal); choosePostHuntAction(seal); continue; }
