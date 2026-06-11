@@ -71,30 +71,73 @@ function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionInd
 function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
 function setGameSpeed(speed) { if (!gameState.time) return; gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; updateToolButtons(); renderUI(); }
 
-function handleUiAction(event) {
-  const target = event.target?.closest?.('button');
-  if (!target) return;
+function handleUiAction(event, options = {}) {
+  const target = event?.target?.closest?.('button');
+  if (!target || (event?.currentTarget && !event.currentTarget.contains(target))) return false;
+
   const tab = target.dataset?.bottomTab;
   const tool = target.dataset?.tool;
   const speed = target.dataset?.speed;
   const action = target.dataset?.action;
   const dungeonAction = target.dataset?.dungeonAction;
-  if (tab || tool || speed !== undefined || action || dungeonAction) {
-    event.preventDefault();
-    event.stopPropagation();
+  const hasUiAction = Boolean(tab || tool || speed !== undefined || action || dungeonAction);
+  if (!hasUiAction) return false;
+
+  event.preventDefault();
+  event.stopPropagation();
+
+  if (!options.fromPointer && event.detail !== 0 && Date.now() < safeFiniteNumber(gameState.ui?.suppressUiClickUntil, 0, 0)) return true;
+
+  if (tab) toggleBottomTab(tab);
+  else if (tool) setSelectedTool(tool);
+  else if (speed !== undefined) setGameSpeed(Number(speed));
+  else if (action === 'rotate') rotateTool();
+  else if (action === 'manualSave') saveGame('manual');
+  else if (action === 'clearTool') clearSelectedTool();
+  else if (action === 'zoomIn') setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
+  else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
+  else if (action === 'closeBottom') closeBottomPanel();
+  else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; renderUI(); }
+  else if (dungeonAction === 'start') startDungeon(target.dataset?.dungeonId);
+  else if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; renderUI(); }
+  else return false;
+
+  if (options.fromPointer && gameState.ui) gameState.ui.suppressUiClickUntil = Date.now() + 350;
+  return true;
+}
+
+function handleUiPointerUp(event) {
+  if (event?.button !== undefined && event.button !== 0) return;
+  handleUiAction(event, { fromPointer: true });
+}
+
+
+function isPointerOverUI(event) {
+  const target = event?.target;
+  if (!target?.closest) return false;
+  return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .start'));
+}
+
+function consumeUiPointerEvent(event) {
+  if (!isPointerOverUI(event)) return;
+  event.stopPropagation();
+}
+
+function bindUIEvents() {
+  if (gameState.ui?.eventsBound) return;
+  if (gameState.ui) gameState.ui.eventsBound = true;
+  startBtn?.addEventListener('click', event => { event.stopPropagation(); startNewGame(); });
+  loadBtn?.addEventListener('click', event => { event.stopPropagation(); loadGame(); });
+
+  const uiContainers = [statsEl, speedHudEl, bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
+  for (const element of uiContainers) {
+    element.addEventListener('pointerup', handleUiPointerUp);
+    element.addEventListener('click', handleUiAction);
+    element.addEventListener('pointerdown', consumeUiPointerEvent);
+    element.addEventListener('mousedown', consumeUiPointerEvent);
+    element.addEventListener('mouseup', consumeUiPointerEvent);
+    element.addEventListener('wheel', event => event.stopPropagation(), { passive: true });
   }
-  if (tab) return toggleBottomTab(tab);
-  if (tool) return setSelectedTool(tool);
-  if (speed !== undefined) return setGameSpeed(Number(speed));
-  if (action === 'rotate') return rotateTool();
-  if (action === 'manualSave') return saveGame('manual');
-  if (action === 'clearTool') return clearSelectedTool();
-  if (action === 'zoomIn') return setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
-  if (action === 'zoomOut') return setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
-  if (action === 'closeBottom') return closeBottomPanel();
-  if (action === 'closeSeal') { gameState.ui.selectedSealId = null; return renderUI(); }
-  if (dungeonAction === 'start') return startDungeon(target.dataset?.dungeonId);
-  if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; return renderUI(); }
 }
 
 

@@ -32,7 +32,8 @@ button.subtle { background: rgba(255,255,255,.08); }
 .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 92px; padding: 8px 12px; }
 .bottomPanel, .bottom-panel { pointer-events: auto; height: var(--bottom-panel-height); max-height: var(--bottom-panel-height); min-height: var(--bottom-panel-height); overflow: hidden; padding: 0; display: flex; flex-direction: column; }
 .bottomPanel[hidden], .bottom-panel[hidden] { display: none; pointer-events: none; }
-.bottom-panel-content { height: 100%; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; overscroll-behavior: contain; }
+.bottom-panel-content { height: 100%; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; overscroll-behavior: contain; pointer-events: auto; }
+.bottomPanel button, .bottom-panel button, .bottom-panel-content button { pointer-events: auto; }
 .panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
 .panelHeader h2 { margin: 0; font-size: 17px; }
 .panelHint { color: var(--muted); font-size: 13px; }
