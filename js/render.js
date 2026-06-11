@@ -537,7 +537,7 @@ function getPeopleRosterRows() {
       hpRate: safeFiniteNumber(seal.hp, 0, 0) / Math.max(1, maxHp),
       level: clampInteger(seal.level, 1, Number.MAX_SAFE_INTEGER, 1),
       favor: safeFiniteNumber(seal.favor, 0, 0),
-      state: stateLabel(seal.state),
+      state: formatPeopleSealState(seal),
       rawState: seal.state,
       stayTime: safeFiniteNumber(seal.visitTimerMs, 0, 0),
       hunts: clampInteger(seal.huntsThisVisit, 0, Number.MAX_SAFE_INTEGER, 0),
@@ -577,7 +577,7 @@ function getPeopleRosterRows() {
     if (filter === 'activeVisitors') return row.seal?.type === 'visitor';
     if (filter === 'unlockedVisitors') return row.kind === 'profile' || row.seal?.type === 'visitor';
     if (filter === 'hunting') return ['hunting', 'movingToMonster', 'fighting', 'returningFromHunt', 'movingToHuntArea'].includes(row.rawState);
-    if (filter === 'questing') return row.rawState === 'questing';
+    if (filter === 'questing') return ['questing', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon'].includes(row.rawState);
     if (filter === 'resting') return ['resting', 'movingToInn', 'usingFacility', 'choosingFacility', 'movingToFacility'].includes(row.rawState);
     return true;
   });
@@ -593,6 +593,12 @@ function sortPeopleRows(rows, sortKey, sortDir) {
     if (textKeys.has(sortKey)) return String(av ?? '').localeCompare(String(bv ?? ''), 'ja') * dir || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'ja');
     return (safeFiniteNumber(av, 0, 0) - safeFiniteNumber(bv, 0, 0)) * dir || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'ja');
   });
+}
+
+function formatPeopleSealState(seal) {
+  const dungeon = getDungeonById(seal?.expeditionId ?? seal?.questingDungeonId);
+  if (dungeon) return `${CONFIG.dungeon?.labels?.peopleExpedition ?? '遠征中'}: ${dungeon.name}`;
+  return stateLabel(seal?.state);
 }
 
 function renderPeopleTable(rows) {
@@ -633,7 +639,7 @@ function renderSelectedPersonDetail(person) {
   const personality = getPersonalityConfig(entity)?.label ?? entity?.personality ?? 'balanced';
   const stay = seal?.type === 'visitor' ? `<br>滞在: ${formatStayTime(seal)} / 最短${Math.floor(safeFiniteNumber(seal.minStayMs, 0, 0) / 1000)}秒 / 最長${Math.floor(safeFiniteNumber(seal.maxStayMs, 0, 0) / 1000)}秒` : '';
   return `<div class="people-detail compactCard"><b>${escapeHtml(entity?.name ?? '不明')}</b>（${seal?.type === 'resident' ? '住民' : '訪問者'}）<br>
-    性格: ${escapeHtml(personality)} / 状態: ${escapeHtml(seal ? stateLabel(seal.state) : '未訪問')}<br>
+    性格: ${escapeHtml(personality)} / 状態: ${escapeHtml(seal ? formatPeopleSealState(seal) : '未訪問')}<br>
     HP: ${formatHp(entity)} / 所持G: ${seal ? Math.floor(safeFiniteNumber(seal.carriedG, 0, 0)) : '-'} / 装備予算: ${Math.floor(safeFiniteNumber(entity?.gearBudget, 0, 0))}<br>
     Lv: ${clampInteger(entity?.level, 1, Number.MAX_SAFE_INTEGER, 1)} / EXP: ${Math.floor(safeFiniteNumber(entity?.exp, 0, 0))} / 好感度: ${Math.floor(safeFiniteNumber(entity?.favor, 0, 0))}${stay}<br>
     訪問狩猟/施設: ${seal?.huntsThisVisit ?? 0}/${seal?.facilitiesUsedThisVisit ?? 0} / 総訪問: ${profile?.visits ?? '-'} / ダンジョン攻略: ${profile?.dungeonClears ?? 0}<br>
@@ -682,12 +688,14 @@ function getPersonEffectiveStats(entity) {
 }
 
 function renderDungeonsPanel() {
-  const active = (gameState.dungeons ?? []).filter(dungeon => ['available', 'running'].includes(dungeon?.state));
-  const running = active.filter(dungeon => dungeon?.state === 'running');
+  const active = (gameState.dungeons ?? []).filter(dungeon => ['available', 'assembling', 'running', 'returning'].includes(dungeon?.state));
+  const running = active.filter(dungeon => ['assembling', 'running', 'returning'].includes(dungeon?.state));
   const runningHtml = running.length ? running.map(dungeon => {
-    const ratio = Math.max(0, Math.min(100, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1)) * 100));
-    return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><div class="bar"><div class="fill" style="width:${ratio}%"></div></div>進行 ${Math.floor(ratio)}%</div>`;
-  }).join('') : '<div class="compactCard">攻略中のダンジョンはありません。</div>';
+    const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => escapeHtml(p.name || getSealById(p.sealId)?.name || p.id)).join('、') || '参加者確認中';
+    const current = dungeon.nodes?.[dungeon.currentNodeIndex];
+    const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon.state);
+    return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><br>${escapeHtml(dungeonStateLabel(dungeon.state))}: ${escapeHtml(currentText)}<br>参加: ${participants}</div>`;
+  }).join('') : '<div class="compactCard">攻略中のダンジョンはありません。</div>'; 
   return `<div class="compactGrid">
       <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
       ${runningHtml}
@@ -756,12 +764,14 @@ function equipmentText(seal, slot) {
   return `${escapeHtml(item.name)}${bonuses.length ? `（${bonuses.join(' / ')}）` : ''}`;
 }
 function formatSealTarget(seal) {
+  const dungeon = getDungeonById(seal?.expeditionId ?? seal?.questingDungeonId);
+  if (dungeon) return seal?.currentAction || `${dungeon.name}へ遠征中`;
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal?.targetId);
   if (facility) return seal?.currentAction || `${CONFIG.facilities[facility.type]?.label ?? '施設'} (${facility.id})`;
   if (seal?.target?.reason) return seal?.currentAction || seal.target.reason;
   return seal?.currentAction || 'なし';
 }
-function stateLabel(state) { return ({ questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'探索中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
+function stateLabel(state) { return ({ movingToDungeon:'遠征集合中', waitingAtDungeon:'入口で待機中', expeditionRunning:'遠征中', returningFromDungeon:'遠征帰還中', questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'探索中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
 
 function drawDungeon(context, dungeon) {
   if (!context || !dungeon) return;
@@ -776,7 +786,7 @@ function drawDungeon(context, dungeon) {
     context.arc(0, 0, radius, 0, Math.PI * 2);
     context.stroke();
   }
-  context.fillStyle = dungeon.state === 'running' ? '#7d5cff' : dungeon.state === 'completed' ? '#61e786' : '#2b2348';
+  context.fillStyle = ['assembling', 'running', 'returning'].includes(dungeon.state) ? '#7d5cff' : dungeon.state === 'completed' ? '#61e786' : '#2b2348';
   context.strokeStyle = '#f4e5b4';
   context.lineWidth = 3 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
   context.beginPath();
@@ -794,13 +804,45 @@ function drawDungeon(context, dungeon) {
   context.lineTo(-8, 16);
   context.closePath();
   context.fill();
-  if (dungeon.state === 'running') {
-    const ratio = Math.max(0, Math.min(1, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1))));
+  if (['assembling', 'running', 'returning'].includes(dungeon.state)) {
+    const participants = normalizeDungeonParticipantIds(dungeon.participantIds);
+    const nodes = dungeon.nodes ?? [];
+    const total = nodes.reduce((sum, node) => sum + safeFiniteNumber(node?.durationMs, 0, 0), 0) || safeFiniteNumber(dungeon.durationMs, 1, 1);
+    const ratio = Math.max(0, Math.min(1, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, total)));
     context.fillStyle = 'rgba(0,0,0,.55)';
-    context.fillRect(-22, 24, 44, 6);
+    context.fillRect(-28, 24, 56, 8);
     context.fillStyle = '#9dfcff';
-    context.fillRect(-22, 24, 44 * ratio, 6);
+    context.fillRect(-28, 24, 56 * ratio, 8);
+    drawDungeonParticipantCluster(context, dungeon, participants);
   }
+  context.restore();
+}
+
+
+function drawDungeonParticipantCluster(context, dungeon, participants) {
+  if (!context || !dungeon || !Array.isArray(participants) || participants.length <= 0) return;
+  context.save();
+  context.font = `${12 / Math.max(gameState.camera?.zoom ?? 1, 0.1)}px sans-serif`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  const label = (CONFIG.dungeon?.labels?.participantCount ?? '探索中 {count}匹').replace('{count}', String(participants.length));
+  context.fillStyle = 'rgba(18,14,32,.78)';
+  context.fillRect(-38, -46, 76, 18);
+  context.fillStyle = '#fff7d1';
+  context.fillText(label, 0, -37);
+  participants.slice(0, 4).forEach((participant, index) => {
+    const angle = (index / Math.max(1, Math.min(4, participants.length))) * Math.PI * 2 - Math.PI / 2;
+    const x = Math.cos(angle) * 30;
+    const y = Math.sin(angle) * 16 + 2;
+    context.fillStyle = '#f7fbff';
+    context.beginPath();
+    context.arc(x, y, 6, 0, Math.PI * 2);
+    context.fill();
+    context.strokeStyle = '#5b4aa5';
+    context.stroke();
+    context.fillStyle = '#ffffff';
+    context.fillText(String(participant?.name || getSealById(participant?.sealId)?.name || '').slice(0, 4), x, y + 15);
+  });
   context.restore();
 }
 
@@ -815,13 +857,44 @@ function drawDungeonPanel() {
   const type = getDungeonTypeDef(dungeon.type);
   const preview = dungeon.rewardPreview ?? getDungeonRewardPreview(dungeon);
   const remaining = Math.max(0, safeFiniteNumber(dungeon.expiresInMs, 0, 0));
-  const ratio = Math.max(0, Math.min(100, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1)) * 100));
-  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => escapeHtml(p.name || p.id)).join('、') || '未編成（開始時に自動選出）';
+  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => escapeHtml(p.name || getSealById(p.sealId)?.name || p.id)).join('、') || '未編成（開始時に自動選出）';
   const itemNames = (preview.itemIds ?? []).map(id => getItemDef(id)?.name ?? id).join(' / ') || 'なし';
   const canStart = canStartDungeon(dungeon);
   const startButton = dungeon.state === 'available' ? `<button data-dungeon-action="start" data-dungeon-id="${escapeHtml(dungeon.id)}">攻略開始</button>` : '';
-  const progress = dungeon.state === 'running' ? `<div class="bar"><div class="fill" style="width:${ratio}%"></div></div>進行: ${Math.floor(ratio)}%<br>` : '';
-  return `<div class="panel sealCard dungeonPanel"><b>🕳️ ${escapeHtml(dungeon.name)}</b><br>エリア: ${escapeHtml(area?.label ?? dungeon.areaId)}<br>状態: ${escapeHtml(dungeonStateLabel(dungeon.state))}<br>残り時間: ${Math.ceil(remaining / 1000)}秒<br>参加費: ${Math.floor(safeFiniteNumber(dungeon.recruitCost, 0, 0))}G<br>難易度: ${Math.floor(safeFiniteNumber(type?.difficulty, 0, 0))}<br>敵: ${escapeHtml((dungeon.enemyTypes ?? []).join(' / ') || '不明')}<br>報酬見込み: ${Math.floor(preview.g ?? 0)}G / EXP${Math.floor(preview.exp ?? 0)} / 知名度+${Math.floor(preview.knownness ?? 0)}<br>ドロップ候補: ${escapeHtml(itemNames)}<br>参加者: ${participants}<br>${progress}${canStart.ok ? '' : `<span class="warnText">${escapeHtml(canStart.reason)}</span><br>`}<div class="dungeonButtons">${startButton}<button data-dungeon-action="close">閉じる</button></div></div>`;
+  const route = renderDungeonRoute(dungeon);
+  const logs = renderDungeonLog(dungeon);
+  const reward = renderDungeonRewardSummary(dungeon);
+  const current = dungeon.nodes?.[dungeon.currentNodeIndex];
+  const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon.state);
+  const availability = dungeon.state === 'available' ? `残り時間: ${Math.ceil(remaining / 1000)}秒<br>` : '';
+  return `<div class="panel sealCard dungeonPanel"><b>🕳️ ${escapeHtml(dungeon.name)}</b><br>エリア: ${escapeHtml(area?.label ?? dungeon.areaId)}<br>状態: ${escapeHtml(dungeonStateLabel(dungeon.state))}<br>${availability}現在: ${escapeHtml(currentText)}<br>参加費: ${Math.floor(safeFiniteNumber(dungeon.recruitCost, 0, 0))}G<br>難易度: ${Math.floor(safeFiniteNumber(type?.difficulty, 0, 0))}<br>敵: ${escapeHtml((dungeon.enemyTypes ?? []).join(' / ') || '不明')}<br>報酬見込み: ${Math.floor(preview.g ?? 0)}G / EXP${Math.floor(preview.exp ?? 0)} / 知名度+${Math.floor(preview.knownness ?? 0)}<br>ドロップ候補: ${escapeHtml(itemNames)}<br>参加者: ${participants}<br>${route}${logs}${reward}${canStart.ok || dungeon.state !== 'available' ? '' : `<span class="warnText">${escapeHtml(canStart.reason)}</span><br>`}<div class="dungeonButtons">${startButton}<button data-dungeon-action="close">閉じる</button></div></div>`;
 }
 
-function dungeonStateLabel(state) { return ({ available: '発見済み', running: '攻略中', completed: '攻略完了', expired: '消滅' })[state] ?? String(state ?? ''); }
+function renderDungeonRoute(dungeon) {
+  const nodes = Array.isArray(dungeon?.nodes) ? dungeon.nodes : [];
+  if (nodes.length <= 0) return '';
+  const participantNames = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => p.name || getSealById(p.sealId)?.name || p.id).join(' / ');
+  const html = nodes.map((node, index) => {
+    const classes = ['dungeonNode'];
+    if (node?.resolved) classes.push('done');
+    if (index === dungeon.currentNodeIndex && ['assembling', 'running'].includes(dungeon.state)) classes.push('current');
+    const marker = node?.resolved ? '✓' : (index === dungeon.currentNodeIndex ? '●' : '○');
+    const names = index === dungeon.currentNodeIndex && participantNames ? `<small>${escapeHtml(participantNames)}</small>` : '';
+    return `<div class="${classes.join(' ')}"><span>${marker}</span>${escapeHtml(CONFIG.dungeon?.nodeLabels?.[node?.type] ?? node?.type ?? '?')}${names}</div>`;
+  }).join('');
+  return `<div class="dungeonRouteTitle">${escapeHtml(CONFIG.dungeon?.labels?.routeTitle ?? '遠征ルート')}</div><div class="dungeonRoute">${html}</div>`;
+}
+
+function renderDungeonLog(dungeon) {
+  const logs = normalizeDungeonLog(dungeon?.expeditionLog).map(text => `<li>${escapeHtml(text)}</li>`).join('') || '<li>開始するとあざらしの行動が記録されます。</li>';
+  return `<div class="dungeonLog"><b>${escapeHtml(CONFIG.dungeon?.labels?.logTitle ?? '遠征ログ')}</b><ul>${logs}</ul></div>`;
+}
+
+function renderDungeonRewardSummary(dungeon) {
+  if (!['returning', 'completed'].includes(dungeon?.state)) return '';
+  const reward = normalizeDungeonReward(dungeon?.reward);
+  const items = (reward.items ?? []).map(item => `${getItemDef(item.itemId)?.name ?? item.itemId}x${item.count}`).join('、') || 'なし';
+  return `<div class="dungeonReward"><b>${escapeHtml(CONFIG.dungeon?.labels?.completedReward ?? '獲得報酬')}</b>: ${Math.floor(reward.g)}G / EXP${Math.floor(reward.exp)} / 知名度+${Math.floor(reward.knownness)} / ${escapeHtml(items)}</div>`;
+}
+
+function dungeonStateLabel(state) { return (CONFIG.dungeon?.stateLabels ?? {})[state] ?? String(state ?? ''); }

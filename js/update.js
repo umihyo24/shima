@@ -205,8 +205,10 @@ function writeBackVisitorProfile(seal) {
   profile.favor = safeFiniteNumber(seal.favor, profile.favor, 0);
   profile.equipment = normalizeEquipment(seal.equipment);
   profile.gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0);
-  profile.dungeonRuns = clampInteger(profile.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0);
-  profile.dungeonClears = clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0);
+  profile.dungeonRuns = Math.max(clampInteger(profile.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0), clampInteger(seal.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0));
+  profile.dungeonClears = Math.max(clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0), clampInteger(seal.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0));
+  profile.dungeonBattles = Math.max(clampInteger(profile.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, 0), clampInteger(seal.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, 0));
+  profile.chestsOpened = Math.max(clampInteger(profile.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0), clampInteger(seal.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0));
   profile.visits = Math.max(clampInteger(profile.visits, 0, Number.MAX_SAFE_INTEGER, 0), clampInteger(seal.visits, 0, Number.MAX_SAFE_INTEGER, 0));
   profile.personality = String(seal.personality || profile.personality || 'balanced');
   profile.baseStats = profile.baseStats ?? { maxHp: seal.maxHp, attack: seal.attack, defense: seal.defense };
@@ -246,6 +248,7 @@ function updateSeals(dt) {
   for (const seal of [...(gameState.seals ?? [])]) {
     if (!seal) continue;
     if (seal.type === 'visitor') seal.visitTimerMs = safeFiniteNumber(seal.visitTimerMs, 0, 0) + dt * 1000;
+    if (seal.expeditionId && ['movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing'].includes(seal.state)) { updateExpeditionSeal(seal, dt); continue; }
     if (seal.state === 'questing') continue;
     if (seal.state === 'fallen') { updateFallen(seal, dt); continue; }
     const fallen = findFallenForRescue(seal);
@@ -270,12 +273,50 @@ function updateSeals(dt) {
       case 'leaving': seal.state = 'leavingToSea'; updateLeavingToSea(seal, dt); break;
       case 'leavingToSea': updateLeavingToSea(seal, dt); break;
       case 'idle': updateIdle(seal, dt); break;
+      case 'movingToDungeon': updateExpeditionSeal(seal, dt); break;
+      case 'waitingAtDungeon': break;
+      case 'expeditionRunning': break;
+      case 'returningFromDungeon': updateExpeditionSeal(seal, dt); break;
       case 'questing': break;
       case 'rescuing': updateRescuing(seal, dt); break;
       case 'carryingFallenSeal': updateCarrying(seal, dt); break;
       default: seal.state = seal.type === 'visitor' ? 'choosingArrivalAction' : 'choosingHuntArea'; seal.target = null; break;
     }
   }
+}
+
+
+function updateExpeditionSeal(seal, dt) {
+  const dungeon = getDungeonById(seal?.expeditionId ?? seal?.questingDungeonId);
+  if (!seal || !dungeon || ['expired'].includes(dungeon.state)) { clearSealExpeditionState(seal); return; }
+  if (seal.state === 'movingToDungeon') {
+    const entrance = getDungeonEntrancePoint(dungeon);
+    if (!seal.target || distance(seal.x, seal.y, entrance.x, entrance.y) > CONFIG.seal.contactDistance) setSealDestination(seal, entrance, 'dungeon-entrance');
+    updateSealMovement(seal, dt * 1000);
+    if (distance(seal.x, seal.y, entrance.x, entrance.y) <= CONFIG.seal.contactDistance) {
+      seal.state = 'waitingAtDungeon';
+      seal.path = [];
+      seal.currentAction = `${dungeon.name}入口で待機中`;
+    }
+    return;
+  }
+  if (seal.state === 'returningFromDungeon') {
+    const target = seal.target ?? getDungeonReturnPoint(seal);
+    if (!seal.target) setSealDestination(seal, target, 'dungeon-return');
+    updateSealMovement(seal, dt * 1000);
+    if (distance(seal.x, seal.y, seal.target?.x ?? seal.x, seal.target?.y ?? seal.y) <= CONFIG.seal.contactDistance && (!seal.path || seal.path.length <= 0)) finishSealDungeonReturn(seal, dungeon);
+  }
+}
+
+function clearSealExpeditionState(seal) {
+  if (!seal) return;
+  seal.expeditionId = null;
+  seal.questingDungeonId = null;
+  seal.questingReturnState = null;
+  seal.path = [];
+  seal.target = null;
+  seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingHuntArea';
+  seal.currentAction = '遠征状態を整理しました';
 }
 
 function updateFallen(seal, dt) {
@@ -884,6 +925,13 @@ function spawnDungeon(areaId) {
     durationMs: safeFiniteNumber(type.durationMs, 1, 1),
     recruitCost: safeFiniteNumber(type.recruitCost, 0, 0),
     participantIds: [],
+    nodes: normalizeDungeonNodes(null, type),
+    currentNodeIndex: 0,
+    nodeTimerMs: 0,
+    expeditionLog: [],
+    reward: normalizeDungeonReward(null),
+    startedAt: null,
+    completedAt: null,
     rewardPreview: getDungeonRewardPreview({ type: type.id, dropTableId: type.dropTableId }),
     enemyRefs: [],
     enemyTypes: (type.enemyTypes ?? []).map(String),
@@ -903,11 +951,14 @@ function updateDungeons(deltaMs) {
     if (dungeon?.state === 'available') {
       dungeon.expiresInMs -= safeFiniteNumber(deltaMs, 0, 0);
       if (dungeon.expiresInMs <= 0) expireDungeon(dungeon);
-    } else if (dungeon?.state === 'running') updateRunningDungeon(dungeon, deltaMs);
+    } else if (dungeon?.state === 'assembling') updateAssemblingDungeon(dungeon);
+    else if (dungeon?.state === 'running') updateRunningDungeon(dungeon, deltaMs);
+    else if (dungeon?.state === 'returning') updateReturningDungeon(dungeon, deltaMs);
     else if (dungeon?.state === 'completed' || dungeon?.state === 'expired') dungeon.completedDisplayMs = safeFiniteNumber(dungeon.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0) - safeFiniteNumber(deltaMs, 0, 0);
   }
   gameState.dungeons = (gameState.dungeons ?? []).filter(dungeon => !['completed', 'expired'].includes(dungeon?.state) || safeFiniteNumber(dungeon?.completedDisplayMs, 0, 0) > 0);
-  const activeCount = (gameState.dungeons ?? []).filter(dungeon => ['available', 'running'].includes(dungeon?.state)).length;
+  cleanupOrphanedExpeditions();
+  const activeCount = (gameState.dungeons ?? []).filter(dungeon => ['available', 'assembling', 'running', 'returning'].includes(dungeon?.state)).length;
   const interval = (gameState.dungeons ?? []).length <= 0 ? CONFIG.dungeon.initialSpawnDelayMs : CONFIG.dungeon.spawnIntervalMs;
   if (activeCount < CONFIG.dungeon.maxActive && gameState.timers.dungeonSpawnMs >= interval) {
     gameState.timers.dungeonSpawnMs = 0;
@@ -921,7 +972,7 @@ function getDungeonById(id) { return (gameState.dungeons ?? []).find(dungeon => 
 
 function selectDungeonAtWorldPosition(worldX, worldY) {
   const radius = safeFiniteNumber(CONFIG.dungeon?.clickRadius, 24, 1);
-  const candidates = (gameState.dungeons ?? []).filter(dungeon => dungeon && ['available', 'running', 'completed'].includes(dungeon.state)).map(dungeon => ({ dungeon, d: distance(worldX, worldY, dungeon.x, dungeon.y) })).filter(entry => entry.d <= radius).sort((a, b) => a.d - b.d);
+  const candidates = (gameState.dungeons ?? []).filter(dungeon => dungeon && ['available', 'assembling', 'running', 'returning', 'completed'].includes(dungeon.state)).map(dungeon => ({ dungeon, d: distance(worldX, worldY, dungeon.x, dungeon.y) })).filter(entry => entry.d <= radius).sort((a, b) => a.d - b.d);
   const selected = candidates[0]?.dungeon ?? null;
   gameState.ui.selectedDungeonId = selected?.id ?? null;
   if (selected) gameState.ui.selectedSealId = null;
@@ -940,26 +991,35 @@ function startDungeon(dungeonId) {
   const result = canStartDungeon(dungeon);
   if (!result.ok) { logMessage(result.reason); updateHud(); return false; }
   const participants = chooseDungeonParticipants(dungeon);
+  const entrance = getDungeonEntrancePoint(dungeon);
   gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) - safeFiniteNumber(dungeon.recruitCost, 0, 0);
   dungeon.participantIds = participants;
-  dungeon.state = 'running';
+  dungeon.state = 'assembling';
   dungeon.progressMs = 0;
+  dungeon.currentNodeIndex = 0;
+  dungeon.nodeTimerMs = 0;
+  dungeon.nodes = normalizeDungeonNodes(dungeon.nodes, getDungeonTypeDef(dungeon.type));
+  for (const node of dungeon.nodes ?? []) { node.resolved = false; node.logText = ''; node.rewardPart = normalizeDungeonReward(null); }
+  dungeon.expeditionLog = [];
+  dungeon.reward = normalizeDungeonReward(null);
+  dungeon.startedAt = Date.now();
+  dungeon.completedAt = null;
+  addDungeonLog(dungeon, `${participants.map(p => p.name).join('、')}が${dungeon.name}へ向かいます。`);
   for (const participant of participants) {
-    if (participant.kind !== 'seal') continue;
-    const seal = (gameState.seals ?? []).find(item => item?.id === participant.sealId);
+    const seal = getSealById(participant.sealId);
     if (!seal) continue;
     seal.questingReturnState = seal.state;
     seal.questingDungeonId = dungeon.id;
-    seal.state = 'questing';
-    seal.currentAction = `${dungeon.name}を攻略中`;
-    seal.path = [];
-    seal.target = null;
+    seal.expeditionId = dungeon.id;
+    seal.state = 'movingToDungeon';
+    seal.currentAction = `${dungeon.name}へ集合中`;
+    seal.targetId = null;
+    setSealDestination(seal, entrance, 'dungeon-entrance');
+    incrementDungeonStat(seal, 'dungeonRuns', 1);
+    const profile = seal.profileId ? getVisitorProfileById(seal.profileId) : null;
+    incrementDungeonStat(profile, 'dungeonRuns', 1);
   }
-  for (const participant of participants.filter(p => p.profileId)) {
-    const profile = getVisitorProfileById(participant.profileId);
-    if (profile) profile.dungeonRuns = clampInteger(profile.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
-  }
-  logMessage(`${dungeon.name}の攻略を開始しました（${participants.map(p => p.name).join('、')}）。`);
+  logMessage(`${dungeon.name}の遠征を編成しました（${participants.map(p => p.name).join('、')}）。`);
   updateHud();
   return true;
 }
@@ -967,68 +1027,149 @@ function startDungeon(dungeonId) {
 function chooseDungeonParticipants(dungeon) {
   const max = clampInteger(CONFIG.dungeon?.participant?.max, 1, Number.MAX_SAFE_INTEGER, 3);
   const cfg = CONFIG.dungeon?.participant ?? {};
-  const activeQuestingProfiles = new Set((gameState.dungeons ?? []).filter(d => d?.id !== dungeon?.id && d?.state === 'running').flatMap(d => normalizeDungeonParticipantIds(d?.participantIds)).map(p => p.profileId).filter(Boolean));
+  const activeDungeonIds = new Set((gameState.dungeons ?? []).filter(d => d?.id !== dungeon?.id && ['assembling', 'running', 'returning'].includes(d?.state)).flatMap(d => normalizeDungeonParticipantIds(d?.participantIds)).map(p => p.sealId).filter(Boolean));
   const candidates = [];
   for (const seal of gameState.seals ?? []) {
-    if (!seal || seal.state === 'questing' || seal.state === 'fallen') continue;
+    if (!seal || seal.state === 'fallen' || seal.expeditionId || activeDungeonIds.has(seal.id)) continue;
+    if (['leavingToSea', 'leaving'].includes(seal.state)) continue;
     const stats = getSealEffectiveStats(seal);
     candidates.push({ kind: 'seal', id: seal.id, sealId: seal.id, profileId: seal.profileId, name: seal.name, score: safeFiniteNumber(seal.favor, 0, 0) * 3 + safeFiniteNumber(seal.level, 1, 1) * 10 + safeFiniteNumber(stats.attack, 0, 0) + safeFiniteNumber(stats.defense, 0, 0) + (cfg.personalityBonus?.[seal.personality] ?? 0) + (seal.type === 'resident' ? cfg.residentBonus : cfg.activeSealBonus) });
-  }
-  if (cfg.allowUnlockedProfileRecruit) {
-    for (const profile of gameState.visitorProfiles ?? []) {
-      if (!profile || !isVisitorProfileUnlocked(profile) || activeQuestingProfiles.has(profile.id)) continue;
-      if (candidates.some(candidate => candidate.profileId === profile.id)) continue;
-      const base = profile.baseStats ?? {};
-      candidates.push({ kind: 'profile', id: profile.id, sealId: null, profileId: profile.id, name: profile.name, score: safeFiniteNumber(profile.favor, 0, 0) * 3 + safeFiniteNumber(profile.level, 1, 1) * 10 + safeFiniteNumber(base.attack, CONFIG.seal.attack, 0) + safeFiniteNumber(base.defense, CONFIG.seal.defense, 0) + (cfg.personalityBonus?.[profile.personality] ?? 0) });
-    }
   }
   return candidates.sort((a, b) => b.score - a.score).slice(0, max).map(({ score, ...participant }) => participant);
 }
 
+function updateAssemblingDungeon(dungeon) {
+  if (!dungeon || dungeon.state !== 'assembling') return;
+  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => getSealById(p.sealId)).filter(Boolean);
+  if (participants.length <= 0) { abortDungeon(dungeon, '参加者が見つからないため遠征を中止しました。'); return; }
+  const entrance = getDungeonEntrancePoint(dungeon);
+  for (const seal of participants) {
+    if (seal.expeditionId !== dungeon.id) seal.expeditionId = dungeon.id;
+    if (seal.state === 'movingToDungeon') {
+      if (!seal.target || distance(seal.x, seal.y, entrance.x, entrance.y) > CONFIG.seal.contactDistance) setSealDestination(seal, entrance, 'dungeon-entrance');
+      if (distance(seal.x, seal.y, entrance.x, entrance.y) <= CONFIG.seal.contactDistance) {
+        seal.state = 'waitingAtDungeon';
+        seal.path = [];
+        seal.currentAction = `${dungeon.name}入口で待機中`;
+        addDungeonLog(dungeon, `${seal.name}が入口に到着した。`);
+      }
+    }
+  }
+  if (participants.every(seal => seal.state === 'waitingAtDungeon' || seal.state === 'expeditionRunning')) beginDungeonRun(dungeon, participants);
+}
+
+function beginDungeonRun(dungeon, participants) {
+  dungeon.state = 'running';
+  dungeon.nodeTimerMs = 0;
+  dungeon.currentNodeIndex = clampInteger(dungeon.currentNodeIndex, 0, Math.max(0, (dungeon.nodes ?? []).length - 1), 0);
+  dungeon.startedAt = dungeon.startedAt || Date.now();
+  for (const seal of participants ?? []) {
+    seal.state = 'expeditionRunning';
+    seal.currentAction = `${dungeon.name}を探索中`;
+    seal.path = [];
+    seal.target = null;
+  }
+  addDungeonLog(dungeon, `${dungeon.name}の内部探索を開始しました。`);
+}
+
 function updateRunningDungeon(dungeon, deltaMs) {
   if (!dungeon || dungeon.state !== 'running') return;
-  dungeon.progressMs = safeFiniteNumber(dungeon.progressMs, 0, 0) + safeFiniteNumber(deltaMs, 0, 0);
-  if (dungeon.progressMs >= safeFiniteNumber(dungeon.durationMs, 1, 1)) completeDungeon(dungeon);
+  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => getSealById(p.sealId)).filter(Boolean);
+  if (participants.length <= 0) { abortDungeon(dungeon, '参加者がいなくなったため遠征を中止しました。'); return; }
+  for (const seal of participants) {
+    seal.expeditionId = dungeon.id;
+    seal.questingDungeonId = dungeon.id;
+    seal.state = 'expeditionRunning';
+    seal.currentAction = `${dungeon.name}を探索中`;
+  }
+  const nodes = Array.isArray(dungeon.nodes) && dungeon.nodes.length > 0 ? dungeon.nodes : normalizeDungeonNodes(null, getDungeonTypeDef(dungeon.type));
+  dungeon.nodes = nodes;
+  const node = nodes[clampInteger(dungeon.currentNodeIndex, 0, Math.max(0, nodes.length - 1), 0)];
+  if (!node) { completeDungeon(dungeon); return; }
+  const speed = getDungeonPartySpeed(participants);
+  dungeon.nodeTimerMs = safeFiniteNumber(dungeon.nodeTimerMs, 0, 0) + safeFiniteNumber(deltaMs, 0, 0) * speed;
+  dungeon.progressMs = nodes.slice(0, dungeon.currentNodeIndex).reduce((sum, item) => sum + safeFiniteNumber(item?.durationMs, 0, 0), 0) + Math.min(safeFiniteNumber(node.durationMs, 1, 1), dungeon.nodeTimerMs);
+  if (dungeon.nodeTimerMs >= safeFiniteNumber(node.durationMs, 1, 1)) resolveDungeonNode(dungeon, node, participants);
+}
+
+function resolveDungeonNode(dungeon, node, participants) {
+  if (!dungeon || !node) return;
+  const lead = chooseNodeLeadParticipant(participants, node.type);
+  const rewardPart = calculateNodeRewardPart(dungeon, node, participants);
+  node.rewardPart = rewardPart;
+  dungeon.reward = mergeDungeonReward(dungeon.reward, rewardPart);
+  const logText = buildDungeonNodeLog(dungeon, node, lead, rewardPart);
+  node.logText = logText;
+  node.resolved = true;
+  addDungeonLog(dungeon, logText);
+  applyDungeonNodeEffects(node, participants);
+  dungeon.currentNodeIndex = clampInteger(dungeon.currentNodeIndex, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  dungeon.nodeTimerMs = 0;
+  if (dungeon.currentNodeIndex >= (dungeon.nodes ?? []).length) completeDungeon(dungeon);
 }
 
 function completeDungeon(dungeon) {
   if (!dungeon || dungeon.state !== 'running') return;
   const type = getDungeonTypeDef(dungeon.type);
   const rewards = type?.rewards ?? {};
-  const rewardG = safeFiniteNumber(rewards.g, 0, 0);
-  const rewardExp = safeFiniteNumber(rewards.exp, 0, 0);
-  const rewardKnownness = safeFiniteNumber(rewards.knownness, 0, 0);
-  gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) + rewardG;
-  gameState.stats.monthlyPlayerIncome = safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0) + rewardG;
-  gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + rewardKnownness;
-  const participants = normalizeDungeonParticipantIds(dungeon.participantIds);
-  for (const participant of participants) {
-    const seal = participant.sealId ? (gameState.seals ?? []).find(item => item?.id === participant.sealId) : null;
-    const profile = participant.profileId ? getVisitorProfileById(participant.profileId) : null;
-    if (seal) {
-      seal.exp = safeFiniteNumber(seal.exp, 0, 0) + rewardExp;
-      addFavor(seal, CONFIG.dungeon?.participant?.clearFavor ?? 2);
-      applyLevelUps(seal);
-      if (seal.type === 'visitor') writeBackVisitorProfile(seal);
-      seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingHuntArea';
-      seal.questingReturnState = null;
-      seal.questingDungeonId = null;
-      seal.currentAction = '攻略から帰還しました';
-      if (profile) profile.dungeonClears = clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
-      continue;
-    }
+  const baseReward = { g: safeFiniteNumber(rewards.g, 0, 0), exp: safeFiniteNumber(rewards.exp, 0, 0), knownness: safeFiniteNumber(rewards.knownness, 0, 0), items: rollDungeonDrops(dungeon.dropTableId) };
+  dungeon.reward = mergeDungeonReward(baseReward, dungeon.reward);
+  dungeon.completedAt = Date.now();
+  for (const drop of dungeon.reward.items ?? []) addRelicItem(drop.itemId, drop.count, dungeon.name);
+  gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) + safeFiniteNumber(dungeon.reward.g, 0, 0);
+  gameState.stats.monthlyPlayerIncome = safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0) + safeFiniteNumber(dungeon.reward.g, 0, 0);
+  gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + safeFiniteNumber(dungeon.reward.knownness, 0, 0);
+  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => getSealById(p.sealId)).filter(Boolean);
+  for (const seal of participants) {
+    seal.exp = safeFiniteNumber(seal.exp, 0, 0) + safeFiniteNumber(dungeon.reward.exp, 0, 0);
+    addFavor(seal, CONFIG.dungeon?.participant?.clearFavor ?? 2);
+    incrementDungeonStat(seal, 'dungeonClears', 1);
+    applyLevelUps(seal);
+    if (seal.type === 'visitor') writeBackVisitorProfile(seal);
+    const profile = seal.profileId ? getVisitorProfileById(seal.profileId) : null;
     if (profile) {
-      addDungeonRewardToProfile(profile, rewardExp, CONFIG.dungeon?.participant?.clearFavor ?? 2);
-      profile.dungeonClears = clampInteger(profile.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+      addDungeonRewardToProfile(profile, dungeon.reward.exp, CONFIG.dungeon?.participant?.clearFavor ?? 2);
     }
+    seal.state = 'returningFromDungeon';
+    seal.currentAction = `${dungeon.name}から帰還中`;
+    setSealDestination(seal, getDungeonReturnPoint(seal), 'dungeon-return');
   }
-  const drops = rollDungeonDrops(dungeon.dropTableId);
-  for (const drop of drops) addRelicItem(drop.itemId, drop.count, dungeon.name);
-  dungeon.state = 'completed';
-  dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0;
+  dungeon.state = 'returning';
+  dungeon.completedDisplayMs = CONFIG.dungeon?.returnDisplayMs ?? CONFIG.dungeon?.completedDisplayMs ?? 0;
+  addDungeonLog(dungeon, `攻略完了！ ${Math.floor(dungeon.reward.g)}G / EXP${Math.floor(dungeon.reward.exp)} / 知名度+${Math.floor(dungeon.reward.knownness)}を獲得。`);
   unlockKnownVisitors();
-  logMessage(`${dungeon.name}を攻略完了！ ${Math.floor(rewardG)}G / EXP${Math.floor(rewardExp)} / 知名度+${Math.floor(rewardKnownness)} / ${drops.map(drop => `${getItemDef(drop.itemId)?.name ?? drop.itemId}x${drop.count}`).join('、') || 'ドロップなし'}`);
+  logMessage(`${dungeon.name}を攻略完了！ ${Math.floor(dungeon.reward.g)}G / EXP${Math.floor(dungeon.reward.exp)} / 知名度+${Math.floor(dungeon.reward.knownness)} / ${(dungeon.reward.items ?? []).map(drop => `${getItemDef(drop.itemId)?.name ?? drop.itemId}x${drop.count}`).join('、') || 'ドロップなし'}`);
   updateHud();
+}
+
+function updateReturningDungeon(dungeon, deltaMs) {
+  if (!dungeon || dungeon.state !== 'returning') return;
+  dungeon.completedDisplayMs = safeFiniteNumber(dungeon.completedDisplayMs, CONFIG.dungeon?.returnDisplayMs ?? 0, 0) - safeFiniteNumber(deltaMs, 0, 0);
+  const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => getSealById(p.sealId)).filter(Boolean);
+  if (participants.length <= 0) { dungeon.state = 'completed'; dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0; return; }
+  for (const seal of participants) {
+    if (seal.state !== 'returningFromDungeon') seal.state = 'returningFromDungeon';
+    seal.expeditionId = dungeon.id;
+    seal.questingDungeonId = dungeon.id;
+    if (!seal.target) setSealDestination(seal, getDungeonReturnPoint(seal), 'dungeon-return');
+    if (distance(seal.x, seal.y, seal.target?.x ?? seal.x, seal.target?.y ?? seal.y) <= CONFIG.seal.contactDistance && (!seal.path || seal.path.length <= 0)) finishSealDungeonReturn(seal, dungeon);
+  }
+  if (participants.every(seal => seal.expeditionId !== dungeon.id)) {
+    dungeon.state = 'completed';
+    dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0;
+    addDungeonLog(dungeon, '参加したあざらしが村へ戻りました。');
+  }
+}
+
+function finishSealDungeonReturn(seal, dungeon) {
+  if (!seal) return;
+  seal.expeditionId = null;
+  seal.questingDungeonId = null;
+  seal.questingReturnState = null;
+  seal.path = [];
+  seal.target = null;
+  seal.currentAction = `${dungeon?.name ?? '遠征'}から帰還しました`;
+  seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingHuntArea';
 }
 
 function addDungeonRewardToProfile(profile, rewardExp, rewardFavor) {
@@ -1055,6 +1196,125 @@ function rollDungeonDrops(dropTableId) {
   return fallback ? [{ itemId: String(fallback.itemId), count: clampInteger(fallback.count, 1, Number.MAX_SAFE_INTEGER, 1) }] : [];
 }
 
+
+function getDungeonEntrancePoint(dungeon) {
+  return { x: safeFiniteNumber(dungeon?.x, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x), y: safeFiniteNumber(dungeon?.y, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y) + 18 };
+}
+
+function getDungeonReturnPoint(seal) {
+  return seal?.type === 'visitor' ? getVisitorSeaExitPoint() : getVillageEntryPoint();
+}
+
+function addDungeonLog(dungeon, text) {
+  if (!dungeon) return;
+  const max = clampInteger(CONFIG.dungeon?.logMax, 1, Number.MAX_SAFE_INTEGER, 8);
+  dungeon.expeditionLog = normalizeDungeonLog([String(text), ...(dungeon.expeditionLog ?? [])]).slice(0, max);
+}
+
+function getDungeonPartySpeed(participants) {
+  const list = (participants ?? []).filter(Boolean);
+  if (list.length <= 0) return 1;
+  const speeds = list.map(seal => safeFiniteNumber(CONFIG.dungeon?.progressSpeedByPersonality?.[seal?.personality], 1, 0.1));
+  return speeds.reduce((sum, value) => sum + value, 0) / Math.max(1, speeds.length);
+}
+
+function chooseNodeLeadParticipant(participants, nodeType) {
+  const list = (participants ?? []).filter(Boolean);
+  if (list.length <= 0) return null;
+  const sorted = [...list].sort((a, b) => getNodeContributionScore(b, nodeType) - getNodeContributionScore(a, nodeType));
+  return sorted[0] ?? list[0];
+}
+
+function getNodeContributionScore(seal, nodeType) {
+  const stats = getSealEffectiveStats(seal);
+  const personality = seal?.personality ?? 'balanced';
+  const cautious = personality === 'cautious' ? 8 : 0;
+  const brave = personality === 'brave' ? 8 : 0;
+  if (nodeType === 'trap') return safeFiniteNumber(stats.defense, 0, 0) + cautious;
+  if (nodeType === 'battle' || nodeType === 'boss') return safeFiniteNumber(stats.attack, 0, 0) + brave;
+  return safeFiniteNumber(seal?.favor, 0, 0) + (personality === 'balanced' ? 4 : 0);
+}
+
+function calculateNodeRewardPart(dungeon, node, participants) {
+  const base = getDungeonTypeDef(dungeon?.type)?.rewards ?? {};
+  const outcome = CONFIG.dungeon?.outcome ?? {};
+  const multiplier = node?.type === 'chest' ? outcome.rewardChestMultiplier : node?.type === 'boss' ? outcome.rewardBossMultiplier : node?.type === 'battle' ? outcome.rewardBattleMultiplier : node?.type === 'trap' ? -outcome.rewardTrapPenaltyMultiplier : 0;
+  return normalizeDungeonReward({
+    g: Math.max(0, Math.round(safeFiniteNumber(base.g, 0, 0) * safeFiniteNumber(multiplier, 0, -1))),
+    exp: Math.max(0, Math.round((node?.type === 'battle' || node?.type === 'boss') ? safeFiniteNumber(outcome.expBattleBonus, 0, 0) : 0)),
+    knownness: node?.type === 'event' ? 1 : 0,
+    items: []
+  });
+}
+
+function mergeDungeonReward(a, b) {
+  const left = normalizeDungeonReward(a);
+  const right = normalizeDungeonReward(b);
+  const counts = new Map();
+  for (const item of [...(left.items ?? []), ...(right.items ?? [])]) counts.set(item.itemId, (counts.get(item.itemId) ?? 0) + clampInteger(item.count, 1, Number.MAX_SAFE_INTEGER, 1));
+  return { g: left.g + right.g, exp: left.exp + right.exp, knownness: left.knownness + right.knownness, items: [...counts.entries()].map(([itemId, count]) => ({ itemId, count })).filter(item => getItemDef(item.itemId)) };
+}
+
+function buildDungeonNodeLog(dungeon, node, lead, rewardPart) {
+  const name = lead?.name ?? CONFIG.dungeon?.labels?.noParticipants ?? 'あざらし';
+  const itemText = (rewardPart?.items ?? []).map(item => getItemDef(item.itemId)?.name ?? item.itemId).join('、');
+  const templates = {
+    entrance: `${name}が入口を調べている`,
+    battle: `${name}がカニの群れを追い払った`,
+    chest: itemText ? `${itemText}を発見した` : '宝箱を発見した',
+    trap: `${name}が罠を慎重に避けた`,
+    event: `${name}が潮の音から道を読んだ`,
+    boss: `${name}たちがボスを撃退した`,
+    exit: `${name}が出口の光を見つけた`
+  };
+  return templates[node?.type] ?? `${name}が探索を進めた`;
+}
+
+function applyDungeonNodeEffects(node, participants) {
+  const outcome = CONFIG.dungeon?.outcome ?? {};
+  for (const seal of participants ?? []) {
+    if (!seal) continue;
+    if (node?.type === 'battle' || node?.type === 'boss') {
+      const damage = safeFiniteNumber(outcome.battleDamage, 0, 0) + (seal.personality === 'brave' ? safeFiniteNumber(outcome.braveDamageBonus, 0, 0) : 0);
+      seal.hp = Math.max(1, safeFiniteNumber(seal.hp, CONFIG.seal.maxHp, 0) - damage);
+      incrementDungeonStat(seal, 'dungeonBattles', 1);
+      const profile = seal.profileId ? getVisitorProfileById(seal.profileId) : null;
+      incrementDungeonStat(profile, 'dungeonBattles', 1);
+    }
+    if (node?.type === 'trap') {
+      const reduction = seal.personality === 'cautious' ? safeFiniteNumber(outcome.cautiousTrapDamageReduction, 0, 0) : 0;
+      seal.hp = Math.max(1, safeFiniteNumber(seal.hp, CONFIG.seal.maxHp, 0) - Math.max(0, safeFiniteNumber(outcome.trapDamage, 0, 0) - reduction));
+    }
+    if (node?.type === 'chest') {
+      incrementDungeonStat(seal, 'chestsOpened', 1);
+      const profile = seal.profileId ? getVisitorProfileById(seal.profileId) : null;
+      incrementDungeonStat(profile, 'chestsOpened', 1);
+    }
+  }
+}
+
+function incrementDungeonStat(target, key, amount) {
+  if (!target || !['dungeonRuns', 'dungeonClears', 'dungeonBattles', 'chestsOpened'].includes(key)) return;
+  target[key] = clampInteger(target[key], 0, Number.MAX_SAFE_INTEGER, 0) + clampInteger(amount, 0, Number.MAX_SAFE_INTEGER, 0);
+}
+
+function abortDungeon(dungeon, reason) {
+  if (!dungeon) return;
+  addDungeonLog(dungeon, reason);
+  for (const participant of normalizeDungeonParticipantIds(dungeon.participantIds)) {
+    const seal = getSealById(participant.sealId);
+    if (seal) clearSealExpeditionState(seal);
+  }
+  dungeon.state = 'expired';
+  dungeon.completedDisplayMs = CONFIG.dungeon?.completedDisplayMs ?? 0;
+  logMessage(`${dungeon.name}: ${reason}`);
+}
+
+function cleanupOrphanedExpeditions() {
+  const activeIds = new Set((gameState.dungeons ?? []).filter(d => ['assembling', 'running', 'returning'].includes(d?.state)).map(d => d.id));
+  for (const seal of gameState.seals ?? []) if (seal?.expeditionId && !activeIds.has(seal.expeditionId)) clearSealExpeditionState(seal);
+}
+
 function expireDungeon(dungeon) {
   if (!dungeon || dungeon.state !== 'available') return;
   dungeon.state = 'expired';
@@ -1070,5 +1330,5 @@ function getDungeonRewardPreview(dungeon) {
 
 function clearSelectedDungeonIfInvalid() {
   const selected = getDungeonById(gameState.ui?.selectedDungeonId);
-  if (!selected || ['expired', 'completed'].includes(selected.state)) gameState.ui.selectedDungeonId = null;
+  if (!selected || ['expired'].includes(selected.state)) gameState.ui.selectedDungeonId = null;
 }
