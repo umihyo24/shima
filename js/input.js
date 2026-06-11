@@ -3,44 +3,98 @@ function screenToWorld(clientX, clientY) {
   return { x: gameState.camera.x + (clientX - rect.left - canvas.clientWidth / 2) / gameState.camera.zoom, y: gameState.camera.y + (clientY - rect.top - canvas.clientHeight / 2) / gameState.camera.zoom };
 }
 function updateMouse(clientX, clientY) { const p = screenToWorld(clientX, clientY); gameState.input.mouseWorld = p; gameState.input.mouseTile = worldToGrid(p.x, p.y); }
-function setZoom(next, clientX, clientY) { const before = screenToWorld(clientX ?? canvas.clientWidth / 2, clientY ?? canvas.clientHeight / 2); gameState.camera.zoom = Math.max(CONFIG.camera.minZoom, Math.min(CONFIG.camera.maxZoom, next)); const after = screenToWorld(clientX ?? canvas.clientWidth / 2, clientY ?? canvas.clientHeight / 2); gameState.camera.x += before.x - after.x; gameState.camera.y += before.y - after.y; updateHud(); }
+function setZoom(next, clientX, clientY) { const before = screenToWorld(clientX ?? canvas.clientWidth / 2, clientY ?? canvas.clientHeight / 2); gameState.camera.zoom = Math.max(CONFIG.camera.minZoom, Math.min(CONFIG.camera.maxZoom, next)); const after = screenToWorld(clientX ?? canvas.clientWidth / 2, clientY ?? canvas.clientHeight / 2); gameState.camera.x += before.x - after.x; gameState.camera.y += before.y - after.y; renderUI(); }
 
 function resizeCanvas() { const dpr = devicePixelRatioClamped(); const w = Math.floor(canvas.clientWidth * dpr), h = Math.floor(canvas.clientHeight * dpr); if (canvas.width !== w || canvas.height !== h) { canvas.width = w; canvas.height = h; } }
 function devicePixelRatioClamped() { return Math.max(CONFIG.canvas.minDevicePixelRatio, Math.min(CONFIG.canvas.maxDevicePixelRatio, window.devicePixelRatio || 1)); }
 
+const BOTTOM_TABS = Object.freeze([
+  { id: 'build', label: '建設' },
+  { id: 'seals', label: '人物' },
+  { id: 'dungeons', label: 'ダンジョン' },
+  { id: 'progress', label: '発展' }
+]);
+const BUILD_CATEGORIES = Object.freeze([
+  { id: 'road', label: '道路', toolIds: ['road'] },
+  { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'blacksmith'] },
+  { id: 'decoration', label: '装飾', toolIds: ['flower', 'tree', 'rock'] },
+  { id: 'utility', label: '管理', toolIds: ['clear', 'delete'] }
+]);
+
 function buildTools() {
-  const speedButtons = CONFIG.TIME.SPEED_OPTIONS.map(speed => `<button data-speed="${speed}">${speed === 0 ? '⏸ pause' : `x${speed}`}</button>`).join('');
-  toolsEl.innerHTML = `<div class="speedControls"><b>速度</b><div class="speedButtons">${speedButtons}</div><div id="speedStatus" class="speedStatus"></div></div><b>ツール</b>` + CONFIG.tools.map(t => `<button data-tool="${t.id}">${t.label}</button>`).join('') + '<button data-action="rotate">R 回転</button><div class="savePanel"><b>セーブ</b><br><span id="toolSaveStatus">未保存</span><br><span id="toolSaveTime">最終保存: なし</span><button data-action="manualSave">手動保存</button></div>';
-  toolsEl.addEventListener('click', e => { const tool = e.target?.dataset?.tool; const speed = e.target?.dataset?.speed; if (tool) { gameState.ui.selectedTool = tool; updateToolButtons(); updateHud(); } if (speed !== undefined) setGameSpeed(Number(speed)); if (e.target?.dataset?.action === 'rotate') rotateTool(); if (e.target?.dataset?.action === 'manualSave') saveGame('manual'); });
+  if (bottomTabBarEl) bottomTabBarEl.innerHTML = BOTTOM_TABS.map(tab => `<button data-bottom-tab="${tab.id}">${tab.label}</button>`).join('');
+  if (speedHudEl) {
+    const speedButtons = CONFIG.TIME.SPEED_OPTIONS.map(speed => `<button data-speed="${speed}">${speed === 0 ? '⏸' : `x${speed}`}</button>`).join('');
+    speedHudEl.innerHTML = `<div class="speedTitle"><b>速度</b><span id="speedStatus"></span></div><div class="speedButtons">${speedButtons}</div>`;
+  }
   updateToolButtons();
 }
-function updateToolButtons() {
-  for (const b of toolsEl.querySelectorAll('button[data-tool]')) b.classList.toggle('active', b.dataset.tool === gameState.ui.selectedTool);
-  for (const b of toolsEl.querySelectorAll('button[data-speed]')) b.classList.toggle('active', Number(b.dataset.speed) === clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE));
-  const speedStatus = document.getElementById('speedStatus');
-  if (speedStatus) speedStatus.textContent = `現在: ${formatSpeedLabel(gameState.time?.timeScale)}`;
-  const status = document.getElementById('toolSaveStatus');
-  const time = document.getElementById('toolSaveTime');
-  if (status) status.textContent = gameState.save?.statusText || '未保存';
-  if (time) time.textContent = `最終保存: ${formatSaveTime(gameState.save?.lastSavedAt)}`;
-}
-function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionIndex + 1) % CONFIG.directions.length; updateHud(); }
-function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
-function setGameSpeed(speed) { gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; updateToolButtons(); updateHud(); }
 
-function handleDungeonPanelAction(event) {
-  const button = event.target?.closest?.('[data-dungeon-action]');
-  if (!button || !sealCardsEl?.contains(button)) return;
-  if (event.type === 'click' && button.__dungeonActionHandled === true) return;
-  if (event.type === 'pointerdown') button.__dungeonActionHandled = true;
-  event.preventDefault();
-  event.stopPropagation();
-  const action = button.dataset?.dungeonAction;
-  if (action === 'start') startDungeon(button.dataset?.dungeonId);
-  if (action === 'close') {
-    gameState.ui.selectedDungeonId = null;
-    updateHud();
+function setActiveBottomTab(tabId) {
+  const next = BOTTOM_TABS.some(tab => tab.id === tabId) ? tabId : null;
+  gameState.ui.activeBottomTab = next;
+  gameState.ui.panelCollapsed = next === null;
+  gameState.ui.needsHudUpdate = true;
+  renderUI();
+}
+function toggleBottomTab(tabId) { setActiveBottomTab(gameState.ui?.activeBottomTab === tabId ? null : tabId); }
+function closeBottomPanel() { setActiveBottomTab(null); }
+function setSelectedTool(toolId) {
+  const tool = CONFIG.tools.find(t => t?.id === toolId) ?? null;
+  gameState.ui.selectedTool = tool?.id ?? null;
+  gameState.ui.placementCategory = categoryForTool(tool) ?? gameState.ui.placementCategory ?? 'facility';
+  if (tool?.id && gameState.ui.activeBottomTab !== 'build') setActiveBottomTab('build');
+  gameState.ui.needsHudUpdate = true;
+  renderUI();
+}
+function clearSelectedTool() {
+  gameState.ui.selectedTool = null;
+  gameState.ui.needsHudUpdate = true;
+  renderUI();
+}
+function categoryForTool(tool) {
+  if (!tool) return null;
+  if (tool.kind === 'road') return 'road';
+  if (tool.kind === 'facility') return 'facility';
+  if (tool.kind === 'decoration') return 'decoration';
+  if (['clear', 'delete'].includes(tool.kind)) return 'utility';
+  return null;
+}
+function updateToolButtons() {
+  for (const b of bottomTabBarEl?.querySelectorAll('button[data-bottom-tab]') ?? []) b.classList.toggle('active', b.dataset.bottomTab === gameState.ui?.activeBottomTab);
+  for (const b of bottomPanelEl?.querySelectorAll('button[data-tool]') ?? []) b.classList.toggle('active', b.dataset.tool === gameState.ui?.selectedTool);
+  for (const b of speedHudEl?.querySelectorAll('button[data-speed]') ?? []) b.classList.toggle('active', Number(b.dataset.speed) === clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE));
+  const speedStatus = document.getElementById('speedStatus');
+  if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
+}
+function rotateTool() { gameState.ui.directionIndex = (gameState.ui.directionIndex + 1) % CONFIG.directions.length; gameState.ui.needsHudUpdate = true; renderUI(); }
+function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
+function setGameSpeed(speed) { gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; updateToolButtons(); renderUI(); }
+
+function handleUiAction(event) {
+  const target = event.target?.closest?.('button');
+  if (!target) return;
+  const tab = target.dataset?.bottomTab;
+  const tool = target.dataset?.tool;
+  const speed = target.dataset?.speed;
+  const action = target.dataset?.action;
+  const dungeonAction = target.dataset?.dungeonAction;
+  if (tab || tool || speed !== undefined || action || dungeonAction) {
+    event.preventDefault();
+    event.stopPropagation();
   }
+  if (tab) return toggleBottomTab(tab);
+  if (tool) return setSelectedTool(tool);
+  if (speed !== undefined) return setGameSpeed(Number(speed));
+  if (action === 'rotate') return rotateTool();
+  if (action === 'manualSave') return saveGame('manual');
+  if (action === 'clearTool') return clearSelectedTool();
+  if (action === 'zoomIn') return setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
+  if (action === 'zoomOut') return setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
+  if (action === 'closeBottom') return closeBottomPanel();
+  if (action === 'closeSeal') { gameState.ui.selectedSealId = null; return renderUI(); }
+  if (dungeonAction === 'start') return startDungeon(target.dataset?.dungeonId);
+  if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; return renderUI(); }
 }
 
 function sealAtWorldPoint(point) {
@@ -56,7 +110,7 @@ function placementClickHasPriority(tool, tile) {
 }
 
 function isPlacementModeActive() {
-  const kind = getTool(gameState.ui?.selectedTool)?.kind;
+  const kind = CONFIG.tools.find(t => t?.id === gameState.ui?.selectedTool)?.kind;
   return ['road', 'facility', 'decoration', 'clear', 'delete'].includes(kind);
 }
 
@@ -82,40 +136,47 @@ window.addEventListener('mouseup', e => {
   gameState.camera.dragging = false;
   if (gameState.camera.dragMoved || gameState.phase !== CONFIG.phase.playing) return;
   updateMouse(e.clientX, e.clientY);
-  const t = getTool(gameState.ui.selectedTool);
+  const t = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
   if (placementClickHasPriority(t, gameState.input.mouseTile)) {
     gameState.ui.selectedDungeonId = null;
     if (t?.kind === 'delete') deleteAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
     else if (t?.kind === 'clear') clearLandAt(gameState.input.mouseTile.x, gameState.input.mouseTile.y);
     else placeObject(t.id, gameState.input.mouseTile.x, gameState.input.mouseTile.y, gameState.ui.directionIndex, false);
-    updateHud();
+    renderUI();
     return;
   }
-  const dungeon = selectDungeonAtWorldPosition(gameState.input.mouseWorld?.x, gameState.input.mouseWorld?.y);
+  const clickedDungeon = selectDungeonAtWorldPosition(gameState.input.mouseWorld?.x, gameState.input.mouseWorld?.y);
   const clickedSeal = sealAtWorldPoint(gameState.input.mouseWorld);
-  if (dungeon?.id && (!clickedSeal || distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, dungeon.x, dungeon.y) <= distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedSeal.x, clickedSeal.y))) {
-    updateHud();
+  if (clickedDungeon?.id && (!clickedSeal || distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedDungeon.x, clickedDungeon.y) <= distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedSeal.x, clickedSeal.y))) {
+    setActiveBottomTab('dungeons');
     return;
   }
   if (clickedSeal?.id) {
     gameState.ui.selectedSealId = clickedSeal.id;
     gameState.ui.selectedDungeonId = null;
-    updateHud();
+    setActiveBottomTab('seals');
     return;
   }
-  if (!isPlacementModeActive()) gameState.ui.selectedSealId = null;
-  gameState.ui.selectedDungeonId = null;
-  updateHud();
+  if (!isPlacementModeActive()) {
+    gameState.ui.selectedSealId = null;
+    gameState.ui.selectedDungeonId = null;
+  }
+  renderUI();
 });
 canvas.addEventListener('contextmenu', e => e.preventDefault());
 canvas.addEventListener('wheel', e => { e.preventDefault(); setZoom(gameState.camera.zoom + (e.deltaY < 0 ? CONFIG.camera.wheelStep : -CONFIG.camera.wheelStep), e.clientX, e.clientY); }, { passive: false });
-window.addEventListener('keydown', e => { gameState.input.keys[e.code] = true; if (e.code === 'KeyR') rotateTool(); });
+window.addEventListener('keydown', e => {
+  gameState.input.keys[e.code] = true;
+  if (e.code === 'KeyR') rotateTool();
+  if (e.code === 'Escape') {
+    clearSelectedTool();
+    if (gameState.ui?.activeBottomTab) closeBottomPanel();
+  }
+});
 window.addEventListener('keyup', e => { gameState.input.keys[e.code] = false; });
 startBtn.addEventListener('click', startNewGame);
 loadBtn.addEventListener('click', loadGame);
-zoomInBtn.addEventListener('click', () => setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep));
-zoomOutBtn.addEventListener('click', () => setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep));
-sealCardsEl.addEventListener('pointerdown', handleDungeonPanelAction);
-sealCardsEl.addEventListener('click', handleDungeonPanelAction);
-
+bottomTabBarEl?.addEventListener('click', handleUiAction);
+bottomPanelEl?.addEventListener('click', handleUiAction);
+speedHudEl?.addEventListener('click', handleUiAction);
 }

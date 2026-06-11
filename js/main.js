@@ -1,12 +1,11 @@
 const canvas = document.getElementById('game');
 const ctx = canvas.getContext('2d');
 const statsEl = document.getElementById('stats');
-const toolsEl = document.getElementById('tools');
-const sealCardsEl = document.getElementById('sealCards');
+const speedHudEl = document.getElementById('speedHud');
+const bottomTabBarEl = document.getElementById('bottomTabBar');
+const bottomPanelEl = document.getElementById('bottomPanel');
 const startScreen = document.getElementById('startScreen');
 const startBtn = document.getElementById('startBtn');
-const zoomInBtn = document.getElementById('zoomIn');
-const zoomOutBtn = document.getElementById('zoomOut');
 const loadBtn = document.getElementById('loadBtn');
 const startSaveInfoEl = document.getElementById('startSaveInfo');
 
@@ -18,7 +17,7 @@ function loop(now) {
   const timeScale = clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE);
   update(realDeltaMs * timeScale);
   if (gameState.ui.needsHudUpdate) {
-    updateHud();
+    renderUI();
     gameState.ui.needsHudUpdate = false;
   }
   render();
@@ -30,5 +29,5 @@ gameState.world.tiles = generateInitialMap();
 buildTools();
 bindInputEvents();
 updateStartSaveInfo();
-updateHud();
+renderUI();
 requestAnimationFrame(loop);

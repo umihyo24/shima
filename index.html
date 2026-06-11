@@ -10,22 +10,15 @@
 <body>
   <canvas id="game"></canvas>
 
-  <div class="hud">
-    <div class="panel stats" id="stats"></div>
+  <div class="topHud" aria-label="常時表示HUD">
+    <div class="panel stats compactHud" id="stats"></div>
   </div>
 
-  <div class="panel tools" id="tools"></div>
+  <div class="panel speedHud" id="speedHud" aria-label="速度操作"></div>
 
-  <div class="bottom">
-    <div class="panel help">
-      <b>操作</b><br>
-      WASD/矢印: カメラ移動<br>
-      ドラッグ: カメラ移動 / 短いクリック: 配置<br>
-      ホイール: ズーム<br>
-      R: 施設入口を回転<br>開拓: 未開拓の草木岩をGで除去<br>
-      <div class="zoomBtns"><button id="zoomOut">−</button><button id="zoomIn">＋</button></div>
-    </div>
-    <div class="sealCards" id="sealCards"></div>
+  <div class="bottomUi" id="bottomUi" aria-label="下部タブUI">
+    <div class="bottomTabBar" id="bottomTabBar"></div>
+    <div class="panel bottomPanel" id="bottomPanel" hidden></div>
   </div>
 
   <div class="start" id="startScreen">

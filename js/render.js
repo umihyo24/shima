@@ -17,7 +17,6 @@ function render() {
   ctx.save();
   ctx.scale(devicePixelRatioClamped(), devicePixelRatioClamped());
   drawMinimap();
-  drawKnownnessGoalPanel();
   ctx.restore();
 }
 
@@ -162,8 +161,8 @@ function drawSeals() {
 
 function drawPlacementPreview() {
   const gx = gameState.input.mouseTile.x, gy = gameState.input.mouseTile.y;
-  const tool = getTool(gameState.ui.selectedTool);
-  if (gx < 0 || gy < 0) return;
+  const tool = CONFIG.tools.find(t => t?.id === gameState.ui?.selectedTool) ?? null;
+  if (gx < 0 || gy < 0 || !tool) return;
   if (tool?.kind === 'clear') drawClearPreview(gx, gy);
   else {
     const result = canPlaceAt(gx, gy, tool);
@@ -238,7 +237,7 @@ function drawHpBar(x, y, w, ratio, color) { ctx.fillStyle = 'rgba(0,0,0,.45)'; c
 function drawLabel(text, x, y, color) { ctx.font = CONFIG.render.bigFont; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(text, x + 1, y + 1); ctx.fillStyle = color; ctx.fillText(text, x, y); }
 
 function drawMinimap() {
-  const w = CONFIG.render.minimapW, h = CONFIG.render.minimapH, x = 14, y = canvas.clientHeight - h - 154;
+  const w = CONFIG.render.minimapW, h = CONFIG.render.minimapH, x = 14, bottomOffset = gameState.ui?.activeBottomTab ? 360 : 82, y = Math.max(88, canvas.clientHeight - h - bottomOffset);
   ctx.fillStyle = 'rgba(5,18,28,.82)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.strokeRect(x, y, w, h);
   const sx = w / (CONFIG.world.cols * CONFIG.world.tile), sy = h / (CONFIG.world.rows * CONFIG.world.tile);
   ctx.fillStyle = CONFIG.render.blockedLand; ctx.fillRect(x + CONFIG.world.islandX * CONFIG.world.tile * sx, y + CONFIG.world.islandY * CONFIG.world.tile * sy, CONFIG.world.islandW * CONFIG.world.tile * sx, CONFIG.world.islandH * CONFIG.world.tile * sy);
@@ -250,56 +249,130 @@ function drawMinimap() {
   ctx.strokeStyle = '#fff'; ctx.strokeRect(x + (gameState.camera.x - canvas.clientWidth / (2 * gameState.camera.zoom)) * sx, y + (gameState.camera.y - canvas.clientHeight / (2 * gameState.camera.zoom)) * sy, canvas.clientWidth / gameState.camera.zoom * sx, canvas.clientHeight / gameState.camera.zoom * sy);
 }
 
-
-function drawKnownnessGoalPanel() {
-  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
-  const nextGoal = getNextKnownnessGoal();
-  const nextUnlock = getNextUnlockProfile();
-  const width = CONFIG.KNOWNNESS?.PANEL_WIDTH ?? 210;
-  const height = CONFIG.KNOWNNESS?.PANEL_HEIGHT ?? 74;
-  const margin = CONFIG.KNOWNNESS?.PANEL_MARGIN ?? 18;
-  const x = canvas.clientWidth - width - margin;
-  const y = canvas.clientHeight - height - margin;
-  const denom = Math.max(1, nextGoal);
-  const ratio = nextGoal > knownness ? knownness / denom : 1;
-  ctx.save();
-  ctx.fillStyle = 'rgba(10, 32, 42, 0.78)';
-  ctx.strokeStyle = 'rgba(255,255,255,0.55)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.roundRect?.(x, y, width, height, 12);
-  if (ctx.roundRect) { ctx.fill(); ctx.stroke(); } else { ctx.fillRect(x, y, width, height); ctx.strokeRect(x, y, width, height); }
-  ctx.fillStyle = '#f7fbff';
-  ctx.font = 'bold 15px system-ui';
-  ctx.fillText(`知名度 ${Math.floor(knownness)} / ${Math.floor(nextGoal)}`, x + 14, y + 24);
-  ctx.fillStyle = 'rgba(255,255,255,0.22)';
-  ctx.fillRect(x + 14, y + 34, width - 28, 10);
-  ctx.fillStyle = '#6ee7a8';
-  ctx.fillRect(x + 14, y + 34, Math.max(0, Math.min(1, ratio)) * (width - 28), 10);
-  ctx.strokeStyle = 'rgba(0,0,0,0.35)';
-  ctx.strokeRect(x + 14, y + 34, width - 28, 10);
-  ctx.fillStyle = '#d7f7ff';
-  ctx.font = '13px system-ui';
-  ctx.fillText(nextUnlock ? `次: ${nextUnlock.name}` : '次: 全員解放済み', x + 14, y + 62);
-  ctx.restore();
-}
-
 function getResidentSeal() { return (gameState.seals ?? []).find(seal => seal?.type === 'resident') ?? null; }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>\"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;' }[char] ?? char)); }
 
-function updateHud() {
-  const saveText = gameState.save?.statusText || '未保存';
-  const lastSaved = formatSaveTime(gameState.save?.lastSavedAt);
-  const visitors = (gameState.seals ?? []).filter(s => s?.type === 'visitor');
-  const nextVisitor = Math.max(0, CONFIG.visitor.spawnInterval - safeFiniteNumber(gameState.timers?.visitorSpawn, 0, 0));
-  const resident = getResidentSeal();
-  const nextUnlock = getNextUnlockProfile();
-  const unlockText = nextUnlock ? `次の訪問者: ${escapeHtml(nextUnlock.name)}(${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))})` : '訪問者解放: すべて解放';
-  statsEl.innerHTML = `<b>${Math.floor(gameState.player?.g ?? 0)} G</b><br>知名度: ${Math.floor(safeFiniteNumber(gameState.village?.knownness, 0, 0))}<br><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><br>今月の狩猟: ${gameState.stats?.monthlyHunts ?? 0}<br>訪問者: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>次の訪問者目安: ${nextVisitor.toFixed(0)}秒<br>${unlockText}<br>住民: ${escapeHtml(resident?.name ?? gameState.residentName)}<br>速度: ${formatSpeedLabel(gameState.time?.timeScale)} / ツール: ${getTool(gameState.ui.selectedTool)?.label}<br>開拓費: ${getClearingCost()}G / 入口方向: ${CONFIG.directions[gameState.ui.directionIndex]?.name}<br>最終保存: ${lastSaved}<br>保存状態: ${escapeHtml(saveText)}<div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>')}</div>`;
-  const selected = (gameState.seals ?? []).find(seal => seal?.id === gameState.ui?.selectedSealId) ?? null;
-  const dungeonPanel = drawDungeonPanel();
-  sealCardsEl.innerHTML = dungeonPanel || (selected ? renderSelectedSealPanel(selected) : '<div class="panel sealCard emptySealCard">あざらしや地図上の洞窟をクリックすると詳細を表示します。</div>');
+function updateHud() { renderUI(); }
+
+function renderUI() {
+  clearContextSelectionIfInvalid();
+  renderHUD();
+  renderSpeedControls();
+  renderBottomTabs();
   updateToolButtons();
+}
+
+function renderHUD() {
+  if (!statsEl) return;
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  const nextGoal = getNextKnownnessGoal();
+  const saveText = gameState.save?.statusText || '未保存';
+  const selectedTool = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
+  const direction = CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S';
+  const latestLog = (gameState.logs ?? [])[0] ?? gameState.ui?.message ?? '';
+  statsEl.innerHTML = `<div class="hudRow"><b>${Math.floor(gameState.player?.g ?? 0)} G</b><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><span>知名度 ${Math.floor(knownness)} / ${Math.floor(nextGoal)}</span><span>今月の狩猟 ${gameState.stats?.monthlyHunts ?? 0}</span></div><div class="hudRow"><span>ツール: ${escapeHtml(selectedTool?.label ?? 'なし')}</span><span>入口: ${escapeHtml(direction)}</span><span>保存: ${escapeHtml(saveText)}</span></div>${latestLog ? `<div class="hudMessage">${escapeHtml(latestLog)}</div>` : ''}`;
+}
+
+function renderSpeedControls() {
+  const speedStatus = document.getElementById('speedStatus');
+  if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
+}
+
+function renderBottomTabs() {
+  if (!bottomPanelEl) return;
+  const active = gameState.ui?.activeBottomTab ?? null;
+  bottomPanelEl.hidden = !active;
+  if (!active) {
+    bottomPanelEl.innerHTML = '';
+    updateToolButtons();
+    return;
+  }
+  const renderers = { build: renderBuildPanel, seals: renderSealsPanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
+  bottomPanelEl.innerHTML = renderers[active]?.() ?? '';
+  updateToolButtons();
+}
+
+function panelHeader(title, hint = '') {
+  return `<div class="panelHeader"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="closeBottom" class="subtle">閉じる</button></div>`;
+}
+
+function renderBuildPanel() {
+  const categoryHtml = BUILD_CATEGORIES.map(category => {
+    const buttons = category.toolIds.map(toolId => {
+      const tool = CONFIG.tools.find(item => item?.id === toolId);
+      if (!tool) return '';
+      return `<button class="toolButton" data-tool="${escapeHtml(tool.id)}">${escapeHtml(tool.label)}</button>`;
+    }).join('');
+    return `<div class="compactCard"><b>${escapeHtml(category.label)}</b><div class="categoryButtons">${buttons}</div></div>`;
+  }).join('');
+  const selected = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
+  return `${panelHeader('建設', '道路・施設・装飾・管理ツールを選んでマップに配置します。')}
+    <div class="buildPanel">
+      <div class="buildCategories">${categoryHtml}</div>
+      <div>
+        <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S')}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
+        <div class="compactCard helpText"><b>操作</b><br>WASD/矢印: カメラ移動<br>ドラッグ: カメラ移動 / 短いクリック: 配置<br>ホイール: ズーム<br>開拓: 未開拓の草木岩を${getClearingCost()}Gで除去<br><div class="zoomBtns"><button data-action="zoomOut">−</button><button data-action="zoomIn">＋</button></div></div>
+        <div class="compactCard savePanel"><b>セーブ</b><br>${escapeHtml(gameState.save?.statusText || '未保存')}<br>最終保存: ${escapeHtml(formatSaveTime(gameState.save?.lastSavedAt))}<br><button data-action="manualSave">手動保存</button></div>
+      </div>
+    </div>`;
+}
+
+function renderSealsPanel() {
+  const resident = getResidentSeal();
+  const visitors = (gameState.seals ?? []).filter(seal => seal?.type === 'visitor');
+  const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked);
+  const locked = (gameState.visitorProfiles ?? []).filter(profile => !isVisitorProfileUnlocked(profile));
+  const visitorCards = visitors.length ? visitors.map(seal => `<div class="compactCard"><b>${escapeHtml(seal.name)}</b><br>${escapeHtml(stateLabel(seal.state))}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))}/${Math.ceil(getSealEffectiveStats(seal).maxHp)}</div>`).join('') : '<div class="compactCard">訪問中のあざらしはいません。</div>';
+  return `${panelHeader('人物', 'アザラシをクリックすると詳細表示')}
+    <div class="compactGrid">
+      <div class="compactCard"><b>住民</b><br>${escapeHtml(resident?.name ?? gameState.residentName)}<br>${escapeHtml(stateLabel(resident?.state ?? 'idle'))}</div>
+      <div class="compactCard"><b>訪問者</b><br>活動中: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>解放済み: ${unlocked.length} / ${(gameState.visitorProfiles ?? []).length}<br>未解放: ${locked.map(profile => `${escapeHtml(profile.name)}(${Math.floor(safeFiniteNumber(profile.unlockedAtKnownness, 0, 0))})`).join('、') || 'なし'}</div>
+      ${visitorCards}
+      ${renderSelectedSealDetail()}
+    </div>`;
+}
+
+function renderDungeonsPanel() {
+  const active = (gameState.dungeons ?? []).filter(dungeon => ['available', 'running'].includes(dungeon?.state));
+  const running = active.filter(dungeon => dungeon?.state === 'running');
+  const runningHtml = running.length ? running.map(dungeon => {
+    const ratio = Math.max(0, Math.min(100, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1)) * 100));
+    return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><div class="bar"><div class="fill" style="width:${ratio}%"></div></div>進行 ${Math.floor(ratio)}%</div>`;
+  }).join('') : '<div class="compactCard">攻略中のダンジョンはありません。</div>';
+  return `${panelHeader('ダンジョン', 'マップ上のダンジョンをクリックして攻略開始')}
+    <div class="compactGrid">
+      <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
+      ${runningHtml}
+      ${renderSelectedDungeonDetail()}
+    </div>`;
+}
+
+function renderProgressPanel() {
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  const nextGoal = getNextKnownnessGoal();
+  const ratio = nextGoal > knownness ? knownness / Math.max(1, nextGoal) : 1;
+  const nextUnlock = getNextUnlockProfile();
+  const thresholds = (CONFIG.KNOWNNESS?.UNLOCK_THRESHOLDS ?? [100, 200, 300, 400, 500]).map(value => `<span class="thresholdPill ${knownness >= value ? 'done' : ''}">${value}</span>`).join('');
+  const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked).map(profile => escapeHtml(profile.name)).join('、') || 'なし';
+  const monthly = `狩猟${gameState.stats?.monthlyHunts ?? 0}回 / 前月知名度+${Math.floor(safeFiniteNumber(gameState.stats?.monthlyKnownnessGained, 0, 0))} / 今月収入${Math.floor(safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0))}G`;
+  return `${panelHeader('発展', '知名度と訪問者解放の詳細')}
+    <div class="compactGrid">
+      <div class="compactCard"><b>知名度</b><br>${Math.floor(knownness)} / ${Math.floor(nextGoal)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(1, ratio)) * 100}%"></div></div>次の目標: ${Math.floor(nextGoal)}</div>
+      <div class="compactCard"><b>次の訪問者</b><br>${nextUnlock ? `${escapeHtml(nextUnlock.name)}（${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))}）` : 'すべて解放済み'}</div>
+      <div class="compactCard"><b>しきい値</b><div class="thresholdList">${thresholds}</div></div>
+      <div class="compactCard"><b>解放済み訪問者</b><br>${unlocked}</div>
+      <div class="compactCard"><b>月次サマリー</b><br>${escapeHtml(monthly)}</div>
+      <div class="compactCard"><b>ログ</b><div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>') || 'なし'}</div></div>
+    </div>`;
+}
+
+function renderSelectedSealDetail() {
+  const selected = (gameState.seals ?? []).find(seal => seal?.id === gameState.ui?.selectedSealId) ?? null;
+  return selected ? renderSelectedSealPanel(selected) : '<div class="compactCard">選択中のアザラシはありません。</div>';
+}
+
+function renderSelectedDungeonDetail() {
+  return drawDungeonPanel() || '<div class="compactCard">選択中のダンジョンはありません。</div>';
 }
 
 function renderSelectedSealPanel(seal) {
@@ -307,7 +380,16 @@ function renderSelectedSealPanel(seal) {
   const hpMax = safeFiniteNumber(stats.maxHp, seal?.maxHp ?? CONFIG.seal.maxHp, 1);
   const targetText = formatSealTarget(seal);
   const stay = seal?.type === 'visitor' ? `<br>滞在: ${Math.floor(safeFiniteNumber(seal.visitTimerMs, 0, 0) / 1000)}秒 / 最短${Math.floor(safeFiniteNumber(seal.minStayMs, 0, 0) / 1000)}秒 / 最長${Math.floor(safeFiniteNumber(seal.maxStayMs, 0, 0) / 1000)}秒<br>訪問狩猟/施設: ${seal.huntsThisVisit ?? 0}/${seal.facilitiesUsedThisVisit ?? 0} / ${seal.wantsToLeave ? '帰りたい' : '滞在中'}` : '';
-  return `<div class="panel sealCard selectedSealCard"><b>${escapeHtml(seal.name)}</b>（${seal.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(seal)?.label ?? seal.personality)}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))} / ${Math.ceil(hpMax)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, safeFiniteNumber(seal.hp, 0, 0) / hpMax * 100))}%"></div></div>所持G: ${Math.floor(safeFiniteNumber(seal.carriedG, 0, 0))}<br>装備予算: ${Math.floor(safeFiniteNumber(seal.gearBudget, 0, 0))}<br>Lv: ${seal.level} / EXP: ${Math.floor(safeFiniteNumber(seal.exp, 0, 0))}<br>好感度: ${Math.floor(safeFiniteNumber(seal.favor, 0, 0))}<br>状態: ${escapeHtml(stateLabel(seal.state))}<br>行動/目標: ${escapeHtml(targetText)}${stay}<hr>武器: ${equipmentText(seal, 'weapon')}<br>防具: ${equipmentText(seal, 'armor')}<br>アクセ: ${equipmentText(seal, 'accessory')}<br>有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}</div>`;
+  return `<div class="compactCard selectedSealCard"><b>${escapeHtml(seal.name)}</b>（${seal.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(seal)?.label ?? seal.personality)}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))} / ${Math.ceil(hpMax)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, safeFiniteNumber(seal.hp, 0, 0) / hpMax * 100))}%"></div></div>所持G: ${Math.floor(safeFiniteNumber(seal.carriedG, 0, 0))}<br>装備予算: ${Math.floor(safeFiniteNumber(seal.gearBudget, 0, 0))}<br>Lv: ${seal.level} / EXP: ${Math.floor(safeFiniteNumber(seal.exp, 0, 0))}<br>好感度: ${Math.floor(safeFiniteNumber(seal.favor, 0, 0))}<br>状態: ${escapeHtml(stateLabel(seal.state))}<br>行動/目標: ${escapeHtml(targetText)}${stay}<hr>武器: ${equipmentText(seal, 'weapon')}<br>防具: ${equipmentText(seal, 'armor')}<br>アクセ: ${equipmentText(seal, 'accessory')}<br>有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}<div class="buildActions"><button data-action="closeSeal" class="subtle">詳細を閉じる</button></div></div>`;
+}
+
+function clearContextSelectionIfInvalid() {
+  const ui = gameState.ui ?? {};
+  if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) ui.selectedSealId = null;
+  if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) ui.selectedDungeonId = null;
+  if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) ui.selectedTool = null;
+  if (ui.activeBottomTab && !BOTTOM_TABS.some(tab => tab.id === ui.activeBottomTab)) ui.activeBottomTab = null;
+  ui.panelCollapsed = !ui.activeBottomTab;
 }
 
 function equipmentText(seal, slot) {

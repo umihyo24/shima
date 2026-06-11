@@ -1,45 +1,73 @@
-:root { color-scheme: dark; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
-    * { box-sizing: border-box; }
-    body { margin: 0; overflow: hidden; background: #071d2a; color: #f7fbff; }
-    canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; background: #0b5875; }
-    .hud { position: fixed; inset: 14px auto auto 14px; display: flex; gap: 8px; align-items: flex-start; pointer-events: none; }
-    .panel { background: rgba(5, 18, 28, .82); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 8px 26px rgba(0,0,0,.3); border-radius: 10px; backdrop-filter: blur(6px); }
-    .stats { padding: 10px 12px; min-width: 260px; line-height: 1.45; }
-    .stats b { color: #ffe38a; }
-    .tools { position: fixed; top: 14px; right: 14px; width: 170px; padding: 10px; pointer-events: auto; }
-    button { appearance: none; border: 1px solid rgba(255,255,255,.2); border-radius: 8px; background: linear-gradient(#1e5d75,#123848); color: #fff; padding: 8px 10px; font-weight: 700; cursor: pointer; box-shadow: inset 0 1px rgba(255,255,255,.16); }
-    button:hover { filter: brightness(1.15); }
-    button.active { background: linear-gradient(#f0a73a,#a86619); color: #1d1000; }
-    .tools button { width: 100%; margin: 4px 0; text-align: left; }
-    .bottom { position: fixed; left: 14px; bottom: 14px; right: 14px; display: grid; grid-template-columns: 260px 1fr; gap: 10px; pointer-events: none; }
-    .help { padding: 10px 12px; font-size: 13px; line-height: 1.55; }
-    .sealCards { display: grid; grid-template-columns: repeat(3, minmax(180px, 1fr)); gap: 10px; }
-    .sealCard { padding: 10px 12px; min-height: 118px; }
-    .bar { height: 9px; border-radius: 99px; background: rgba(0,0,0,.35); overflow: hidden; margin: 4px 0 8px; }
-    .fill { height: 100%; background: linear-gradient(90deg,#79e54c,#16b15e); }
-    .log { margin-top: 8px; font-size: 13px; max-height: 115px; overflow: hidden; color: #d7efff; }
-    .start { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(23,112,145,.82), rgba(2,12,22,.96)); pointer-events: auto; }
-    .startCard { width: min(620px, calc(100vw - 36px)); padding: 30px; text-align: center; }
-    .startCard h1 { margin: 0 0 8px; font-size: clamp(30px, 6vw, 56px); }
-    .startCard p { color: #cdefff; line-height: 1.7; }
-    .startActions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
-    .saveInfo { margin-top: 10px; color: #cdefff; font-size: 13px; line-height: 1.55; }
-    .savePanel { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.16); color: #cdefff; font-size: 13px; line-height: 1.45; }
-    .savePanel button { width: 100%; margin-top: 8px; text-align: center; }
-    .zoomBtns { display: flex; gap: 6px; margin-top: 8px; pointer-events: auto; }
-    .zoomBtns button { width: 42px; text-align: center; }
-.speedControls { margin-bottom: 10px; padding-bottom: 10px; border-bottom: 1px solid rgba(255,255,255,.16); }
-.speedButtons { display: grid; grid-template-columns: repeat(2, 1fr); gap: 5px; margin-top: 6px; }
-.speedButtons button { margin: 0; text-align: center; }
-.speedStatus { margin-top: 6px; color: #cdefff; font-size: 12px; }
+:root {
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --panel-bg: rgba(5, 18, 28, .84);
+  --panel-border: rgba(255,255,255,.18);
+  --accent: #ffe38a;
+  --muted: #cdefff;
+}
+* { box-sizing: border-box; }
+body { margin: 0; overflow: hidden; background: #071d2a; color: #f7fbff; }
+canvas { display: block; width: 100vw; height: 100vh; cursor: crosshair; background: #0b5875; }
+.panel { background: var(--panel-bg); border: 1px solid var(--panel-border); box-shadow: 0 8px 26px rgba(0,0,0,.3); border-radius: 10px; backdrop-filter: blur(6px); }
+button { appearance: none; border: 1px solid rgba(255,255,255,.22); border-radius: 8px; background: linear-gradient(#1e5d75,#123848); color: #fff; padding: 7px 10px; font-weight: 800; cursor: pointer; box-shadow: inset 0 1px rgba(255,255,255,.16); touch-action: manipulation; }
+button:hover { filter: brightness(1.15); }
+button.active { background: linear-gradient(#f0a73a,#a86619); color: #1d1000; }
+button.subtle { background: rgba(255,255,255,.08); }
+.topHud { position: fixed; top: 12px; left: 12px; z-index: 30; pointer-events: none; }
+.compactHud { padding: 8px 11px; min-width: min(430px, calc(100vw - 196px)); line-height: 1.35; font-size: 13px; }
+.compactHud b { color: var(--accent); font-size: 16px; }
+.hudRow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .dateLine { color: #9ee8ff; font-weight: 800; }
-.selectedSealCard { max-width: 520px; line-height: 1.48; }
-.emptySealCard { max-width: 320px; color: #cdefff; }
+.hudMessage { margin-top: 4px; color: #d7efff; max-width: 640px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.speedHud { position: fixed; top: 12px; right: 12px; z-index: 35; padding: 8px; min-width: 172px; pointer-events: auto; }
+.speedTitle { display: flex; justify-content: space-between; gap: 8px; align-items: center; margin-bottom: 6px; font-size: 13px; color: var(--muted); }
+.speedButtons { display: grid; grid-template-columns: repeat(4, minmax(34px, 1fr)); gap: 5px; }
+.speedButtons button { padding: 6px 7px; text-align: center; }
+.bottomUi { position: fixed; left: 12px; right: 12px; bottom: 12px; z-index: 32; display: grid; gap: 8px; pointer-events: none; }
+.bottomTabBar { display: flex; gap: 7px; justify-content: center; pointer-events: auto; }
+.bottomTabBar button { min-width: 92px; padding: 8px 12px; }
+.bottomPanel { pointer-events: auto; max-height: min(36vh, 330px); min-height: 124px; overflow: auto; padding: 12px; }
+.panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
+.panelHeader h2 { margin: 0; font-size: 17px; }
+.panelHint { color: var(--muted); font-size: 13px; }
+.compactGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; }
+.compactCard { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); border-radius: 9px; padding: 9px 10px; line-height: 1.45; font-size: 13px; }
+.compactCard b { color: var(--accent); }
+.buildPanel { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.25fr); gap: 12px; }
+.buildCategories { display: grid; gap: 8px; }
+.categoryButtons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.toolButton { min-width: 96px; text-align: left; }
+.buildActions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
+.helpText, .savePanel { color: var(--muted); font-size: 13px; line-height: 1.55; }
+.savePanel { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.16); }
+.zoomBtns { display: flex; gap: 6px; margin-top: 7px; }
+.zoomBtns button { min-width: 42px; text-align: center; }
+.bar { height: 9px; border-radius: 99px; background: rgba(0,0,0,.35); overflow: hidden; margin: 5px 0 8px; }
+.fill { height: 100%; background: linear-gradient(90deg,#79e54c,#16b15e); }
+.sealCard { padding: 9px 10px; }
+.selectedSealCard, .dungeonPanel { line-height: 1.48; }
 .selectedSealCard hr { border: 0; border-top: 1px solid rgba(255,255,255,.16); margin: 8px 0; }
-.dungeonPanel { max-width: 560px; line-height: 1.5; pointer-events: auto; }
 .dungeonButtons { display: flex; gap: 8px; margin-top: 8px; flex-wrap: wrap; }
-.warnText { color: #ffd47a; font-weight: 700; }
-.sealCards { pointer-events: auto; }
-.bottom { z-index: 20; }
-.sealCards, .dungeonPanel, .dungeonButtons, .dungeonButtons button { pointer-events: auto; }
-.dungeonButtons button { touch-action: manipulation; }
+.warnText { color: #ffd47a; font-weight: 800; }
+.thresholdList { display: flex; gap: 6px; flex-wrap: wrap; }
+.thresholdPill { border-radius: 999px; border: 1px solid rgba(255,255,255,.16); padding: 3px 8px; background: rgba(255,255,255,.07); }
+.thresholdPill.done { background: rgba(110,231,168,.24); color: #bfffdc; }
+.log { margin-top: 8px; font-size: 13px; max-height: 74px; overflow: auto; color: #d7efff; }
+.start { position: fixed; inset: 0; display: grid; place-items: center; background: radial-gradient(circle at 50% 35%, rgba(23,112,145,.82), rgba(2,12,22,.96)); pointer-events: auto; z-index: 50; }
+.startCard { width: min(620px, calc(100vw - 36px)); padding: 30px; text-align: center; }
+.startCard h1 { margin: 0 0 8px; font-size: clamp(30px, 6vw, 56px); }
+.startCard p { color: var(--muted); line-height: 1.7; }
+.startActions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+.saveInfo { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+@media (max-width: 760px) {
+  .compactHud { min-width: 0; max-width: calc(100vw - 116px); font-size: 12px; }
+  .speedHud { min-width: 96px; }
+  .speedTitle { font-size: 11px; }
+  .speedButtons { grid-template-columns: repeat(2, 1fr); }
+  .bottomUi { left: 6px; right: 6px; bottom: 6px; }
+  .bottomTabBar { justify-content: stretch; gap: 4px; }
+  .bottomTabBar button { min-width: 0; flex: 1; padding: 7px 4px; }
+  .bottomPanel { max-height: 42vh; padding: 9px; }
+  .buildPanel { grid-template-columns: 1fr; }
+}
