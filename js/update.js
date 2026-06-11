@@ -16,7 +16,7 @@ function update(deltaMs) {
   updateAutoSave(safeDeltaMs);
   gameState.timers.ui += dt;
   if (gameState.timers.ui >= CONFIG.timing.uiMs / 1000) {
-    gameState.ui.needsHudUpdate = true;
+    markUIDirty('tick');
     gameState.timers.ui = 0;
   }
 }
@@ -912,7 +912,6 @@ function updateDungeons(deltaMs) {
     const areas = Object.keys(CONFIG.dungeon?.areas ?? {});
     if (areas.length > 0) spawnDungeon(areas[Math.floor(Math.random() * areas.length)]);
   }
-  gameState.ui.needsHudUpdate = true;
   clearSelectedDungeonIfInvalid();
 }
 
