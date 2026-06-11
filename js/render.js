@@ -269,7 +269,7 @@ function renderUI() {
       renderSpeedControls();
     }
     if (shouldUpdatePanel) {
-      renderBottomTabs();
+      renderBottomTabBar();
       renderBottomPanel();
     }
     updateToolButtons();
@@ -299,14 +299,20 @@ function renderSpeedControls() {
   if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
 }
 
-function renderBottomTabs() {
+function renderBottomTabBar() {
   for (const button of bottomTabBarEl?.querySelectorAll('button[data-tab], button[data-bottom-tab]') ?? []) {
     button.classList.toggle('active', (button.dataset?.tab ?? button.dataset?.bottomTab) === (gameState.ui?.activeBottomTab ?? null));
   }
 }
 
+function renderBottomTabs() { renderBottomTabBar(); }
+
 function getBottomPanelScrollElement() {
   return bottomPanelEl?.querySelector?.('.bottom-panel-content') ?? null;
+}
+
+function getBottomPanelHeaderElement() {
+  return bottomPanelEl?.querySelector?.('.bottom-panel-header') ?? null;
 }
 
 function saveBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab ?? gameState.ui?.renderedBottomPanelTab ?? null) {
@@ -323,6 +329,21 @@ function restoreBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab 
   scrollElement.scrollTop = saved;
 }
 
+function getBottomPanelMeta(tabId) {
+  const meta = {
+    build: { title: '建設', hint: '道路・施設・装飾・管理ツールを選んでマップに配置します。' },
+    seals: { title: '人物', hint: 'アザラシをクリックすると詳細表示' },
+    dungeons: { title: 'ダンジョン', hint: 'マップ上のダンジョンをクリックして攻略開始' },
+    progress: { title: '発展', hint: '知名度と訪問者解放の詳細' }
+  };
+  return meta[tabId] ?? { title: BOTTOM_TABS.find(tab => tab.id === tabId)?.label ?? '', hint: '' };
+}
+
+function renderBottomPanelHeader(tabId) {
+  const meta = getBottomPanelMeta(tabId);
+  return `<div><h2>${escapeHtml(meta.title)}</h2>${meta.hint ? `<div class="panelHint">${escapeHtml(meta.hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button>`;
+}
+
 function renderBottomPanel() {
   if (!bottomPanelEl) return;
   const previousTab = gameState.ui?.renderedBottomPanelTab ?? null;
@@ -337,8 +358,13 @@ function renderBottomPanel() {
   }
 
   const tabChanged = previousTab !== active;
-  if (!getBottomPanelScrollElement() || tabChanged) bottomPanelEl.innerHTML = '<div class="bottom-panel-content"></div>';
+  if (!getBottomPanelScrollElement() || !getBottomPanelHeaderElement() || tabChanged) {
+    bottomPanelEl.innerHTML = '<div class="bottom-panel-header"></div><div class="bottom-panel-content"></div>';
+  }
   if (gameState.ui) gameState.ui.renderedBottomPanelTab = active;
+
+  const headerElement = getBottomPanelHeaderElement();
+  if (headerElement) headerElement.innerHTML = renderBottomPanelHeader(active);
 
   const renderers = { build: renderBuildPanel, seals: renderSealsPanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
   const content = renderers[active]?.() ?? '';
@@ -348,7 +374,7 @@ function renderBottomPanel() {
 }
 
 function panelHeader(title, hint = '') {
-  return `<div class="panelHeader"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button></div>`;
+  return `<div class="bottom-panel-header"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button></div>`;
 }
 
 function renderBuildPanel() {
@@ -361,8 +387,7 @@ function renderBuildPanel() {
     return `<div class="compactCard"><b>${escapeHtml(category.label)}</b><div class="categoryButtons">${buttons}</div></div>`;
   }).join('');
   const selected = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
-  return `${panelHeader('建設', '道路・施設・装飾・管理ツールを選んでマップに配置します。')}
-    <div class="buildPanel">
+  return `<div class="buildPanel">
       <div class="buildCategories">${categoryHtml}</div>
       <div>
         <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S')}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
@@ -378,8 +403,7 @@ function renderSealsPanel() {
   const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked);
   const locked = (gameState.visitorProfiles ?? []).filter(profile => !isVisitorProfileUnlocked(profile));
   const visitorCards = visitors.length ? visitors.map(seal => `<div class="compactCard"><b>${escapeHtml(seal.name)}</b><br>${escapeHtml(stateLabel(seal.state))}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))}/${Math.ceil(getSealEffectiveStats(seal).maxHp)}</div>`).join('') : '<div class="compactCard">訪問中のあざらしはいません。</div>';
-  return `${panelHeader('人物', 'アザラシをクリックすると詳細表示')}
-    <div class="compactGrid">
+  return `<div class="compactGrid">
       <div class="compactCard"><b>住民</b><br>${escapeHtml(resident?.name ?? gameState.residentName)}<br>${escapeHtml(stateLabel(resident?.state ?? 'idle'))}</div>
       <div class="compactCard"><b>訪問者</b><br>活動中: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>解放済み: ${unlocked.length} / ${(gameState.visitorProfiles ?? []).length}<br>未解放: ${locked.map(profile => `${escapeHtml(profile.name)}(${Math.floor(safeFiniteNumber(profile.unlockedAtKnownness, 0, 0))})`).join('、') || 'なし'}</div>
       ${visitorCards}
@@ -394,8 +418,7 @@ function renderDungeonsPanel() {
     const ratio = Math.max(0, Math.min(100, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1)) * 100));
     return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><div class="bar"><div class="fill" style="width:${ratio}%"></div></div>進行 ${Math.floor(ratio)}%</div>`;
   }).join('') : '<div class="compactCard">攻略中のダンジョンはありません。</div>';
-  return `${panelHeader('ダンジョン', 'マップ上のダンジョンをクリックして攻略開始')}
-    <div class="compactGrid">
+  return `<div class="compactGrid">
       <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
       ${runningHtml}
       ${renderSelectedDungeonDetail()}
@@ -410,8 +433,7 @@ function renderProgressPanel() {
   const thresholds = (CONFIG.KNOWNNESS?.UNLOCK_THRESHOLDS ?? [100, 200, 300, 400, 500]).map(value => `<span class="thresholdPill ${knownness >= value ? 'done' : ''}">${value}</span>`).join('');
   const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked).map(profile => escapeHtml(profile.name)).join('、') || 'なし';
   const monthly = `狩猟${gameState.stats?.monthlyHunts ?? 0}回 / 前月知名度+${Math.floor(safeFiniteNumber(gameState.stats?.monthlyKnownnessGained, 0, 0))} / 今月収入${Math.floor(safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0))}G`;
-  return `${panelHeader('発展', '知名度と訪問者解放の詳細')}
-    <div class="compactGrid">
+  return `<div class="compactGrid">
       <div class="compactCard"><b>知名度</b><br>${Math.floor(knownness)} / ${Math.floor(nextGoal)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(1, ratio)) * 100}%"></div></div>次の目標: ${Math.floor(nextGoal)}</div>
       <div class="compactCard"><b>次の訪問者</b><br>${nextUnlock ? `${escapeHtml(nextUnlock.name)}（${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))}）` : 'すべて解放済み'}</div>
       <div class="compactCard"><b>しきい値</b><div class="thresholdList">${thresholds}</div></div>
