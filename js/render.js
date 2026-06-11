@@ -259,6 +259,7 @@ function renderUI() {
   renderHUD();
   renderSpeedControls();
   renderBottomTabs();
+  renderBottomPanel();
   updateToolButtons();
 }
 
@@ -279,17 +280,22 @@ function renderSpeedControls() {
 }
 
 function renderBottomTabs() {
+  for (const button of bottomTabBarEl?.querySelectorAll('button[data-bottom-tab]') ?? []) {
+    button.classList.toggle('active', button.dataset?.bottomTab === (gameState.ui?.activeBottomTab ?? null));
+  }
+}
+
+function renderBottomPanel() {
   if (!bottomPanelEl) return;
   const active = gameState.ui?.activeBottomTab ?? null;
   bottomPanelEl.hidden = !active;
   if (!active) {
     bottomPanelEl.innerHTML = '';
-    updateToolButtons();
     return;
   }
   const renderers = { build: renderBuildPanel, seals: renderSealsPanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
-  bottomPanelEl.innerHTML = renderers[active]?.() ?? '';
-  updateToolButtons();
+  const content = renderers[active]?.() ?? '';
+  bottomPanelEl.innerHTML = `<div class="bottom-panel-content">${content}</div>`;
 }
 
 function panelHeader(title, hint = '') {
