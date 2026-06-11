@@ -10,10 +10,7 @@ function getSerializableGameState() {
       zoom: clampNumber(gameState.camera?.zoom, CONFIG.camera.minZoom, CONFIG.camera.maxZoom, CONFIG.camera.zoom)
     },
     ui: {
-      selectedTool: getTool(gameState.ui?.selectedTool)?.id ?? 'road',
-      directionIndex: clampInteger(gameState.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2),
-      selectedSealId: gameState.ui?.selectedSealId ? String(gameState.ui.selectedSealId) : null,
-      selectedDungeonId: gameState.ui?.selectedDungeonId ? String(gameState.ui.selectedDungeonId) : null
+      directionIndex: clampInteger(gameState.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2)
     },
     world: {
       tiles: cloneSerializable(gameState.world?.tiles, []),
@@ -137,10 +134,12 @@ function applyLoadedGameState(data) {
   gameState.camera.x = safeFiniteNumber(loaded.camera?.x, CONFIG.camera.x);
   gameState.camera.y = safeFiniteNumber(loaded.camera?.y, CONFIG.camera.y);
   gameState.camera.zoom = clampNumber(loaded.camera?.zoom, CONFIG.camera.minZoom, CONFIG.camera.maxZoom, CONFIG.camera.zoom);
-  gameState.ui.selectedTool = getTool(loaded.ui?.selectedTool)?.id ?? 'road';
+  gameState.ui.activeBottomTab = null;
+  gameState.ui.panelCollapsed = true;
+  gameState.ui.selectedTool = null;
   gameState.ui.directionIndex = clampInteger(loaded.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2);
-  gameState.ui.selectedSealId = loaded.ui?.selectedSealId ? String(loaded.ui.selectedSealId) : null;
-  gameState.ui.selectedDungeonId = loaded.ui?.selectedDungeonId ? String(loaded.ui.selectedDungeonId) : null;
+  gameState.ui.selectedSealId = null;
+  gameState.ui.selectedDungeonId = null;
   gameState.world.tiles = data?.version < 4 ? generateInitialMap() : normalizeTiles(loaded.world?.tiles);
   protectOpenCorridors(gameState.world);
   gameState.world.roads = normalizeRoads(loaded.world?.roads);

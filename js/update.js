@@ -11,7 +11,7 @@ function update(deltaMs) {
   updateSpawner(dt);
   updateDungeons(safeDeltaMs);
   updateSeals(dt);
-  clearMissingSelectedSeal();
+  clearContextSelectionIfInvalid();
   removeDefeatedMonsters();
   updateAutoSave(safeDeltaMs);
   gameState.timers.ui += dt;
