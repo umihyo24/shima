@@ -16,13 +16,15 @@ function update(deltaMs) {
   updateAutoSave(safeDeltaMs);
   gameState.timers.ui += dt;
   if (gameState.timers.ui >= CONFIG.timing.uiMs / 1000) {
-    gameState.ui.needsHudUpdate = true;
+    markUIDirty('tick');
     gameState.timers.ui = 0;
   }
 }
 
 function clearMissingSelectedSeal() {
   if (gameState.ui?.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === gameState.ui.selectedSealId)) gameState.ui.selectedSealId = null;
+  if (gameState.ui?.selectedPersonRosterId?.startsWith?.('seal:') && !getSealById(gameState.ui.selectedPersonRosterId.slice('seal:'.length))) gameState.ui.selectedPersonRosterId = null;
+  if (gameState.ui?.selectedPersonRosterId?.startsWith?.('profile:') && !getVisitorProfileById(gameState.ui.selectedPersonRosterId.slice('profile:'.length))) gameState.ui.selectedPersonRosterId = null;
 }
 
 function updateCalendar(deltaMs) {
@@ -912,7 +914,6 @@ function updateDungeons(deltaMs) {
     const areas = Object.keys(CONFIG.dungeon?.areas ?? {});
     if (areas.length > 0) spawnDungeon(areas[Math.floor(Math.random() * areas.length)]);
   }
-  gameState.ui.needsHudUpdate = true;
   clearSelectedDungeonIfInvalid();
 }
 

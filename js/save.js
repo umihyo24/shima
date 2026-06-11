@@ -139,6 +139,7 @@ function applyLoadedGameState(data) {
   gameState.ui.selectedTool = null;
   gameState.ui.directionIndex = clampInteger(loaded.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2);
   gameState.ui.selectedSealId = null;
+  gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.world.tiles = data?.version < 4 ? generateInitialMap() : normalizeTiles(loaded.world?.tiles);
   protectOpenCorridors(gameState.world);

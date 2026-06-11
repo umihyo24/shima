@@ -5,7 +5,7 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedDungeonId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true },
+    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
@@ -337,6 +337,10 @@ function getVisitorProfileById(id) {
   return (gameState.visitorProfiles ?? []).find(profile => profile?.id === id) ?? (CONFIG.visitor?.profiles ?? []).find(profile => profile?.id === id) ?? null;
 }
 
+function getSealById(id) {
+  return (gameState.seals ?? []).find(seal => seal?.id === id) ?? null;
+}
+
 function assetKeyForVisitorProfile(profileId) {
   const id = String(profileId || '');
   if (id.includes('kurakake')) return 'seals.kurakake';
@@ -464,6 +468,7 @@ function initGame(residentName) {
   gameState.dungeons = [];
   gameState.shopCatalog = { unlockedItemIds: [], discoveredAt: {} };
   gameState.ui.selectedSealId = null;
+  gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.logs = [];
   gameState.village.knownness = CONFIG.knownness.initial;

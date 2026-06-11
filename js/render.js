@@ -252,14 +252,35 @@ function drawMinimap() {
 function getResidentSeal() { return (gameState.seals ?? []).find(seal => seal?.type === 'resident') ?? null; }
 function escapeHtml(value) { return String(value ?? '').replace(/[&<>\"]/g, char => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '\"':'&quot;' }[char] ?? char)); }
 
-function updateHud() { renderUI(); }
+function updateHud() { markUIDirty('all'); renderUI(); }
 
 function renderUI() {
-  clearContextSelectionIfInvalid();
-  renderHUD();
-  renderSpeedControls();
-  renderBottomTabs();
-  updateToolButtons();
+  if (!gameState.ui) return;
+  const selectionChanged = clearContextSelectionIfInvalid();
+  if (selectionChanged) markUIDirty('selection');
+
+  const shouldUpdateHud = gameState.ui.needsHudUpdate === true;
+  const shouldUpdatePanel = gameState.ui.needsPanelUpdate === true;
+  if (!shouldUpdateHud && !shouldUpdatePanel) return;
+
+  try {
+    if (shouldUpdateHud) {
+      renderHUD();
+      renderSpeedControls();
+    }
+    if (shouldUpdatePanel) {
+      renderBottomTabBar();
+      renderBottomPanel();
+    }
+    updateToolButtons();
+    if (shouldUpdateHud) gameState.ui.needsHudUpdate = false;
+    if (shouldUpdatePanel) gameState.ui.needsPanelUpdate = false;
+  } catch (error) {
+    console.error('UI render error:', error);
+    gameState.ui.needsHudUpdate = false;
+    gameState.ui.needsPanelUpdate = false;
+    gameState.ui.message = `UIエラー: ${error?.message ?? error}`;
+  }
 }
 
 function renderHUD() {
@@ -278,22 +299,90 @@ function renderSpeedControls() {
   if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
 }
 
-function renderBottomTabs() {
+function renderBottomTabBar() {
+  for (const button of bottomTabBarEl?.querySelectorAll('button[data-tab], button[data-bottom-tab]') ?? []) {
+    button.classList.toggle('active', (button.dataset?.tab ?? button.dataset?.bottomTab) === (gameState.ui?.activeBottomTab ?? null));
+  }
+}
+
+function renderBottomTabs() { renderBottomTabBar(); }
+
+function getBottomPanelContentElement() {
+  return bottomPanelEl?.querySelector?.('.bottom-panel-content') ?? null;
+}
+
+function getBottomPanelScrollElement(tabId = gameState.ui?.activeBottomTab ?? gameState.ui?.renderedBottomPanelTab ?? null) {
+  if (tabId === 'seals') return bottomPanelEl?.querySelector?.('.people-table-wrap') ?? getBottomPanelContentElement();
+  return getBottomPanelContentElement();
+}
+
+function getBottomPanelHeaderElement() {
+  return bottomPanelEl?.querySelector?.('.bottom-panel-header') ?? null;
+}
+
+function saveBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab ?? gameState.ui?.renderedBottomPanelTab ?? null) {
+  const scrollElement = getBottomPanelScrollElement(tabId);
+  if (!scrollElement || !tabId || !gameState.ui) return;
+  gameState.ui.panelScrollTopByTab = gameState.ui.panelScrollTopByTab ?? {};
+  gameState.ui.panelScrollTopByTab[tabId] = scrollElement.scrollTop;
+}
+
+function restoreBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab ?? null) {
+  const scrollElement = getBottomPanelScrollElement(tabId);
+  if (!scrollElement || !tabId) return;
+  const saved = safeFiniteNumber(gameState.ui?.panelScrollTopByTab?.[tabId], 0, 0);
+  scrollElement.scrollTop = saved;
+}
+
+function getBottomPanelMeta(tabId) {
+  const meta = {
+    build: { title: '建設', hint: '道路・施設・装飾・管理ツールを選んでマップに配置します。' },
+    seals: { title: '人物', hint: 'アザラシをクリックすると詳細表示' },
+    dungeons: { title: 'ダンジョン', hint: 'マップ上のダンジョンをクリックして攻略開始' },
+    progress: { title: '発展', hint: '知名度と訪問者解放の詳細' }
+  };
+  return meta[tabId] ?? { title: BOTTOM_TABS.find(tab => tab.id === tabId)?.label ?? '', hint: '' };
+}
+
+function renderBottomPanelHeader(tabId) {
+  const meta = getBottomPanelMeta(tabId);
+  return `<div><h2>${escapeHtml(meta.title)}</h2>${meta.hint ? `<div class="panelHint">${escapeHtml(meta.hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button>`;
+}
+
+function renderBottomPanel() {
   if (!bottomPanelEl) return;
+  const previousTab = gameState.ui?.renderedBottomPanelTab ?? null;
+  saveBottomPanelScrollPosition(previousTab);
+
   const active = gameState.ui?.activeBottomTab ?? null;
   bottomPanelEl.hidden = !active;
   if (!active) {
     bottomPanelEl.innerHTML = '';
-    updateToolButtons();
+    if (gameState.ui) gameState.ui.renderedBottomPanelTab = null;
     return;
   }
+
+  const tabChanged = previousTab !== active;
+  if (!getBottomPanelContentElement() || !getBottomPanelHeaderElement() || tabChanged) {
+    bottomPanelEl.innerHTML = '<div class="bottom-panel-header"></div><div class="bottom-panel-content"></div>';
+  }
+  if (gameState.ui) gameState.ui.renderedBottomPanelTab = active;
+
+  const headerElement = getBottomPanelHeaderElement();
+  if (headerElement) headerElement.innerHTML = renderBottomPanelHeader(active);
+
   const renderers = { build: renderBuildPanel, seals: renderSealsPanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
-  bottomPanelEl.innerHTML = renderers[active]?.() ?? '';
-  updateToolButtons();
+  const content = renderers[active]?.() ?? '';
+  const contentElement = getBottomPanelContentElement();
+  if (contentElement) {
+    contentElement.className = `bottom-panel-content${active === 'seals' ? ' people-panel-content' : ''}`;
+    contentElement.innerHTML = content;
+  }
+  restoreBottomPanelScrollPosition(active);
 }
 
 function panelHeader(title, hint = '') {
-  return `<div class="panelHeader"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="closeBottom" class="subtle">閉じる</button></div>`;
+  return `<div class="bottom-panel-header"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button></div>`;
 }
 
 function renderBuildPanel() {
@@ -306,8 +395,7 @@ function renderBuildPanel() {
     return `<div class="compactCard"><b>${escapeHtml(category.label)}</b><div class="categoryButtons">${buttons}</div></div>`;
   }).join('');
   const selected = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
-  return `${panelHeader('建設', '道路・施設・装飾・管理ツールを選んでマップに配置します。')}
-    <div class="buildPanel">
+  return `<div class="buildPanel">
       <div class="buildCategories">${categoryHtml}</div>
       <div>
         <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S')}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
@@ -317,19 +405,185 @@ function renderBuildPanel() {
     </div>`;
 }
 
-function renderSealsPanel() {
-  const resident = getResidentSeal();
-  const visitors = (gameState.seals ?? []).filter(seal => seal?.type === 'visitor');
-  const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked);
-  const locked = (gameState.visitorProfiles ?? []).filter(profile => !isVisitorProfileUnlocked(profile));
-  const visitorCards = visitors.length ? visitors.map(seal => `<div class="compactCard"><b>${escapeHtml(seal.name)}</b><br>${escapeHtml(stateLabel(seal.state))}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))}/${Math.ceil(getSealEffectiveStats(seal).maxHp)}</div>`).join('') : '<div class="compactCard">訪問中のあざらしはいません。</div>';
-  return `${panelHeader('人物', 'アザラシをクリックすると詳細表示')}
-    <div class="compactGrid">
-      <div class="compactCard"><b>住民</b><br>${escapeHtml(resident?.name ?? gameState.residentName)}<br>${escapeHtml(stateLabel(resident?.state ?? 'idle'))}</div>
-      <div class="compactCard"><b>訪問者</b><br>活動中: ${visitors.length} / ${CONFIG.visitor.maxActive}<br>解放済み: ${unlocked.length} / ${(gameState.visitorProfiles ?? []).length}<br>未解放: ${locked.map(profile => `${escapeHtml(profile.name)}(${Math.floor(safeFiniteNumber(profile.unlockedAtKnownness, 0, 0))})`).join('、') || 'なし'}</div>
-      ${visitorCards}
-      ${renderSelectedSealDetail()}
-    </div>`;
+function renderSealsPanel() { return renderPeoplePanel(); }
+
+function renderPeoplePanel() {
+  const rows = getPeopleRosterRows();
+  const state = getSealListState();
+  const activeVisitors = (gameState.seals ?? []).filter(seal => seal?.type === 'visitor').length;
+  const unlockedVisitors = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked).length;
+  const filters = [
+    ['all', '全員'], ['resident', '住民'], ['activeVisitors', '訪問中'],
+    ['hunting', '狩猟中'], ['resting', '休憩中'], ['unlockedVisitors', '解放済み']
+  ].map(([id, label]) => `<button data-seal-filter="${id}" class="${state.filter === id ? 'active' : 'subtle'}">${label}</button>`).join('');
+  return `<div class="people-panel">
+    <div class="people-controls"><div class="people-filter-buttons">${filters}</div><div class="people-counts">訪問中 ${activeVisitors} / ${CONFIG.visitor.maxActive} ・ 解放済み ${unlockedVisitors} / ${(gameState.visitorProfiles ?? []).length}</div></div>
+    ${renderPeopleTable(rows)}
+    ${renderSelectedPersonDetail(getSelectedPerson())}
+  </div>`;
+}
+
+function getPeopleRosterRows() {
+  const activeProfileIds = new Set((gameState.seals ?? []).map(seal => seal?.profileId).filter(Boolean));
+  const rows = [];
+  for (const seal of gameState.seals ?? []) {
+    if (!seal) continue;
+    const stats = getSealEffectiveStats(seal);
+    const maxHp = safeFiniteNumber(stats.maxHp, seal?.maxHp ?? CONFIG.seal.maxHp, 1);
+    rows.push({
+      rosterId: `seal:${seal.id}`,
+      kind: 'seal',
+      entity: seal,
+      seal,
+      profile: seal.profileId ? getVisitorProfileById(seal.profileId) : null,
+      name: seal.name,
+      type: seal.type === 'resident' ? '住民' : '訪問者',
+      typeOrder: seal.type === 'resident' ? 0 : 1,
+      hpRate: safeFiniteNumber(seal.hp, 0, 0) / Math.max(1, maxHp),
+      level: clampInteger(seal.level, 1, Number.MAX_SAFE_INTEGER, 1),
+      favor: safeFiniteNumber(seal.favor, 0, 0),
+      state: stateLabel(seal.state),
+      rawState: seal.state,
+      stayTime: safeFiniteNumber(seal.visitTimerMs, 0, 0),
+      hunts: clampInteger(seal.huntsThisVisit, 0, Number.MAX_SAFE_INTEGER, 0),
+      facilitiesUsed: clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0),
+      weapon: formatEquipmentSlotName(seal, 'weapon'),
+      armor: formatEquipmentSlotName(seal, 'armor'),
+      accessory: formatEquipmentSlotName(seal, 'accessory')
+    });
+  }
+  for (const profile of gameState.visitorProfiles ?? []) {
+    if (!profile || !isVisitorProfileUnlocked(profile) || activeProfileIds.has(profile.id)) continue;
+    rows.push({
+      rosterId: `profile:${profile.id}`,
+      kind: 'profile',
+      entity: profile,
+      seal: null,
+      profile,
+      name: profile.name,
+      type: '訪問者',
+      typeOrder: 2,
+      hpRate: 0,
+      level: clampInteger(profile.level, 1, Number.MAX_SAFE_INTEGER, 1),
+      favor: safeFiniteNumber(profile.favor, 0, 0),
+      state: '未訪問',
+      rawState: 'notVisiting',
+      stayTime: 0,
+      hunts: 0,
+      facilitiesUsed: 0,
+      weapon: formatEquipmentSlotName(profile, 'weapon'),
+      armor: formatEquipmentSlotName(profile, 'armor'),
+      accessory: formatEquipmentSlotName(profile, 'accessory')
+    });
+  }
+  const filter = getSealListState().filter;
+  const filtered = rows.filter(row => {
+    if (filter === 'resident') return row.seal?.type === 'resident';
+    if (filter === 'activeVisitors') return row.seal?.type === 'visitor';
+    if (filter === 'unlockedVisitors') return row.kind === 'profile' || row.seal?.type === 'visitor';
+    if (filter === 'hunting') return ['hunting', 'movingToMonster', 'fighting', 'returningFromHunt', 'movingToHuntArea'].includes(row.rawState);
+    if (filter === 'questing') return row.rawState === 'questing';
+    if (filter === 'resting') return ['resting', 'movingToInn', 'usingFacility', 'choosingFacility', 'movingToFacility'].includes(row.rawState);
+    return true;
+  });
+  return sortPeopleRows(filtered, getSealListState().sortKey, getSealListState().sortDir);
+}
+
+function sortPeopleRows(rows, sortKey, sortDir) {
+  const dir = sortDir === 'desc' ? -1 : 1;
+  const textKeys = new Set(['name', 'type', 'state', 'weapon', 'armor', 'accessory']);
+  return [...(rows ?? [])].sort((a, b) => {
+    let av = sortKey === 'type' ? a.typeOrder : a?.[sortKey];
+    let bv = sortKey === 'type' ? b.typeOrder : b?.[sortKey];
+    if (textKeys.has(sortKey)) return String(av ?? '').localeCompare(String(bv ?? ''), 'ja') * dir || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'ja');
+    return (safeFiniteNumber(av, 0, 0) - safeFiniteNumber(bv, 0, 0)) * dir || String(a.name ?? '').localeCompare(String(b.name ?? ''), 'ja');
+  });
+}
+
+function renderPeopleTable(rows) {
+  const columns = [
+    ['name', '名前'], ['type', '種別'], ['hpRate', 'HP'], ['level', 'Lv'], ['favor', '好感度'],
+    ['state', '状態'], ['stayTime', '滞在'], ['hunts', '狩猟'], ['weapon', '武器'], ['armor', '防具'], ['accessory', 'アクセ']
+  ];
+  const state = getSealListState();
+  const selectedId = getSelectedPerson()?.rosterId ?? null;
+  const headers = columns.map(([key, label]) => `<th><button data-seal-sort="${key}" class="sortHeader">${label}${state.sortKey === key ? `<span>${state.sortDir === 'asc' ? ' ▲' : ' ▼'}</span>` : ''}</button></th>`).join('');
+  const body = rows.length ? rows.map(row => `<tr data-roster-id="${escapeHtml(row.rosterId)}" class="${row.rosterId === selectedId ? 'selected' : ''}">
+    <td>${escapeHtml(row.name)}</td><td>${escapeHtml(row.type)}</td><td>${formatHp(row.entity)}</td><td>${row.level}</td><td>${Math.floor(row.favor)}</td>
+    <td>${escapeHtml(row.state)}</td><td>${formatStayTime(row.seal)}</td><td>${row.hunts}</td><td>${escapeHtml(row.weapon)}</td><td>${escapeHtml(row.armor)}</td><td>${escapeHtml(row.accessory)}</td>
+  </tr>`).join('') : '<tr><td colspan="11" class="emptyPeople">条件に合うアザラシはいません。</td></tr>';
+  return `<div class="people-table-wrap"><table class="people-table"><thead><tr>${headers}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function getSelectedPerson() {
+  const rosterId = gameState.ui?.selectedPersonRosterId ?? (gameState.ui?.selectedSealId ? `seal:${gameState.ui.selectedSealId}` : null);
+  if (!rosterId) return null;
+  if (rosterId.startsWith('seal:')) {
+    const seal = getSealById(rosterId.slice('seal:'.length));
+    return seal ? { rosterId, kind: 'seal', entity: seal, seal, profile: seal.profileId ? getVisitorProfileById(seal.profileId) : null } : null;
+  }
+  if (rosterId.startsWith('profile:')) {
+    const profile = getVisitorProfileById(rosterId.slice('profile:'.length));
+    return profile ? { rosterId, kind: 'profile', entity: profile, seal: null, profile } : null;
+  }
+  return null;
+}
+
+function renderSelectedPersonDetail(person) {
+  if (!person) return '<div class="people-detail compactCard">アザラシをクリック、または一覧から選択すると詳細表示</div>';
+  const entity = person.entity;
+  const seal = person.seal;
+  const profile = person.profile;
+  const stats = getPersonEffectiveStats(entity);
+  const personality = getPersonalityConfig(entity)?.label ?? entity?.personality ?? 'balanced';
+  const stay = seal?.type === 'visitor' ? `<br>滞在: ${formatStayTime(seal)} / 最短${Math.floor(safeFiniteNumber(seal.minStayMs, 0, 0) / 1000)}秒 / 最長${Math.floor(safeFiniteNumber(seal.maxStayMs, 0, 0) / 1000)}秒` : '';
+  return `<div class="people-detail compactCard"><b>${escapeHtml(entity?.name ?? '不明')}</b>（${seal?.type === 'resident' ? '住民' : '訪問者'}）<br>
+    性格: ${escapeHtml(personality)} / 状態: ${escapeHtml(seal ? stateLabel(seal.state) : '未訪問')}<br>
+    HP: ${formatHp(entity)} / 所持G: ${seal ? Math.floor(safeFiniteNumber(seal.carriedG, 0, 0)) : '-'} / 装備予算: ${Math.floor(safeFiniteNumber(entity?.gearBudget, 0, 0))}<br>
+    Lv: ${clampInteger(entity?.level, 1, Number.MAX_SAFE_INTEGER, 1)} / EXP: ${Math.floor(safeFiniteNumber(entity?.exp, 0, 0))} / 好感度: ${Math.floor(safeFiniteNumber(entity?.favor, 0, 0))}${stay}<br>
+    訪問狩猟/施設: ${seal?.huntsThisVisit ?? 0}/${seal?.facilitiesUsedThisVisit ?? 0} / 総訪問: ${profile?.visits ?? '-'} / ダンジョン攻略: ${profile?.dungeonClears ?? 0}<br>
+    武器: ${formatEquipmentSlotName(entity, 'weapon')} / 防具: ${formatEquipmentSlotName(entity, 'armor')} / アクセ: ${formatEquipmentSlotName(entity, 'accessory')}<br>
+    有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}
+    <div class="buildActions"><button data-action="closeSeal" class="subtle">選択解除</button></div></div>`;
+}
+
+function formatHp(sealOrProfile) {
+  if (!sealOrProfile) return '-';
+  if (sealOrProfile.type === 'resident' || sealOrProfile.type === 'visitor') {
+    const maxHp = getSealEffectiveStats(sealOrProfile).maxHp;
+    return `${Math.ceil(safeFiniteNumber(sealOrProfile.hp, 0, 0))}/${Math.ceil(maxHp)}`;
+  }
+  return `-/${Math.ceil(safeFiniteNumber(sealOrProfile.baseStats?.maxHp, CONFIG.seal.maxHp, 1))}`;
+}
+
+function formatStayTime(seal) {
+  if (!seal || seal.type !== 'visitor') return '-';
+  return `${Math.floor(safeFiniteNumber(seal.visitTimerMs, 0, 0) / 1000)}秒`;
+}
+
+function formatEquipmentSlotName(entity, slot) {
+  const itemId = entity?.equipment?.[slot] ?? null;
+  if (!itemId) return 'なし';
+  return getItemDef(itemId)?.name ?? '不明';
+}
+
+function getPersonEffectiveStats(entity) {
+  if (!entity) return { attack: 0, defense: 0, maxHp: 1 };
+  if (entity.type === 'resident' || entity.type === 'visitor') return getSealEffectiveStats(entity);
+  const base = entity.baseStats ?? {};
+  const stats = {
+    attack: safeFiniteNumber(base.attack, CONFIG.seal.attack, 0),
+    defense: safeFiniteNumber(base.defense, CONFIG.seal.defense, 0),
+    maxHp: safeFiniteNumber(base.maxHp, CONFIG.seal.maxHp, 1)
+  };
+  for (const slot of ['weapon', 'armor', 'accessory']) {
+    const item = getItemDef(entity.equipment?.[slot]);
+    if (!item) continue;
+    stats.attack += safeFiniteNumber(item.attackBonus, 0, 0);
+    stats.defense += safeFiniteNumber(item.defenseBonus, 0, 0);
+    stats.maxHp += safeFiniteNumber(item.hpBonus, 0, 0);
+  }
+  return stats;
 }
 
 function renderDungeonsPanel() {
@@ -339,8 +593,7 @@ function renderDungeonsPanel() {
     const ratio = Math.max(0, Math.min(100, safeFiniteNumber(dungeon.progressMs, 0, 0) / Math.max(1, safeFiniteNumber(dungeon.durationMs, 1, 1)) * 100));
     return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><div class="bar"><div class="fill" style="width:${ratio}%"></div></div>進行 ${Math.floor(ratio)}%</div>`;
   }).join('') : '<div class="compactCard">攻略中のダンジョンはありません。</div>';
-  return `${panelHeader('ダンジョン', 'マップ上のダンジョンをクリックして攻略開始')}
-    <div class="compactGrid">
+  return `<div class="compactGrid">
       <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
       ${runningHtml}
       ${renderSelectedDungeonDetail()}
@@ -355,8 +608,7 @@ function renderProgressPanel() {
   const thresholds = (CONFIG.KNOWNNESS?.UNLOCK_THRESHOLDS ?? [100, 200, 300, 400, 500]).map(value => `<span class="thresholdPill ${knownness >= value ? 'done' : ''}">${value}</span>`).join('');
   const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked).map(profile => escapeHtml(profile.name)).join('、') || 'なし';
   const monthly = `狩猟${gameState.stats?.monthlyHunts ?? 0}回 / 前月知名度+${Math.floor(safeFiniteNumber(gameState.stats?.monthlyKnownnessGained, 0, 0))} / 今月収入${Math.floor(safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0))}G`;
-  return `${panelHeader('発展', '知名度と訪問者解放の詳細')}
-    <div class="compactGrid">
+  return `<div class="compactGrid">
       <div class="compactCard"><b>知名度</b><br>${Math.floor(knownness)} / ${Math.floor(nextGoal)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(1, ratio)) * 100}%"></div></div>次の目標: ${Math.floor(nextGoal)}</div>
       <div class="compactCard"><b>次の訪問者</b><br>${nextUnlock ? `${escapeHtml(nextUnlock.name)}（${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))}）` : 'すべて解放済み'}</div>
       <div class="compactCard"><b>しきい値</b><div class="thresholdList">${thresholds}</div></div>
@@ -385,11 +637,16 @@ function renderSelectedSealPanel(seal) {
 
 function clearContextSelectionIfInvalid() {
   const ui = gameState.ui ?? {};
-  if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) ui.selectedSealId = null;
-  if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) ui.selectedDungeonId = null;
-  if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) ui.selectedTool = null;
-  if (ui.activeBottomTab && !BOTTOM_TABS.some(tab => tab.id === ui.activeBottomTab)) ui.activeBottomTab = null;
-  ui.panelCollapsed = !ui.activeBottomTab;
+  let changed = false;
+  if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) { ui.selectedSealId = null; changed = true; }
+  if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) { ui.selectedDungeonId = null; changed = true; }
+  if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) { ui.selectedTool = null; changed = true; }
+  if (ui.selectedPersonRosterId?.startsWith?.('seal:') && !getSealById(ui.selectedPersonRosterId.slice('seal:'.length))) { ui.selectedPersonRosterId = null; changed = true; }
+  if (ui.selectedPersonRosterId?.startsWith?.('profile:') && !getVisitorProfileById(ui.selectedPersonRosterId.slice('profile:'.length))) { ui.selectedPersonRosterId = null; changed = true; }
+  if (ui.activeBottomTab && !BOTTOM_TABS.some(tab => tab.id === ui.activeBottomTab)) { ui.activeBottomTab = null; changed = true; }
+  const collapsed = !ui.activeBottomTab;
+  if (ui.panelCollapsed !== collapsed) { ui.panelCollapsed = collapsed; changed = true; }
+  return changed;
 }
 
 function equipmentText(seal, slot) {
