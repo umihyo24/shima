@@ -30,7 +30,7 @@ const BOTTOM_TABS = Object.freeze([
 ]);
 const BUILD_CATEGORIES = Object.freeze([
   { id: 'road', label: '道路', toolIds: ['road'] },
-  { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'blacksmith'] },
+  { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'manjuShop', 'blacksmith'] },
   { id: 'decoration', label: '装飾', toolIds: ['flower', 'tree', 'rock'] },
   { id: 'utility', label: '管理', toolIds: ['clear', 'delete'] }
 ]);

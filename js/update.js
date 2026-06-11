@@ -387,7 +387,7 @@ function updateChoosingArrivalAction(seal) {
   const choice = chooseArrivalActionForVisitor(seal);
   if (choice?.type === 'facility' && choice.facility) {
     const facility = (gameState.world.objects ?? []).find(o => o?.id === choice.facility.id);
-    const purpose = facility?.type === 'inn' ? 'heal' : (chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend');
+    const purpose = getFacilityPurposeForSeal(seal, facility);
     if (facility && routeSealDirectlyToFacility(seal, facility.id, purpose)) {
       seal.currentAction = choice.action ?? seal.currentAction;
       seal.choosingTicks = 0;
@@ -526,7 +526,7 @@ function updateChoosingFacility(seal, dt) {
   }
   const facility = chooseFacilityAfterHunt(seal);
   if (!facility) { handleNoUsableFacility(seal); return; }
-  if (!routeSealDirectlyToFacility(seal, facility.id, facility.type === 'inn' ? 'heal' : (chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend'))) { handleNoUsableFacility(seal); return; }
+  if (!routeSealDirectlyToFacility(seal, facility.id, getFacilityPurposeForSeal(seal, facility))) { handleNoUsableFacility(seal); return; }
 }
 
 function updateChoosingPostHuntFacility(seal, dt) {
@@ -537,7 +537,7 @@ function updateChoosingPostHuntFacility(seal, dt) {
 function updateMovingToFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
-  const validPurpose = facility.type === 'inn' ? 'heal' : (chooseBestAffordableEquipmentUpgrade(seal, facility) ? 'equipment' : 'spend');
+  const validPurpose = getFacilityPurposeForSeal(seal, facility);
   if (!isFacilityStillValidTarget(seal, seal.targetId, validPurpose)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const target = facilityInteractionPoint(facility);
   if (!setSealDestination(seal, target, 'facility')) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
@@ -552,27 +552,36 @@ function updateMovingToFacility(seal, dt) {
 function updateUsingFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (facility?.type === 'inn') { updateResting(seal, dt); return; }
-  if (!facility || !isFacilityStillValidTarget(seal, seal.targetId, 'spend')) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
+  const purpose = getFacilityPurposeForSeal(seal, facility);
+  if (!facility || !isFacilityStillValidTarget(seal, seal.targetId, purpose)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   seal.actionTimer -= dt;
   if (seal.actionTimer > 0) return;
   const upgrade = chooseBestAffordableEquipmentUpgrade(seal, facility);
   if (upgrade && buyAndEquipItem(seal, upgrade.id, facility)) {
-    seal.facilityUseCounts[facility.type] = (seal.facilityUseCounts?.[facility.type] ?? 0) + 1;
-    seal.lastFacilityId = facility.id;
-    if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+    const paid = safeFiniteNumber(upgrade.price, 0, 0);
+    const income = registerFacilityUse(facility, seal, paid);
+    addPlayerIncome(Math.max(0, income - paid));
     afterVillageActivity(seal);
     return;
   }
-  const base = CONFIG.facilities[facility.type]?.spendPerVisit ?? 0;
-  const spent = Math.min(seal.carriedG, Math.round(base * (1 + facilityBonus(facility))));
+  const price = getFacilityPrice(facility);
+  const spent = Math.min(safeFiniteNumber(seal.carriedG, 0, 0), price);
+  if (spent <= 0) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   seal.carriedG -= spent;
-  addPlayerIncome(spent);
-  seal.facilityUseCounts[facility.type] = (seal.facilityUseCounts?.[facility.type] ?? 0) + 1;
-  seal.lastFacilityId = facility.id;
-  if (facility.type === 'restaurant') seal.mealCountSinceInn += 1;
-  if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
-  if (facility.type === 'blacksmith' && Math.random() < CONFIG.seal.blacksmithAttackChance) seal.attack += CONFIG.seal.blacksmithAttackGain;
-  addFavor(seal, CONFIG.seal.favorFacilityUse);
+  const income = isLevelableFacility(facility) ? registerFacilityUse(facility, seal, spent) : spent;
+  addPlayerIncome(income);
+  if (['restaurant', 'manjuShop'].includes(facility.type)) {
+    seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getFacilityHealAmount(facility));
+    seal.mealCountSinceInn = clampInteger(seal.mealCountSinceInn, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  }
+  if (facility.type === 'blacksmith') {
+    seal.facilityUseCounts = normalizeFacilityUseCounts(seal.facilityUseCounts);
+    seal.facilityUseCounts[facility.type] = (seal.facilityUseCounts?.[facility.type] ?? 0) + 1;
+    seal.lastFacilityId = facility.id;
+    if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+    if (Math.random() < CONFIG.seal.blacksmithAttackChance) seal.attack += CONFIG.seal.blacksmithAttackGain;
+  }
+  addFavor(seal, CONFIG.facilities?.[facility.type]?.favorGain ?? CONFIG.seal.favorFacilityUse);
   logMessage(`${seal.name}が${CONFIG.facilities[facility.type]?.label}で${spent}G使いました。`);
   afterVillageActivity(seal);
 }
@@ -580,17 +589,14 @@ function updateUsingFacility(seal, dt) {
 function updateResting(seal, dt) {
   const inn = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (!inn || !isFacilityUsable(inn)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
-  const bonus = facilityBonus(inn);
-  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, seal.hp + CONFIG.facilities.inn.healPerSecond * (1 + bonus) * dt);
+  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getFacilityHealAmount(inn) * dt);
   seal.actionTimer -= dt;
   if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.restTargetRatio && seal.actionTimer <= 0) {
-    const fee = Math.min(seal.carriedG, CONFIG.facilities.inn.fee);
+    const fee = Math.min(safeFiniteNumber(seal.carriedG, 0, 0), getFacilityPrice(inn));
     seal.carriedG -= fee;
-    addPlayerIncome(fee);
-    seal.facilityUseCounts.inn = (seal.facilityUseCounts?.inn ?? 0) + 1;
-    seal.lastFacilityId = inn.id;
+    const income = registerFacilityUse(inn, seal, fee);
+    addPlayerIncome(income);
     seal.mealCountSinceInn = 0;
-    if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
     addFavor(seal, CONFIG.seal.favorFacilityUse);
     logMessage(`${seal.name}が宿屋で回復し、${fee}G支払いました。`);
     afterVillageActivity(seal);
@@ -717,12 +723,12 @@ function updateCarrying(seal, dt) {
   if (distance(seal.x, seal.y, seal.target?.x, seal.target?.y) > CONFIG.seal.contactDistance) return;
   const inn = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (inn && isFacilityUsable(inn)) {
-    const fee = CONFIG.facilities.inn.fee;
-    const paidByFallen = Math.min(fallen.carriedG, fee);
+    const fee = getFacilityPrice(inn);
+    const paidByFallen = Math.min(safeFiniteNumber(fallen.carriedG, 0, 0), fee);
     fallen.carriedG -= paidByFallen;
-    const paidByRescuer = Math.min(seal.carriedG, fee - paidByFallen);
+    const paidByRescuer = Math.min(safeFiniteNumber(seal.carriedG, 0, 0), fee - paidByFallen);
     seal.carriedG -= paidByRescuer;
-    addPlayerIncome(paidByFallen + paidByRescuer);
+    addPlayerIncome(registerFacilityUse(inn, fallen, paidByFallen + paidByRescuer));
     fallen.hp = Math.min(getSealEffectiveStats(fallen).maxHp, getSealEffectiveStats(fallen).maxHp * CONFIG.seal.restTargetRatio);
     addFavor(fallen, CONFIG.seal.favorRescued);
     logMessage(`宿代${paidByFallen + paidByRescuer}G支払い、${fallen.name}を救助しました。`);

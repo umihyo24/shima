@@ -33,7 +33,7 @@ const CONFIG = Object.freeze({
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
-  SAVE_VERSION: 10,
+  SAVE_VERSION: 11,
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
@@ -78,7 +78,10 @@ const CONFIG = Object.freeze({
     'monsters.crab': 'assets/monsters/monster_water_coast_crab.png',
     'cards.facility_neutral_inn_idle': 'assets/cards/facility_neutral_inn_idle.png',
     'cards.facility_neutral_restaurant_idle': 'assets/cards/facility_neutral_restaurant_idle.png',
-    'cards.facility_neutral_blacksmith_idle': 'assets/cards/facility_neutral_blacksmith_idle.png'
+    'cards.facility_neutral_blacksmith_idle': 'assets/cards/facility_neutral_blacksmith_idle.png',
+    'cards.facility_neutral_manjuShop_idle': 'assets/cards/facility_neutral_manjuShop_idle.png',
+    'cards.manjuShop': 'assets/cards/facility_neutral_manjuShop_idle.png',
+    'facilities.manjuShop': 'assets/cards/facility_neutral_manjuShop_idle.png'
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   KNOWNNESS: { UNLOCK_THRESHOLDS: [100, 200, 300, 400, 500], PANEL_WIDTH: 210, PANEL_HEIGHT: 74, PANEL_MARGIN: 18 },
@@ -91,6 +94,7 @@ const CONFIG = Object.freeze({
     { id: 'road', label: '🟫 道路', kind: 'road', w: 1, h: 1 },
     { id: 'inn', label: '🏨 宿屋', kind: 'facility', w: 2, h: 2 },
     { id: 'restaurant', label: '🍲 食堂', kind: 'facility', w: 2, h: 2 },
+    { id: 'manjuShop', label: '🍡 まんじゅう屋', kind: 'facility', w: 1, h: 1 },
     { id: 'blacksmith', label: '⚒️ 鍛冶屋', kind: 'facility', w: 2, h: 2 },
     { id: 'flower', label: '🌼 花', kind: 'decoration', w: 1, h: 1 },
     { id: 'tree', label: '🌲 木', kind: 'decoration', w: 1, h: 1 },
@@ -98,10 +102,18 @@ const CONFIG = Object.freeze({
     { id: 'clear', label: '⛏️ 開拓', kind: 'clear', w: 1, h: 1 },
     { id: 'delete', label: '❌ 削除', kind: 'delete', w: 1, h: 1 }
   ],
+  FACILITY_LEVELS: { maxLevel: 10, thresholds: [0, 5, 12, 25, 45, 70, 100, 140, 190, 250], priceMultiplierPerLevel: 0.08, healingMultiplierPerLevel: 0.08, incomeMultiplierPerLevel: 0.05 },
+  FACILITIES: {
+    inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['heal', 'lodging'] },
+    restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['food', 'meal'] },
+    manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, category: 'facility', tags: ['food', 'snack'] },
+    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] }
+  },
   facilities: {
-    inn: { label: '宿屋', fee: 36, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05 },
-    restaurant: { label: '食堂', spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05 },
-    blacksmith: { label: '鍛冶屋', spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05 }
+    inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['heal', 'lodging'] },
+    restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['food', 'meal'] },
+    manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, category: 'facility', tags: ['food', 'snack'] },
+    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] }
   },
   ROUTES: { entryCorridor: { id: 'south_entry', type: 'entry', waypoints: [{ x: 14, y: 30 }, { x: 14, y: 24 }, { x: 14, y: 17 }] }, huntingCorridors: [ { id: 'coast_exit', type: 'hunting', areaId: 'coast', waypoints: [{ x: 14, y: 17 }, { x: 24, y: 17 }, { x: 24, y: 16 }, { x: 34, y: 16 }, { x: 38, y: 16 }] } ] },
   VISITORS: { ARRIVAL: {
@@ -115,7 +127,7 @@ const CONFIG = Object.freeze({
     preHuntFacilityChance: 0.72,
     lowHpFacilityHpRatio: 0.58,
     restaurantHpRatio: 0.82,
-    facilityTypes: { lowHp: ['inn'], reducedHp: ['restaurant', 'inn'], gear: ['blacksmith'], optional: ['restaurant', 'blacksmith', 'inn'] }
+    facilityTypes: { lowHp: ['inn'], reducedHp: ['manjuShop', 'restaurant', 'inn'], gear: ['blacksmith'], optional: ['manjuShop', 'restaurant', 'blacksmith', 'inn'] }
   } },
   visitor: { safetyMaxActive: 30, spawnInterval: 16, spawnIntervalFavorReduction: 0.04, minSpawnIntervalMultiplier: 0.55, returnBaseWeight: 1, returnFavorWeight: 0.18, inactiveWeightBonus: 3, fewerVisitsWeight: 0.18, safeLeaveFavor: 2, debugSpawnCandidates: false, entrySpawn: { x: 14, y: 24 }, spawnSearchRadius: 8, minStayMs: 45000, maxStayMs: 110000, maxStayFavorBonusMs: 25000, maxStayFavorMsPerFavor: 1000, satisfyingMinFacilities: 1, satisfyingMinHunts: 1, enoughHuntsForLeave: 2, profiles: [
     { id: 'visitor-goma', name: 'ゴマ', personality: 'balanced', unlockedAtKnownness: 0, baseStats: { maxHp: 130, attack: 18, defense: 5 }, favor: 0, visits: 0, level: 1, exp: 0, equipment: { weapon: null, armor: null, accessory: null }, gearBudget: 0 },
@@ -139,7 +151,7 @@ const CONFIG = Object.freeze({
     shell_armor: { id: 'shell_armor', name: '貝殻のよろい', type: 'armor', price: 120, attackBonus: 0, defenseBonus: 4, hpBonus: 14, favorBonus: 1, shopType: 'blacksmith', tier: 1 },
     lucky_pearl: { id: 'lucky_pearl', name: '幸運の真珠', type: 'accessory', price: 150, attackBonus: 1, defenseBonus: 1, hpBonus: 8, favorBonus: 2, shopType: 'restaurant', tier: 1 }
   },
-  seal: { maxHp: 130, attack: 18, defense: 5, baseSpeed: 50, roadSpeedMultiplier: 1.55, lowHpRatio: 0.4, innHpThreshold: 0.45, mediumHpRatio: 0.72, mediumInnChance: 0.35, mealsBeforeInnSoftLimit: 2, mealsInnChanceBoost: 0.35, fallenRecoveryPerSecond: 3, standHpRatio: 0.36, restTargetRatio: 0.88, contactDistance: 15, rescueScanDistance: 380, spendSeconds: 1.4, restSeconds: 1, startG: 0, spread: 24, huntDurationLimit: 42, noMonsterExploreSeconds: 8, favorHuntDurationBonus: 0.35, maxFavorHuntDurationBonus: 8, carriedGReturnThreshold: 56, carriedGReturnChance: 0.35, wanderSeconds: 2.5, levelExp: 48, levelHpGain: 10, levelAttackGain: 2, favorDefeat: 2, favorLevelUp: 4, favorFacilityUse: 1, favorRescued: 3, facilityChoiceWeights: { inn: 1.2, restaurant: 1.0, blacksmith: 0.8 }, blacksmithAttackChance: 0.45, blacksmithAttackGain: 1 },
+  seal: { maxHp: 130, attack: 18, defense: 5, baseSpeed: 50, roadSpeedMultiplier: 1.55, lowHpRatio: 0.4, innHpThreshold: 0.45, mediumHpRatio: 0.72, mediumInnChance: 0.35, mealsBeforeInnSoftLimit: 2, mealsInnChanceBoost: 0.35, fallenRecoveryPerSecond: 3, standHpRatio: 0.36, restTargetRatio: 0.88, contactDistance: 15, rescueScanDistance: 380, spendSeconds: 1.4, restSeconds: 1, startG: 0, spread: 24, huntDurationLimit: 42, noMonsterExploreSeconds: 8, favorHuntDurationBonus: 0.35, maxFavorHuntDurationBonus: 8, carriedGReturnThreshold: 56, carriedGReturnChance: 0.35, wanderSeconds: 2.5, levelExp: 48, levelHpGain: 10, levelAttackGain: 2, favorDefeat: 2, favorLevelUp: 4, favorFacilityUse: 1, favorRescued: 3, facilityChoiceWeights: { inn: 1.2, restaurant: 1.0, manjuShop: 1.05, blacksmith: 0.8 }, blacksmithAttackChance: 0.45, blacksmithAttackGain: 1 },
   monster: { cap: 7, spawnInterval: 2.4, hp: 64, attack: 13, defense: 3, rewardG: 28, rewardExp: 16, contactDistance: 18 },
   combat: { sealAttackSeconds: 0.75, monsterAttackSeconds: 1.0, minDamage: 1 },
   render: { corridor: 'rgba(236,220,149,.28)', blockedPatchOverlay: 'rgba(20,70,30,.18)', gridLine: 'rgba(255,255,255,.13)', island: '#79b85c', buildableLand: '#8dcc68', blockedLand: '#4e7f3d', outside: '#1b90a9', water: '#126d8b', beach: '#d9c887', boundary: 'rgba(255,255,255,.46)', road: '#b28a56', invalid: 'rgba(255,50,50,.45)', valid: 'rgba(80,255,140,.35)', shadow: 'rgba(0,0,0,.24)', font: '13px system-ui', bigFont: '18px system-ui', minimapW: 220, minimapH: 128, boundaryDash: 0.35, boundaryGap: 0.18, boundaryLine: 3, obstacle: { center: 0.5, shadowX: 2, shadowY: 10, shadowW: 14, shadowH: 6, grassLine: 3, grassBaseY: 10, grassReachX: 13, grassTipY: -2, grassReachY: 8, trunkX: 4, trunkY: 0, trunkW: 8, trunkH: 15, treeRadius: 15, treeY: -5, rockY: 4, rockW: 15, rockH: 11, rockTilt: -0.35 } },

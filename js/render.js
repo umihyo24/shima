@@ -106,14 +106,28 @@ function drawObjects() {
 
 function drawFacility(o) {
   const x = o.x * CONFIG.world.tile, y = o.y * CONFIG.world.tile, w = o.w * CONFIG.world.tile, h = o.h * CONFIG.world.tile;
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[o?.type] ?? {};
   ctx.fillStyle = CONFIG.render.shadow; ctx.fillRect(x + 5, y + 7, w, h);
-  drawImageOrFallback(ctx, `cards.facility_neutral_${o.type}_idle`, x, y, w, h, () => {
-    ctx.fillStyle = CONFIG.facilities[o.type]?.color ?? '#777'; ctx.fillRect(x + 5, y + 12, w - 10, h - 17);
-    ctx.fillStyle = '#3a2115'; ctx.fillRect(x + 16, y + h - 30, w - 32, 26);
-    ctx.fillStyle = '#fff4c0'; ctx.fillText(CONFIG.facilities[o.type]?.label ?? o.type, x + 12, y + 30);
+  drawImageOrFallback(ctx, cfg.assetKey ?? `cards.facility_neutral_${o.type}_idle`, x, y, w, h, () => {
+    ctx.fillStyle = cfg.color ?? '#777'; ctx.fillRect(x + 5, y + 12, Math.max(8, w - 10), Math.max(8, h - 17));
+    ctx.fillStyle = '#3a2115'; ctx.fillRect(x + Math.max(7, w * 0.28), y + h - Math.min(30, h * 0.44), Math.max(10, w * 0.44), Math.min(26, h * 0.34));
+    if (o.type === 'manjuShop') {
+      ctx.fillStyle = '#fff4c0'; ctx.beginPath(); ctx.arc(x + w * 0.5, y + h * 0.32, Math.max(5, w * 0.16), 0, Math.PI * 2); ctx.fill();
+      ctx.fillStyle = '#8b4b5f'; ctx.fillText('まん', x + 6, y + h * 0.86);
+    } else {
+      ctx.fillStyle = '#fff4c0'; ctx.fillText(cfg.label ?? o.type, x + 12, y + 30);
+    }
   });
-  ctx.strokeStyle = isFacilityUsable(o) ? '#5cff7d' : '#ff5a50'; ctx.lineWidth = 3 / gameState.camera.zoom; ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
-  const e = entranceTile(o); ctx.fillStyle = isFacilityUsable(o) ? '#64ff95' : '#ff5757'; ctx.beginPath(); ctx.arc((e.x + 0.5) * CONFIG.world.tile, (e.y + 0.5) * CONFIG.world.tile, 7, 0, Math.PI * 2); ctx.fill();
+  const usable = isFacilityUsable(o);
+  ctx.strokeStyle = usable ? '#5cff7d' : '#ff5a50'; ctx.lineWidth = 3 / gameState.camera.zoom; ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
+  const e = entranceTile(o); ctx.fillStyle = usable ? '#64ff95' : '#ff5757'; ctx.beginPath(); ctx.arc((e.x + 0.5) * CONFIG.world.tile, (e.y + 0.5) * CONFIG.world.tile, 7, 0, Math.PI * 2); ctx.fill();
+  if (isLevelableFacility(o)) {
+    const label = `Lv${getFacilityLevel(o)}`;
+    ctx.font = '11px system-ui';
+    const lw = ctx.measureText(label).width + 8;
+    ctx.fillStyle = 'rgba(0,0,0,.58)'; ctx.fillRect(x + 4, y + 4, lw, 17);
+    ctx.fillStyle = '#fff8ba'; ctx.fillText(label, x + 8, y + 17);
+  }
 }
 
 function drawDecoration(o) {
@@ -480,6 +494,16 @@ function panelHeader(title, hint = '') {
   return `<div class="bottom-panel-header"><div><h2>${escapeHtml(title)}</h2>${hint ? `<div class="panelHint">${escapeHtml(hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button></div>`;
 }
 
+
+function renderFacilityToolInfo(tool) {
+  if (tool?.kind !== 'facility') return '';
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[tool.id] ?? {};
+  const price = safeFiniteNumber(cfg.basePrice ?? cfg.fee ?? cfg.spendPerVisit, 0, 0);
+  const heal = safeFiniteNumber(cfg.baseHeal ?? cfg.healPerSecond, 0, 0);
+  const tags = Array.isArray(cfg.tags) ? cfg.tags.join(', ') : '';
+  return `<br>サイズ: ${tool.w}x${tool.h}<br>基本料金: ${Math.floor(price)}G<br>回復: ${Math.floor(heal)}${cfg.healPerSecond ? '/秒' : ''}<br>タグ: ${escapeHtml(tags || '-')}`;
+}
+
 function renderBuildPanel() {
   const categoryHtml = BUILD_CATEGORIES.map(category => {
     const buttons = category.toolIds.map(toolId => {
@@ -493,7 +517,7 @@ function renderBuildPanel() {
   return `<div class="buildPanel">
       <div class="buildCategories">${categoryHtml}</div>
       <div>
-        <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S')}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
+        <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S')}${renderFacilityToolInfo(selected)}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
         <div class="compactCard helpText"><b>操作</b><br>WASD/矢印: カメラ移動<br>ドラッグ: カメラ移動 / 短いクリック: 配置<br>ホイール: ズーム<br>開拓: 未開拓の草木岩を${getClearingCost()}Gで除去<br><div class="zoomBtns"><button data-action="zoomOut">−</button><button data-action="zoomIn">＋</button></div></div>
         <div class="compactCard savePanel"><b>セーブ</b><br>${escapeHtml(gameState.save?.statusText || '未保存')}<br>最終保存: ${escapeHtml(formatSaveTime(gameState.save?.lastSavedAt))}<br><button data-action="manualSave">手動保存</button></div>
       </div>
@@ -733,6 +757,16 @@ function renderDungeonsPanel() {
     </div>`;
 }
 
+
+function renderFacilityProgressList() {
+  const facilities = (gameState.world?.objects ?? []).filter(isLevelableFacility);
+  if (facilities.length <= 0) return '対象施設なし';
+  return facilities.map(facility => {
+    const name = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type]?.label ?? facility.type;
+    return `${escapeHtml(name)} Lv${getFacilityLevel(facility)} / 使用 ${getFacilityUseCount(facility)}（次:${escapeHtml(getFacilityLevelProgressText(facility))}） / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G`;
+  }).join('<br>');
+}
+
 function renderProgressPanel() {
   const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
   const nextGoal = getNextKnownnessGoal();
@@ -747,6 +781,7 @@ function renderProgressPanel() {
       <div class="compactCard"><b>しきい値</b><div class="thresholdList">${thresholds}</div></div>
       <div class="compactCard"><b>解放済み訪問者</b><br>${unlocked}</div>
       <div class="compactCard"><b>月次サマリー</b><br>${escapeHtml(monthly)}</div>
+      <div class="compactCard"><b>施設レベル</b><br>${renderFacilityProgressList()}</div>
       <div class="compactCard"><b>ログ</b><div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>') || 'なし'}</div></div>
     </div>`;
 }
@@ -797,7 +832,7 @@ function formatSealTarget(seal) {
   const dungeon = getDungeonById(seal?.expeditionId ?? seal?.questingDungeonId);
   if (dungeon) return seal?.currentAction || `${dungeon.name}へ遠征中`;
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal?.targetId);
-  if (facility) return seal?.currentAction || `${CONFIG.facilities[facility.type]?.label ?? '施設'} (${facility.id})`;
+  if (facility) return seal?.currentAction || `${(CONFIG.facilities ?? CONFIG.FACILITIES)[facility.type]?.label ?? '施設'} (${facility.id})`;
   if (seal?.target?.reason) return seal?.currentAction || seal.target.reason;
   return seal?.currentAction || 'なし';
 }
