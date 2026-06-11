@@ -792,12 +792,27 @@ function renderDungeonsPanel() {
 
 
 function renderFacilityProgressList() {
-  const facilities = (gameState.world?.objects ?? []).filter(isLevelableFacility);
+  const facilities = (gameState.world?.objects ?? []).filter(o => o?.kind === 'facility');
   if (facilities.length <= 0) return '対象施設なし';
   return facilities.map(facility => {
     const name = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type]?.label ?? facility.type;
-    return `${escapeHtml(name)} Lv${getFacilityLevel(facility)} / 使用 ${getFacilityUseCount(facility)}（次:${escapeHtml(getFacilityLevelProgressText(facility))}） / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G`;
+    const levelText = isLevelableFacility(facility) ? ` Lv${getFacilityLevel(facility)} / 使用 ${getFacilityUseCount(facility)}（次:${escapeHtml(getFacilityLevelProgressText(facility))}）` : '';
+    const shopText = renderFacilityShopItemSummary(facility);
+    return `${escapeHtml(name)}${levelText} / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G${shopText}`;
   }).join('<br>');
+}
+
+function renderFacilityShopItemSummary(facility) {
+  const items = getShopItemCandidatesForFacility(facility);
+  if (items.length <= 0) return '';
+  const selectedSeal = (gameState.seals ?? []).find(seal => seal?.id === gameState.ui?.selectedSealId) ?? null;
+  const itemText = items.map(item => {
+    const affordable = selectedSeal ? safeFiniteNumber(selectedSeal?.gearBudget, 0, 0) >= safeFiniteNumber(item?.price, 0, 0) : false;
+    const upgrade = selectedSeal ? isEquipmentUpgradeForSeal(selectedSeal, item) : false;
+    const status = selectedSeal ? (affordable && upgrade ? '購入可' : (upgrade ? '予算不足' : '更新なし')) : '選択なし';
+    return `${escapeHtml(item.name)} ${Math.floor(safeFiniteNumber(item.price, 0, 0))}G(${status})`;
+  }).join('、');
+  return ` / 商品: ${itemText}`;
 }
 
 function renderProgressPanel() {

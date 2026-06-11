@@ -33,7 +33,7 @@ const CONFIG = Object.freeze({
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
-  SAVE_VERSION: 11,
+  SAVE_VERSION: 12,
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
@@ -96,6 +96,8 @@ const CONFIG = Object.freeze({
     { id: 'restaurant', label: '🍲 食堂', kind: 'facility', w: 2, h: 2 },
     { id: 'manjuShop', label: '🍡 まんじゅう屋', kind: 'facility', w: 1, h: 1 },
     { id: 'blacksmith', label: '⚒️ 鍛冶屋', kind: 'facility', w: 2, h: 2 },
+    { id: 'weaponShop', label: '🗡️ 武器屋', kind: 'facility', w: 2, h: 2 },
+    { id: 'armorShop', label: '🛡️ 防具屋', kind: 'facility', w: 2, h: 2 },
     { id: 'flower', label: '🌼 花', kind: 'decoration', w: 1, h: 1 },
     { id: 'tree', label: '🌲 木', kind: 'decoration', w: 1, h: 1 },
     { id: 'rock', label: '🪨 岩', kind: 'decoration', w: 1, h: 1 },
@@ -107,13 +109,17 @@ const CONFIG = Object.freeze({
     inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['heal', 'lodging'] },
     restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['food', 'meal'] },
     manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, category: 'facility', tags: ['food', 'snack'] },
-    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] }
+    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] },
+    weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'weapon'] },
+    armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'armor'] }
   },
   facilities: {
     inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['heal', 'lodging'] },
     restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['food', 'meal'] },
     manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, category: 'facility', tags: ['food', 'snack'] },
-    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] }
+    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] },
+    weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'weapon'] },
+    armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'armor'] }
   },
   ROUTES: { entryCorridor: { id: 'south_entry', type: 'entry', waypoints: [{ x: 14, y: 30 }, { x: 14, y: 24 }, { x: 14, y: 17 }] }, huntingCorridors: [ { id: 'coast_exit', type: 'hunting', areaId: 'coast', waypoints: [{ x: 14, y: 17 }, { x: 24, y: 17 }, { x: 24, y: 16 }, { x: 34, y: 16 }, { x: 38, y: 16 }] } ] },
   VISITORS: { ARRIVAL: {
@@ -127,7 +133,7 @@ const CONFIG = Object.freeze({
     preHuntFacilityChance: 0.72,
     lowHpFacilityHpRatio: 0.58,
     restaurantHpRatio: 0.82,
-    facilityTypes: { lowHp: ['inn'], reducedHp: ['manjuShop', 'restaurant', 'inn'], gear: ['blacksmith'], optional: ['manjuShop', 'restaurant', 'blacksmith', 'inn'] }
+    facilityTypes: { lowHp: ['inn'], reducedHp: ['manjuShop', 'restaurant', 'inn'], gear: ['blacksmith', 'weaponShop', 'armorShop'], optional: ['manjuShop', 'restaurant', 'blacksmith', 'inn'] }
   } },
   visitor: { safetyMaxActive: 30, spawnInterval: 16, spawnIntervalFavorReduction: 0.04, minSpawnIntervalMultiplier: 0.55, returnBaseWeight: 1, returnFavorWeight: 0.18, inactiveWeightBonus: 3, fewerVisitsWeight: 0.18, safeLeaveFavor: 2, debugSpawnCandidates: false, entrySpawn: { x: 14, y: 24 }, spawnSearchRadius: 8, minStayMs: 45000, maxStayMs: 110000, maxStayFavorBonusMs: 25000, maxStayFavorMsPerFavor: 1000, satisfyingMinFacilities: 1, satisfyingMinHunts: 1, enoughHuntsForLeave: 2, profiles: [
     { id: 'visitor-goma', name: 'ゴマ', personality: 'balanced', unlockedAtKnownness: 0, baseStats: { maxHp: 130, attack: 18, defense: 5 }, favor: 0, visits: 0, level: 1, exp: 0, equipment: { weapon: null, armor: null, accessory: null }, gearBudget: 0 },
@@ -145,7 +151,7 @@ const CONFIG = Object.freeze({
     { id: 'visitor-sakuramochi', name: 'さくらもち', personality: 'brave', unlockedAtKnownness: 2500, baseStats: { maxHp: 152, attack: 24, defense: 7 }, favor: 0, visits: 0, level: 1, exp: 0, equipment: { weapon: null, armor: null, accessory: null }, gearBudget: 0 }
   ] },
   personalities: { cautious: { label: '慎重', returnHpRatio: 0.50, emergencyHpRatio: 0.25, preferredMinHunts: 1, maxHuntsPerTrip: 2, returnChance: 0.45 }, balanced: { label: '普通', returnHpRatio: 0.35, emergencyHpRatio: 0.20, preferredMinHunts: 2, maxHuntsPerTrip: 3, returnChance: 0.30 }, brave: { label: '勇敢', returnHpRatio: 0.25, emergencyHpRatio: 0.12, preferredMinHunts: 3, maxHuntsPerTrip: 5, returnChance: 0.18 } },
-  EQUIPMENT: { GEAR_BUDGET_RATE: 0.35, MONTHLY_DROP_HUNT_THRESHOLD: 3, SCORE_ATTACK_WEIGHT: 4, SCORE_DEFENSE_WEIGHT: 3, SCORE_HP_WEIGHT: 0.4, SCORE_FAVOR_WEIGHT: 1, FACILITY_DISTANCE_WEIGHT: 1, FACILITY_BONUS_WEIGHT: 36, RECENT_USAGE_PENALTY: 18, RANDOM_TIEBREAKER: 4, FACILITY_BASE_SCORE: 1000, FACILITY_HEAL_WEIGHT: 140, FACILITY_FOOD_HP_WEIGHT: 20, FACILITY_SPEND_G_WEIGHT: 0.15, FACILITY_FOOD_G_WEIGHT: 0.2, FACILITY_EQUIPMENT_GEAR_WEIGHT: 0.12, MONTHLY_DROP_TABLE: ['driftwood_spear', 'shell_armor', 'lucky_pearl'], monthlyDropTable: ['driftwood_spear', 'shell_armor', 'lucky_pearl'] },
+  EQUIPMENT: { GEAR_BUDGET_RATE: 0.35, MONTHLY_DROP_HUNT_THRESHOLD: 3, SCORE_ATTACK_WEIGHT: 4, SCORE_DEFENSE_WEIGHT: 3, SCORE_HP_WEIGHT: 0.4, SCORE_FAVOR_WEIGHT: 1, SLOT_TYPES: ['weapon', 'armor', 'accessory'], SHOP_ITEM_TYPES: { weaponShop: ['weapon'], armorShop: ['armor'], blacksmith: ['weapon', 'armor'] }, STARTER_MAX_TIER: 1, PURCHASE_FAVOR_GAIN: 1, FACILITY_DISTANCE_WEIGHT: 1, FACILITY_BONUS_WEIGHT: 36, RECENT_USAGE_PENALTY: 18, RANDOM_TIEBREAKER: 4, FACILITY_BASE_SCORE: 1000, FACILITY_HEAL_WEIGHT: 140, FACILITY_FOOD_HP_WEIGHT: 20, FACILITY_SPEND_G_WEIGHT: 0.15, FACILITY_FOOD_G_WEIGHT: 0.2, FACILITY_EQUIPMENT_GEAR_WEIGHT: 0.12, MONTHLY_DROP_TABLE: ['driftwood_spear', 'shell_armor', 'lucky_pearl'], monthlyDropTable: ['driftwood_spear', 'shell_armor', 'lucky_pearl'] },
   ITEMS: {
     driftwood_spear: { id: 'driftwood_spear', name: '流木の槍', type: 'weapon', price: 90, attackBonus: 6, defenseBonus: 0, hpBonus: 0, favorBonus: 1, shopType: 'blacksmith', tier: 1 },
     shell_armor: { id: 'shell_armor', name: '貝殻のよろい', type: 'armor', price: 120, attackBonus: 0, defenseBonus: 4, hpBonus: 14, favorBonus: 1, shopType: 'blacksmith', tier: 1 },
