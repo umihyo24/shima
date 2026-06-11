@@ -124,38 +124,133 @@ function drawDecoration(o) {
   if (o.type === 'rock') { ctx.fillStyle = '#9b9b91'; ctx.beginPath(); ctx.ellipse(x, y, 16, 12, -0.4, 0, Math.PI * 2); ctx.fill(); }
 }
 
+function getEntityRenderConfig() {
+  return CONFIG.RENDER?.ENTITIES ?? {};
+}
+
+function getEntityScreenPosition(entity) {
+  return { x: safeFiniteNumber(entity?.x, 0, 0), y: safeFiniteNumber(entity?.y, 0, 0) };
+}
+
+function getSealRenderSize() {
+  const settings = getEntityRenderConfig();
+  return CONFIG.world.tile * safeFiniteNumber(settings.sealSpriteScale, 1.5, 0.1);
+}
+
+function getMonsterRenderSize() {
+  const settings = getEntityRenderConfig();
+  return CONFIG.world.tile * safeFiniteNumber(settings.monsterSpriteScale, 1.3, 0.1);
+}
+
+function drawEntityShadow(context, x, y, w, h, type) {
+  const settings = getEntityRenderConfig();
+  const scale = type === 'monster'
+    ? safeFiniteNumber(settings.monsterShadowScale, 0.75, 0)
+    : safeFiniteNumber(settings.sealShadowScale, 0.9, 0);
+  context.save();
+  context.fillStyle = CONFIG.render.shadow;
+  context.beginPath();
+  context.ellipse(x, y + h * safeFiniteNumber(settings.shadowOffsetYScale, 0.32, 0), w * safeFiniteNumber(settings.shadowWidthScale, 0.34, 0) * scale, h * safeFiniteNumber(settings.shadowHeightScale, 0.14, 0) * scale, 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function drawCompactHpBar(context, x, y, w, ratio, color) {
+  const settings = getEntityRenderConfig();
+  const h = safeFiniteNumber(settings.hpBarHeight, 5, 1);
+  const value = Math.max(0, Math.min(1, safeFiniteNumber(ratio, 0, 0)));
+  context.save();
+  context.fillStyle = 'rgba(0,0,0,.5)';
+  context.fillRect(x, y, w, h);
+  context.fillStyle = color;
+  context.fillRect(x, y, w * value, h);
+  context.strokeStyle = 'rgba(255,255,255,.72)';
+  context.lineWidth = Math.max(1, 1 / Math.max(gameState.camera?.zoom ?? 1, 0.1));
+  context.strokeRect(x, y, w, h);
+  context.restore();
+}
+
+function drawOutlinedText(context, text, x, y, color, align = 'center') {
+  const settings = getEntityRenderConfig();
+  const fontSize = safeFiniteNumber(settings.nameFontSize, 11, 1);
+  context.save();
+  context.font = `${fontSize}px system-ui`;
+  context.textAlign = align;
+  context.textBaseline = 'middle';
+  context.lineWidth = Math.max(2, safeFiniteNumber(settings.outlineWidth, 3, 1) / Math.max(gameState.camera?.zoom ?? 1, 0.1));
+  context.strokeStyle = 'rgba(0,0,0,.72)';
+  context.strokeText(text, x, y);
+  context.fillStyle = color;
+  context.fillText(text, x, y);
+  context.restore();
+}
+
+function getSealDisplayName(seal) {
+  const name = String(seal?.name || (seal?.type === 'visitor' ? '訪問者' : 'あざらし')).trim();
+  return name.length > 7 ? `${name.slice(0, 6)}…` : name;
+}
+
+function drawSealNameAndHp(context, seal, x, y, spriteSize) {
+  const settings = getEntityRenderConfig();
+  const hpWidth = spriteSize * safeFiniteNumber(settings.hpBarWidthScale, 0.9, 0.1);
+  const nameY = y - spriteSize / 2 + safeFiniteNumber(settings.labelOffsetY, -8, -spriteSize);
+  const hpY = nameY + safeFiniteNumber(settings.hpOffsetY, 6, 0);
+  const effectiveMaxHp = Math.max(1, safeFiniteNumber(getSealEffectiveStats(seal).maxHp, CONFIG.seal.maxHp, 1));
+  const nameColor = seal?.type === 'visitor' ? '#aef3ff' : '#fff1a8';
+  drawOutlinedText(context, getSealDisplayName(seal), x, nameY, nameColor);
+  drawCompactHpBar(context, x - hpWidth / 2, hpY, hpWidth, safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp, '#5fe45e');
+}
+
+function drawMonsterHp(context, monster, x, y, spriteSize) {
+  const settings = getEntityRenderConfig();
+  const hpWidth = spriteSize * safeFiniteNumber(settings.hpBarWidthScale, 0.9, 0.1);
+  const hpY = y - spriteSize / 2 + safeFiniteNumber(settings.labelOffsetY, -8, -spriteSize);
+  const maxHp = Math.max(1, safeFiniteNumber(monster?.maxHp, CONFIG.monster.hp, 1));
+  drawCompactHpBar(context, x - hpWidth / 2, hpY, hpWidth, safeFiniteNumber(monster?.hp, 0, 0) / maxHp, '#e14635');
+}
+
+function drawSeal(context, seal) {
+  const { x, y } = getEntityScreenPosition(seal);
+  const spriteSize = getSealRenderSize();
+  const drawX = x - spriteSize / 2;
+  const drawY = y - spriteSize / 2;
+  drawEntityShadow(context, x, y, spriteSize, spriteSize, 'seal');
+  if (gameState.ui?.selectedSealId === seal.id) {
+    const settings = getEntityRenderConfig();
+    const ringScale = safeFiniteNumber(settings.selectedRingScale, 1.25, 0.1);
+    context.save();
+    context.strokeStyle = '#ffe66b';
+    context.lineWidth = safeFiniteNumber(settings.selectedRingLineWidth, 4, 1) / Math.max(gameState.camera?.zoom ?? 1, 0.1);
+    context.beginPath();
+    context.ellipse(x, y + spriteSize * safeFiniteNumber(settings.selectedRingOffsetYScale, 0.3, 0), spriteSize * safeFiniteNumber(settings.selectedRingWidthScale, 0.36, 0) * ringScale, spriteSize * safeFiniteNumber(settings.selectedRingHeightScale, 0.18, 0) * ringScale, 0, 0, Math.PI * 2);
+    context.stroke();
+    context.restore();
+  }
+  drawSpriteFacing(context, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), drawX, drawY, spriteSize, spriteSize, seal.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackSeal(fallbackContext, seal, fx, fy, width, height, options));
+  drawSealNameAndHp(context, seal, x, y, spriteSize);
+}
+
+function drawMonster(context, monster) {
+  const { x, y } = getEntityScreenPosition(monster);
+  const spriteSize = getMonsterRenderSize();
+  const drawX = x - spriteSize / 2;
+  const drawY = y - spriteSize / 2;
+  drawEntityShadow(context, x, y, spriteSize, spriteSize, 'monster');
+  drawSpriteFacing(context, monster.assetKey || 'monsters.crab', drawX, drawY, spriteSize, spriteSize, monster.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackMonster(fallbackContext, monster, fx, fy, width, height, options));
+  drawMonsterHp(context, monster, x, y, spriteSize);
+}
+
 function drawMonsters() {
   for (const monster of gameState.monsters ?? []) {
     if (!monster || monster.hp <= 0) continue;
-    const size = CONFIG.SPRITES.monster;
-    const w = size.w;
-    const h = size.h;
-    drawSpriteFacing(ctx, monster.assetKey || 'monsters.crab', monster.x - w / 2, monster.y - h / 2, w, h, monster.facing, (context, x, y, width, height, options) => drawFallbackMonster(context, monster, x, y, width, height, options));
-    drawHpBar(monster.x - 20, monster.y - 30, 40, monster.hp / monster.maxHp, '#e14635');
+    drawMonster(ctx, monster);
   }
 }
 
 function drawSeals() {
   for (const seal of gameState.seals ?? []) {
     if (!seal) continue;
-    const size = CONFIG.SPRITES.seal;
-    const w = size.w;
-    const h = size.h;
-    ctx.fillStyle = CONFIG.render.shadow;
-    ctx.beginPath();
-    ctx.ellipse(seal.x, seal.y + 15, 20, 7, 0, 0, Math.PI * 2);
-    ctx.fill();
-    if (gameState.ui?.selectedSealId === seal.id) {
-      ctx.strokeStyle = '#ffe66b';
-      ctx.lineWidth = 4 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
-      ctx.beginPath();
-      ctx.ellipse(seal.x, seal.y + 9, 29, 15, 0, 0, Math.PI * 2);
-      ctx.stroke();
-    }
-    drawSpriteFacing(ctx, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), seal.x - w / 2, seal.y - h / 2, w, h, seal.facing, (context, x, y, width, height, options) => drawFallbackSeal(context, seal, x, y, width, height, options));
-    const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
-    drawHpBar(seal.x - 22, seal.y - 29, 44, safeFiniteNumber(seal.hp, 0, 0) / Math.max(1, effectiveMaxHp), '#5fe45e');
-    drawLabel(seal?.type === 'resident' ? '住' : '訪', seal.x - 10, seal.y - 38, seal?.type === 'resident' ? '#ffd98a' : '#aef3ff');
+    drawSeal(ctx, seal);
   }
 }
 

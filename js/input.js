@@ -209,9 +209,15 @@ function bindUIEvents() {
   bottomPanelEl?.addEventListener('scroll', () => saveBottomPanelScrollPosition(), true);
 }
 
+function getSealSelectionRadius() {
+  const settings = CONFIG.RENDER?.ENTITIES ?? {};
+  const visualRadius = CONFIG.world.tile * safeFiniteNumber(settings.sealSpriteScale, 1.5, 0.1) / 2;
+  return Math.max(CONFIG.seal.contactDistance, visualRadius);
+}
+
 function sealAtWorldPoint(point) {
   if (!point) return null;
-  return [...(gameState.seals ?? [])].reverse().find(seal => seal && distance(point.x, point.y, seal.x, seal.y) <= CONFIG.seal.contactDistance * 1.4) ?? null;
+  return [...(gameState.seals ?? [])].reverse().find(seal => seal && distance(point.x, point.y, seal.x, seal.y) <= getSealSelectionRadius()) ?? null;
 }
 
 function placementClickHasPriority(tool, tile) {
