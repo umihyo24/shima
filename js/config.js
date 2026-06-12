@@ -103,6 +103,7 @@ const CONFIG = Object.freeze({
   knownness: { initial: 0, huntRewardPerMonthlyHunt: 4, monthlyBaseReward: 2, satisfyingVisitReward: 3, duplicateRelicReward: 1 },
   movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, waterCost: 3, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['rescue', 'carry', 'dungeon-entrance', 'dungeon-return'] },
   timing: { targetFps: 60, maxDt: 0.05, uiMs: 120 },
+  UI: { entranceConnectedColor: '#34e86b', entranceDisconnectedColor: '#ff4d4d', entrancePreviewColor: '#ffe66b', entranceAccessConnected: 'rgba(52,232,107,.42)', entranceAccessDisconnected: 'rgba(255,77,77,.42)' },
   placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75, roadRoute: { maxTiles: 32, allowExistingRoads: true, blockObjects: true, requireBuildableLand: true, scoreInvalidWeight: 1000, scoreBlockedWeight: 100, scoreTurnWeight: 10, scoreExistingRoadBonus: 2 } },
   directions: [ { name: 'N', dx: 0, dy: -1 }, { name: 'E', dx: 1, dy: 0 }, { name: 'S', dx: 0, dy: 1 }, { name: 'W', dx: -1, dy: 0 } ],
   tools: [
@@ -121,20 +122,20 @@ const CONFIG = Object.freeze({
   ],
   FACILITY_LEVELS: { maxLevel: 10, thresholds: [0, 5, 12, 25, 45, 70, 100, 140, 190, 250], priceMultiplierPerLevel: 0.08, healingMultiplierPerLevel: 0.08, incomeMultiplierPerLevel: 0.05 },
   FACILITIES: {
-    inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['heal', 'lodging'] },
-    restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['food', 'meal'] },
-    manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, category: 'facility', tags: ['food', 'snack'] },
-    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] },
-    weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'weapon'] },
-    armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'armor'] }
+    inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['heal', 'lodging'] },
+    restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['food', 'meal'] },
+    manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['food', 'snack'] },
+    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment'] },
+    weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'weapon'] },
+    armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'armor'] }
   },
   facilities: {
-    inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['heal', 'lodging'] },
-    restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['food', 'meal'] },
-    manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, category: 'facility', tags: ['food', 'snack'] },
-    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment'] },
-    weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'weapon'] },
-    armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, category: 'facility', tags: ['equipment', 'armor'] }
+    inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['heal', 'lodging'] },
+    restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['food', 'meal'] },
+    manjuShop: { name: 'まんじゅう屋', label: 'まんじゅう屋', w: 1, h: 1, basePrice: 20, baseHeal: 12, favorGain: 1, color: '#d895b8', bonusDecoration: 'flower', bonusRate: 0.03, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['food', 'snack'] },
+    blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment'] },
+    weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'weapon'] },
+    armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'armor'] }
   },
   ROUTES: { entryCorridor: { id: 'south_entry', type: 'entry', waypoints: [{ x: 14, y: 30 }, { x: 14, y: 24 }, { x: 14, y: 17 }] }, huntingCorridors: [ { id: 'coast_exit', type: 'hunting', areaId: 'coast', waypoints: [{ x: 14, y: 17 }, { x: 24, y: 17 }, { x: 24, y: 16 }, { x: 34, y: 16 }, { x: 38, y: 16 }] } ] },
   VISITORS: { ARRIVAL: {

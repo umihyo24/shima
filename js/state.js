@@ -5,7 +5,7 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, roadEdit: createRoadEditState(), lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
+    ui: { activeBottomTab: null, selectedTool: null, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, selectedFacilityId: null, placementCategory: 'facility', panelCollapsed: true, message: '', directionIndex: 2, placementFeedback: null, roadEdit: createRoadEditState(), lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
@@ -298,8 +298,8 @@ function normalizeObjects(objects) {
       kind: tool.kind,
       x: clampInteger(o?.x, 0, CONFIG.world.cols - 1, 0),
       y: clampInteger(o?.y, 0, CONFIG.world.rows - 1, 0),
-      w: tool.w,
-      h: tool.h,
+      w: Math.max(1, clampInteger(o?.w, 1, CONFIG.world.cols, tool.w)),
+      h: Math.max(1, clampInteger(o?.h, 1, CONFIG.world.rows, tool.h)),
       directionIndex: clampInteger(o?.directionIndex, 0, CONFIG.directions.length - 1, 0),
       level: o?.level,
       useCount: o?.useCount,
@@ -908,12 +908,13 @@ function getTilesInRadius(tileX, tileY, radius) {
   return tiles;
 }
 
-function canPlaceAt(tileX, tileY, objectDef) {
-  const tool = objectDef ?? getTool(gameState.ui.selectedTool);
+function canPlaceAt(tileX, tileY, objectDef, directionIndex = gameState.ui?.directionIndex ?? 0) {
+  const tool = objectDef ?? getTool(gameState.ui?.selectedTool);
   if (tool?.kind === 'delete') return { ok: true, reason: '' };
   if (tool?.kind === 'clear') return { ok: false, reason: '開拓ツールでは配置できません。' };
-  const w = tool?.w ?? CONFIG.placement.decorationSize;
-  const h = tool?.h ?? CONFIG.placement.decorationSize;
+  const footprint = getRotatedFootprintSize(tool, directionIndex);
+  const w = footprint.w;
+  const h = footprint.h;
   for (let y = tileY; y < tileY + h; y += 1) {
     for (let x = tileX; x < tileX + w; x += 1) {
       const tile = getTile(x, y);
@@ -1170,12 +1171,12 @@ function objectAt(gx, gy) { return gameState.world.objects.find(o => gx >= o?.x 
 
 function getTool(id) { return CONFIG.tools.find(t => t.id === id) ?? CONFIG.tools[0]; }
 
-function canPlace(type, gx, gy) {
-  return canPlaceAt(gx, gy, getTool(type));
+function canPlace(type, gx, gy, directionIndex = gameState.ui?.directionIndex ?? 0) {
+  return canPlaceAt(gx, gy, getTool(type), directionIndex);
 }
 
 function placeObject(type, gx, gy, directionIndex, silent) {
-  const result = canPlace(type, gx, gy);
+  const result = canPlace(type, gx, gy, directionIndex);
   if (!result.ok) {
     gameState.ui.placementFeedback = { x: gx, y: gy, ok: false, text: result.reason, timer: CONFIG.placement.feedbackSeconds };
     return false;
@@ -1184,7 +1185,8 @@ function placeObject(type, gx, gy, directionIndex, silent) {
   if (tool?.kind === 'road') {
     if (!roadAt(gx, gy)) gameState.world.roads.push({ x: gx, y: gy });
   } else if (tool?.kind !== 'delete') {
-    gameState.world.objects.push(normalizeFacilityFields({ id: `obj-${gameState.world.nextObjectId++}`, type, kind: tool?.kind, x: gx, y: gy, w: tool?.w, h: tool?.h, directionIndex }));
+    const footprint = getRotatedFootprintSize(tool, directionIndex);
+    gameState.world.objects.push(normalizeFacilityFields({ id: `obj-${gameState.world.nextObjectId++}`, type, kind: tool?.kind, x: gx, y: gy, w: footprint.w, h: footprint.h, directionIndex }));
   }
   if (!silent) gameState.ui.placementFeedback = { x: gx, y: gy, ok: true, text: '配置しました。', timer: CONFIG.placement.feedbackSeconds };
   return true;
@@ -1202,16 +1204,69 @@ function deleteAt(gx, gy) {
   gameState.ui.placementFeedback = { x: gx, y: gy, ok: before !== gameState.world.roads.length, text: before !== gameState.world.roads.length ? '削除しました。' : '削除対象がありません。', timer: CONFIG.placement.feedbackSeconds };
 }
 
+function getDirectionIndexFromSide(side, fallbackIndex = 2) {
+  const normalized = String(side ?? '').toLowerCase();
+  const index = CONFIG.directions.findIndex(direction => direction?.name?.toLowerCase?.() === normalized[0]);
+  return index >= 0 ? index : clampInteger(fallbackIndex, 0, CONFIG.directions.length - 1, 2);
+}
+
+function getDirectionSideName(directionIndex) {
+  const direction = CONFIG.directions[clampInteger(directionIndex, 0, CONFIG.directions.length - 1, 2)]?.name ?? 'S';
+  return { N: 'North', E: 'East', S: 'South', W: 'West' }[direction] ?? 'South';
+}
+
+function getFacilityConfig(type) {
+  return (CONFIG.facilities ?? CONFIG.FACILITIES)?.[type] ?? null;
+}
+
+function getRotatedDirectionIndex(baseIndex, rotationIndex) {
+  return (clampInteger(baseIndex, 0, CONFIG.directions.length - 1, 2) + clampInteger(rotationIndex, 0, CONFIG.directions.length - 1, 0)) % CONFIG.directions.length;
+}
+
+function getFacilityEntranceDirectionIndex(facility) {
+  const cfg = getFacilityConfig(facility?.type) ?? {};
+  const baseIndex = getDirectionIndexFromSide(cfg.entranceSide, 0);
+  return getRotatedDirectionIndex(baseIndex, facility?.directionIndex ?? 0);
+}
+
+function getEntranceDirectionVector(facility) {
+  const direction = CONFIG.directions[getFacilityEntranceDirectionIndex(facility)] ?? CONFIG.directions[2] ?? { name: 'S', dx: 0, dy: 1 };
+  return { name: direction.name, dx: direction.dx, dy: direction.dy };
+}
+
+function getRotatedFootprintSize(definition, directionIndex = 0) {
+  const w = Math.max(1, clampInteger(definition?.w, 1, CONFIG.world.cols, CONFIG.placement.decorationSize));
+  const h = Math.max(1, clampInteger(definition?.h, 1, CONFIG.world.rows, CONFIG.placement.decorationSize));
+  const rotation = clampInteger(directionIndex, 0, CONFIG.directions.length - 1, 0) % 2;
+  return rotation === 1 ? { w: h, h: w } : { w, h };
+}
+
 function getFacilityEntranceTile(facility) {
-  const index = facility?.directionIndex ?? 0;
-  const x = facility?.x ?? 0;
-  const y = facility?.y ?? 0;
-  const w = facility?.w ?? CONFIG.placement.facilitySize;
-  const h = facility?.h ?? CONFIG.placement.facilitySize;
-  if (CONFIG.directions[index]?.name === 'N') return { x: x + Math.floor(w / 2), y: y - 1 };
-  if (CONFIG.directions[index]?.name === 'E') return { x: x + w, y: y + Math.floor(h / 2) };
-  if (CONFIG.directions[index]?.name === 'S') return { x: x + Math.floor(w / 2), y: y + h };
-  return { x: x - 1, y: y + Math.floor(h / 2) };
+  if (!facility) return null;
+  const dir = getEntranceDirectionVector(facility);
+  const x = clampInteger(facility?.x, 0, CONFIG.world.cols - 1, 0);
+  const y = clampInteger(facility?.y, 0, CONFIG.world.rows - 1, 0);
+  const w = Math.max(1, clampInteger(facility?.w, 1, CONFIG.world.cols, CONFIG.placement.facilitySize));
+  const h = Math.max(1, clampInteger(facility?.h, 1, CONFIG.world.rows, CONFIG.placement.facilitySize));
+  if (dir.name === 'N') return { x: x + Math.floor((w - 1) / 2), y: y - 1 };
+  if (dir.name === 'E') return { x: x + w, y: y + Math.floor((h - 1) / 2) };
+  if (dir.name === 'S') return { x: x + Math.floor((w - 1) / 2), y: y + h };
+  return { x: x - 1, y: y + Math.floor((h - 1) / 2) };
+}
+
+function getPlacementPreviewEntranceTile() {
+  const tool = getTool(gameState.ui?.selectedTool);
+  if (tool?.kind !== 'facility') return null;
+  const tile = gameState.input?.mouseTile;
+  if (!tile || tile.x < 0 || tile.y < 0) return null;
+  const directionIndex = gameState.ui?.directionIndex ?? 0;
+  const footprint = getRotatedFootprintSize(tool, directionIndex);
+  return getFacilityEntranceTile({ type: tool.id, kind: tool.kind, x: tile.x, y: tile.y, w: footprint.w, h: footprint.h, directionIndex });
+}
+
+function isEntranceConnectedToRoad(facility) {
+  const entrance = getFacilityEntranceTile(facility);
+  return Number.isFinite(entrance?.x) && Number.isFinite(entrance?.y) && roadAt(entrance.x, entrance.y);
 }
 
 function entranceTile(facility) { return getFacilityEntranceTile(facility); }
@@ -1232,7 +1287,7 @@ function isFacilityUsable(facility) {
   const current = (gameState.world.objects ?? []).find(o => o?.id === facility.id);
   if (current !== facility) return false;
   const e = getFacilityEntranceTile(facility);
-  return Number.isFinite(e?.x) && Number.isFinite(e?.y) && roadAt(e.x, e.y) && isPassableTile(e.x, e.y);
+  return Number.isFinite(e?.x) && Number.isFinite(e?.y) && isEntranceConnectedToRoad(facility) && isPassableTile(e.x, e.y);
 }
 
 function facilityBonus(facility) {

@@ -54,6 +54,7 @@ function selectPersonByRosterId(rosterId) {
   gameState.ui.selectedPersonRosterId = id;
   gameState.ui.selectedSealId = sealId && getSealById(sealId) ? sealId : null;
   gameState.ui.selectedDungeonId = null;
+  gameState.ui.selectedFacilityId = null;
   markUIDirty('selection');
   renderUI();
 }
@@ -102,6 +103,7 @@ function setSelectedTool(toolId) {
   if (!gameState.ui) return;
   if (gameState.ui?.roadEdit?.active && gameState.ui.selectedTool !== (tool?.id ?? null)) clearRoadEdit();
   gameState.ui.selectedTool = tool?.id ?? null;
+  gameState.ui.selectedFacilityId = null;
   gameState.ui.placementCategory = categoryForTool(tool) ?? gameState.ui.placementCategory ?? 'facility';
   if (tool?.id && gameState.ui.activeBottomTab !== 'build') setActiveBottomTab('build');
   markUIDirty('tool');
@@ -314,14 +316,25 @@ function bindInputEvents() {
       gameState.ui.selectedSealId = clickedSeal.id;
       gameState.ui.selectedPersonRosterId = `seal:${clickedSeal.id}`;
       gameState.ui.selectedDungeonId = null;
+      gameState.ui.selectedFacilityId = null;
       setActiveBottomTab('seals');
       return;
     }
     if (!isPlacementModeActive()) {
-      const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId);
+      const clickedObject = objectAt(gameState.input.mouseTile?.x, gameState.input.mouseTile?.y);
+      if (clickedObject?.kind === 'facility' && clickedObject?.id) {
+        gameState.ui.selectedFacilityId = clickedObject.id;
+        gameState.ui.selectedSealId = null;
+        gameState.ui.selectedPersonRosterId = null;
+        gameState.ui.selectedDungeonId = null;
+        setActiveBottomTab('build');
+        return;
+      }
+      const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId);
       gameState.ui.selectedSealId = null;
       gameState.ui.selectedPersonRosterId = null;
       gameState.ui.selectedDungeonId = null;
+      gameState.ui.selectedFacilityId = null;
       if (hadSelection) markUIDirty('selection');
     }
     renderUI();
