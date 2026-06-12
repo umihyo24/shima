@@ -32,8 +32,10 @@ const BUILD_CATEGORIES = Object.freeze([
   { id: 'road', label: '道路', toolIds: ['road'] },
   { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'manjuShop', 'blacksmith', 'weaponShop', 'armorShop'] },
   { id: 'decoration', label: '装飾', toolIds: ['flower', 'tree', 'rock'] },
-  { id: 'utility', label: '管理', toolIds: ['clear', 'delete'] }
+  { id: 'management', label: '管理', toolIds: ['clear', 'delete', 'rotate'] }
 ]);
+
+const BUILD_CATEGORY_IDS = Object.freeze(BUILD_CATEGORIES.map(category => category.id));
 
 const SEAL_LIST_FILTERS = Object.freeze(['all', 'resident', 'activeVisitors', 'unlockedVisitors', 'lockedVisitors', 'hunting', 'questing', 'resting']);
 const SEAL_LIST_SORT_KEYS = Object.freeze(['name', 'type', 'hpRate', 'level', 'favor', 'state', 'stayTime', 'hunts', 'weapon', 'armor', 'accessory']);
@@ -87,6 +89,22 @@ function buildTools() {
   updateToolButtons();
 }
 
+function getBuildToolDef(toolId) { return CONFIG.tools.find(tool => tool?.id === toolId) ?? null; }
+
+function getBuildToolEffectText(toolId) { return getBuildToolDef(toolId)?.effectText ?? ''; }
+
+function setBuildCategory(category) {
+  if (!gameState.ui) return;
+  gameState.ui.buildCategory = BUILD_CATEGORY_IDS.includes(category) ? category : 'road';
+  markPanelDirty('build-category');
+  renderUI();
+}
+
+function getBuildCategoryForTool(tool) {
+  const category = tool?.category ?? categoryForTool(tool);
+  return BUILD_CATEGORY_IDS.includes(category) ? category : 'road';
+}
+
 function setActiveBottomTab(tabId) {
   const next = BOTTOM_TABS.some(tab => tab.id === tabId) ? tabId : null;
   if (!gameState.ui) return;
@@ -99,12 +117,13 @@ function setActiveBottomTab(tabId) {
 function toggleBottomTab(tabId) { setActiveBottomTab(gameState.ui?.activeBottomTab === tabId ? null : tabId); }
 function closeBottomPanel() { setActiveBottomTab(null); }
 function setSelectedTool(toolId) {
-  const tool = CONFIG.tools.find(t => t?.id === toolId) ?? null;
+  const tool = getBuildToolDef(toolId);
   if (!gameState.ui) return;
   if (gameState.ui?.roadEdit?.active && gameState.ui.selectedTool !== (tool?.id ?? null)) clearRoadEdit();
   gameState.ui.selectedTool = tool?.id ?? null;
   gameState.ui.selectedFacilityId = null;
   gameState.ui.placementCategory = categoryForTool(tool) ?? gameState.ui.placementCategory ?? 'facility';
+  if (tool) gameState.ui.buildCategory = getBuildCategoryForTool(tool);
   if (tool?.id && gameState.ui.activeBottomTab !== 'build') setActiveBottomTab('build');
   markUIDirty('tool');
   renderUI();
@@ -121,12 +140,13 @@ function categoryForTool(tool) {
   if (tool.kind === 'road') return 'road';
   if (tool.kind === 'facility') return 'facility';
   if (tool.kind === 'decoration') return 'decoration';
-  if (['clear', 'delete'].includes(tool.kind)) return 'utility';
+  if (['clear', 'delete'].includes(tool.kind)) return 'management';
   return null;
 }
 function updateToolButtons() {
   for (const b of bottomTabBarEl?.querySelectorAll('button[data-tab], button[data-bottom-tab]') ?? []) b.classList.toggle('active', (b.dataset.tab ?? b.dataset.bottomTab) === gameState.ui?.activeBottomTab);
   for (const b of bottomPanelEl?.querySelectorAll('button[data-tool]') ?? []) b.classList.toggle('active', b.dataset.tool === gameState.ui?.selectedTool);
+  for (const b of bottomPanelEl?.querySelectorAll('button[data-build-category]') ?? []) b.classList.toggle('active', b.dataset.buildCategory === (gameState.ui?.buildCategory ?? 'road'));
   for (const b of speedHudEl?.querySelectorAll('button[data-speed]') ?? []) b.classList.toggle('active', Number(b.dataset.speed) === clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE));
   const speedStatus = document.getElementById('speedStatus');
   if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
@@ -142,12 +162,13 @@ function handleUiAction(event, options = {}) {
   const tab = actionTarget.dataset?.tab ?? actionTarget.dataset?.bottomTab;
   const tool = actionTarget.dataset?.tool;
   const speed = actionTarget.dataset?.speed;
+  const buildCategory = actionTarget.dataset?.buildCategory;
   const action = actionTarget.dataset?.action;
   const dungeonAction = actionTarget.dataset?.dungeonAction;
   const sealFilter = actionTarget.dataset?.sealFilter;
   const sealSort = actionTarget.dataset?.sealSort;
   const rosterId = actionTarget.dataset?.rosterId;
-  const hasUiAction = Boolean(tab || tool || speed !== undefined || action || dungeonAction || sealFilter || sealSort || rosterId);
+  const hasUiAction = Boolean(tab || tool || buildCategory || speed !== undefined || action || dungeonAction || sealFilter || sealSort || rosterId);
   if (!hasUiAction) return false;
 
   event.preventDefault();
@@ -156,6 +177,7 @@ function handleUiAction(event, options = {}) {
   if (!options.fromPointer && event.detail !== 0 && Date.now() < safeFiniteNumber(gameState.ui?.suppressUiClickUntil, 0, 0)) return true;
 
   if (tab) toggleBottomTab(tab);
+  else if (buildCategory) setBuildCategory(buildCategory);
   else if (tool) setSelectedTool(tool);
   else if (speed !== undefined) setGameSpeed(Number(speed));
   else if (action === 'rotate') rotateTool();
