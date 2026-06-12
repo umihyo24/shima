@@ -5,8 +5,9 @@
   --panel-border: rgba(255,255,255,.18);
   --accent: #ffe38a;
   --muted: #cdefff;
-  --bottom-panel-height: 300px;
-  --bottom-tab-height: 42px;
+  --bottom-tab-height: 56px;
+  --bottom-panel-width: 1180px;
+  --bottom-panel-height: 320px;
 }
 * { box-sizing: border-box; }
 body { margin: 0; overflow: hidden; background: #071d2a; color: #f7fbff; }
@@ -28,13 +29,13 @@ button.subtle { background: rgba(255,255,255,.08); }
 .speedButtons { display: grid; grid-template-columns: repeat(4, minmax(34px, 1fr)); gap: 5px; pointer-events: auto; }
 .speedButtons button { padding: 6px 7px; text-align: center; }
 .bottomUi, .bottom-ui { position: fixed; left: 0; right: 0; bottom: 0; height: 0; z-index: 42; pointer-events: none; }
-.bottomTabBar, .bottom-tabs, .bottom-tab-bar { position: fixed; left: 0; right: 0; bottom: 0; z-index: 44; display: flex; gap: 7px; justify-content: center; align-items: center; height: var(--bottom-tab-height); padding: 5px 12px; pointer-events: auto; background: linear-gradient(180deg, rgba(5,18,28,.2), rgba(5,18,28,.78)); }
+.bottomTabBar, .bottom-tabs, .bottom-tab-bar { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 50; display: flex; gap: 7px; justify-content: center; align-items: center; width: fit-content; max-width: calc(100vw - 32px); height: var(--bottom-tab-height); padding: 7px 12px; pointer-events: auto; overflow-x: auto; overflow-y: hidden; background: linear-gradient(180deg, rgba(5,18,28,.2), rgba(5,18,28,.78)); border-radius: 12px 12px 0 0; }
 .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 92px; padding: 8px 12px; }
-.bottomPanel, .bottom-panel { position: fixed; left: 0; right: 0; bottom: var(--bottom-tab-height); z-index: 43; pointer-events: auto; height: var(--bottom-panel-height); max-height: var(--bottom-panel-height); min-height: var(--bottom-panel-height); overflow: hidden; padding: 0; display: flex; flex-direction: column; border-radius: 10px 10px 0 0; }
+.bottomPanel, .bottom-panel { position: fixed; left: 50%; bottom: var(--bottom-tab-height); transform: translateX(-50%); z-index: 49; pointer-events: auto; width: min(var(--bottom-panel-width), calc(100vw - 32px)); height: var(--bottom-panel-height); max-height: var(--bottom-panel-height); min-height: var(--bottom-panel-height); overflow: hidden; padding: 0; display: flex; flex-direction: column; border-radius: 12px; }
 .bottomPanel[hidden], .bottom-panel[hidden] { display: none; pointer-events: none; }
 .bottom-panel-header { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px 9px; border-bottom: 1px solid rgba(255,255,255,.14); pointer-events: auto; }
 .bottom-panel-header h2 { margin: 0; font-size: 17px; }
-.bottom-panel-content { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 12px; overscroll-behavior: contain; pointer-events: auto; }
+.bottom-panel-content { flex: 1 1 auto; height: 100%; min-height: 0; overflow: hidden; padding: 12px; overscroll-behavior: contain; pointer-events: auto; }
 .bottomPanel button, .bottom-panel button, .bottom-panel-content button { pointer-events: auto; }
 .panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
 .panelHeader h2 { margin: 0; font-size: 17px; }
@@ -68,36 +69,39 @@ button.subtle { background: rgba(255,255,255,.08); }
 .startCard p { color: var(--muted); line-height: 1.7; }
 .startActions { display: flex; justify-content: center; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
 .saveInfo { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.55; }
-@media (max-width: 760px) {
-  :root { --bottom-panel-height: min(42vh, 320px); --bottom-tab-height: 40px; }
+@media (max-width: 900px) {
+  :root { --bottom-panel-height: min(42vh, 320px); --bottom-tab-height: 48px; }
   .compactHud { min-width: 0; max-width: calc(100vw - 116px); font-size: 12px; }
   .speedHud, .speed-panel { min-width: 96px; }
   .speedTitle { font-size: 11px; }
   .speedButtons { grid-template-columns: repeat(2, 1fr); }
   .bottomUi, .bottom-ui { left: 0; right: 0; bottom: 0; }
-  .bottomTabBar, .bottom-tabs, .bottom-tab-bar { justify-content: stretch; gap: 4px; padding: 4px 6px; }
-  .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 0; flex: 1; padding: 7px 4px; }
+  .bottomTabBar, .bottom-tabs, .bottom-tab-bar { width: calc(100vw - 16px); max-width: calc(100vw - 16px); justify-content: center; gap: 4px; padding: 5px 6px; }
+  .bottomPanel, .bottom-panel { width: calc(100vw - 16px); }
+  .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 0; flex: 1 1 auto; padding: 7px 4px; }
   .bottom-panel-header { padding: 9px 10px 7px; }
   .bottom-panel-content { padding: 9px; }
   .buildPanel { grid-template-columns: 1fr; }
 }
 .people-panel-content { overflow: hidden; }
 .people-panel { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; }
-.people-controls { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-.people-filter-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.people-controls { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; min-width: 0; }
+.people-filter-buttons { display: flex; gap: 6px; flex-wrap: wrap; min-width: 0; }
 .people-filter-buttons button { padding: 5px 8px; font-size: 12px; }
 .people-counts { color: var(--muted); font-size: 12px; font-weight: 700; }
-.people-table-wrap { min-height: 0; overflow: auto; border: 1px solid rgba(255,255,255,.13); border-radius: 9px; background: rgba(0,0,0,.12); overscroll-behavior: contain; }
-.people-table { width: 100%; min-width: 860px; border-collapse: collapse; font-size: 12px; }
+.people-table-wrap { min-height: 0; max-width: 100%; overflow: auto; border: 1px solid rgba(255,255,255,.13); border-radius: 9px; background: rgba(0,0,0,.12); overscroll-behavior: contain; }
+.people-table { width: max-content; min-width: min(860px, 100%); border-collapse: collapse; font-size: 12px; }
 .people-table th { position: sticky; top: 0; z-index: 1; background: rgba(8, 32, 44, .96); border-bottom: 1px solid rgba(255,255,255,.16); text-align: left; }
 .people-table td { border-bottom: 1px solid rgba(255,255,255,.08); padding: 5px 7px; white-space: nowrap; }
+.people-table th, .people-table td { max-width: 180px; }
+.people-table td:nth-child(6) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .people-table tbody tr { cursor: pointer; }
 .people-table tbody tr:hover { background: rgba(255,255,255,.08); }
 .people-table tbody tr.selected { background: rgba(255, 210, 90, .22); color: #fff9dc; }
 .sortHeader { width: 100%; border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 6px 7px; text-align: left; font-size: 12px; color: var(--muted); }
 .emptyPeople { text-align: center; color: var(--muted); padding: 18px; }
-.people-detail { max-height: 86px; overflow: auto; }
-@media (max-width: 760px) {
+.people-detail { max-height: 86px; overflow: auto; max-width: 720px; }
+@media (max-width: 900px) {
   .people-table { min-width: 760px; font-size: 11px; }
   .people-detail { max-height: 74px; }
 }
@@ -111,8 +115,8 @@ button.subtle { background: rgba(255,255,255,.08); }
 .dungeonLog { margin-top: 7px; }
 .dungeonLog ul { margin: 4px 0 8px 18px; padding: 0; }
 .dungeonReward { margin-top: 8px; padding: 7px; border-radius: 8px; background: rgba(255,211,79,.12); }
-.dungeonPanel { grid-column: 1 / -1; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; max-height: calc(var(--bottom-panel-height) - 86px); overflow: hidden; }
-.dungeonSummary { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr); gap: 10px; align-items: start; padding: 8px; border: 1px solid rgba(157,252,255,.18); border-radius: 10px; background: rgba(0,0,0,.14); }
+.dungeonPanel { grid-column: 1 / -1; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; height: 100%; max-height: calc(var(--bottom-panel-height) - 86px); overflow: hidden; }
+.dungeonSummary { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr); gap: 10px; align-items: start; width: min(100%, 900px); max-width: 900px; padding: 8px; border: 1px solid rgba(157,252,255,.18); border-radius: 10px; background: rgba(0,0,0,.14); }
 .dungeonTitle { font-size: 15px; font-weight: 900; color: var(--accent); margin-bottom: 5px; }
 .dungeonSummaryGrid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; font-size: 12px; line-height: 1.35; }
 .dungeonSummaryGrid span { color: var(--muted); font-weight: 800; }
@@ -121,13 +125,13 @@ button.subtle { background: rgba(255,255,255,.08); }
 .dungeonStartWarning { margin-bottom: 4px; font-size: 12px; }
 .dungeonButtons { margin-top: 0; }
 .dungeonButtons button[disabled] { opacity: .55; cursor: not-allowed; filter: grayscale(.2); }
-.dungeonDetailScroll { min-height: 0; overflow: auto; overscroll-behavior: contain; padding-right: 3px; }
+.dungeonDetailScroll { min-height: 0; max-width: 100%; overflow: auto; overscroll-behavior: contain; padding-right: 3px; }
 .dungeonRouteCompact { flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; }
 .dungeonRouteCompact .dungeonNode { min-width: 48px; padding: 4px 6px; font-size: 11px; }
 .dungeonExtraDetails { margin-top: 7px; color: var(--muted); font-size: 12px; }
 .mutedText { color: var(--muted); font-size: 12px; }
-@media (max-width: 760px) {
+@media (max-width: 900px) {
   .dungeonPanel { max-height: calc(var(--bottom-panel-height) - 70px); }
-  .dungeonSummary { grid-template-columns: 1fr; gap: 7px; padding: 7px; }
+  .dungeonSummary { grid-template-columns: 1fr; gap: 7px; padding: 7px; max-width: 100%; }
   .dungeonSummaryGrid { font-size: 11px; }
 }
