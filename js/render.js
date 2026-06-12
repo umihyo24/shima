@@ -877,9 +877,9 @@ function renderDungeonsPanel() {
     return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><br>${escapeHtml(dungeonStateLabel(dungeon.state))}: ${escapeHtml(currentText)}<br>参加: ${participants}</div>`;
   }).join('') : '<div class="compactCard">攻略中のダンジョンはありません。</div>'; 
   return `<div class="compactGrid">
+      ${renderSelectedDungeonDetail()}
       <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
       ${runningHtml}
-      ${renderSelectedDungeonDetail()}
     </div>`;
 }
 
@@ -935,7 +935,7 @@ function renderSelectedSealDetail() {
 }
 
 function renderSelectedDungeonDetail() {
-  return drawDungeonPanel() || '<div class="compactCard">選択中のダンジョンはありません。</div>';
+  return renderDungeonPanel() || '<div class="compactCard">選択中のダンジョンはありません。</div>';
 }
 
 function renderSelectedSealPanel(seal) {
@@ -1072,48 +1072,88 @@ function drawDungeons() {
   for (const dungeon of gameState.dungeons ?? []) drawDungeon(ctx, dungeon);
 }
 
-function drawDungeonPanel() {
+function renderDungeonPanel() {
   const dungeon = getDungeonById(gameState.ui?.selectedDungeonId);
   if (!dungeon) return '';
-  const area = getDungeonAreaDef(dungeon.areaId);
-  const levelDef = getDungeonLevelDef(dungeon.typeId ?? dungeon.type, dungeon.level);
-  const preview = dungeon.rewardPreview ?? getDungeonRewardPreview(dungeon);
-  const remaining = Math.max(0, safeFiniteNumber(dungeon.expiresInMs, 0, 0));
-  const participants = renderDungeonParticipantStatusText(dungeon) || '未編成（開始時に自動選出）';
-  const itemNames = (preview.itemIds ?? []).map(id => getItemDef(id)?.name ?? id).join(' / ') || 'なし';
-  const canStart = canStartDungeon(dungeon);
-  const startButton = dungeon.state === 'available' ? `<button data-dungeon-action="start" data-dungeon-id="${escapeHtml(dungeon.id)}">攻略開始</button>` : '';
-  const route = renderDungeonRoute(dungeon);
-  const logs = renderDungeonLog(dungeon);
-  const reward = renderDungeonRewardSummary(dungeon);
-  const current = dungeon.nodes?.[dungeon.currentNodeIndex];
-  const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon.state);
-  const availability = dungeon.state === 'available' ? `残り時間: ${Math.ceil(remaining / 1000)}秒<br>` : '';
-  const clearKey = getDungeonLevelKey(dungeon.typeId ?? dungeon.type, dungeon.level);
-  const clearCount = clampInteger(gameState.dungeonProgress?.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0);
-  const partyPower = getPartyPower(dungeon.participantIds);
-  const powerText = partyPower > 0 ? `${Math.floor(partyPower)} / 推奨${Math.floor(getDungeonRecommendedPower(dungeon))}` : `推奨${Math.floor(getDungeonRecommendedPower(dungeon))}`;
-  return `<div class="panel sealCard dungeonPanel"><b>🕳️ ${escapeHtml(dungeon.name)}</b><br>エリア: ${escapeHtml(area?.label ?? dungeon.areaId)}<br>状態: ${escapeHtml(dungeonStateLabel(dungeon.state))}<br>${availability}現在: ${escapeHtml(currentText)}<br>推奨戦力: ${escapeHtml(powerText)}<br>参加費: ${Math.floor(safeFiniteNumber(dungeon.recruitCost, 0, 0))}G<br>クリア回数: ${clearCount}<br>報酬見込み: ${Math.floor(preview.g ?? 0)}G / EXP${Math.floor(preview.exp ?? 0)} / 知名度+${Math.floor(preview.knownness ?? 0)}<br>ドロップ候補: ${escapeHtml(itemNames)}<br>参加者: ${participants}<br>${route}${logs}${reward}${canStart.ok || dungeon.state !== 'available' ? '' : `<span class="warnText">${escapeHtml(canStart.reason)}</span><br>`}<div class="dungeonButtons">${startButton}<button data-dungeon-action="close">閉じる</button></div></div>`;
+  return `<div class="panel sealCard dungeonPanel">${renderDungeonSummary(dungeon)}<div class="dungeonDetailScroll">${renderDungeonRouteCompact(dungeon)}${renderDungeonLog(dungeon)}${renderDungeonRewardSummary(dungeon)}${renderDungeonExtraDetails(dungeon)}</div></div>`;
 }
 
-function renderDungeonRoute(dungeon) {
+function drawDungeonPanel() { return renderDungeonPanel(); }
+
+function renderDungeonSummary(dungeon) {
+  const area = getDungeonAreaDef(dungeon?.areaId);
+  const levelDef = getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
+  const preview = dungeon?.rewardPreview ?? getDungeonRewardPreview(dungeon);
+  const remaining = Math.max(0, safeFiniteNumber(dungeon?.expiresInMs, 0, 0));
+  const participants = renderDungeonParticipantStatusText(dungeon) || '未編成（開始時に自動選出）';
+  const itemNames = (preview?.itemIds ?? []).map(id => getItemDef(id)?.name ?? id).join(' / ') || 'なし';
+  const current = dungeon?.nodes?.[dungeon?.currentNodeIndex];
+  const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon?.state);
+  const clearKey = getDungeonLevelKey(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
+  const clearCount = clampInteger(gameState.dungeonProgress?.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0);
+  const partyPower = getPartyPower(dungeon?.participantIds);
+  const powerText = partyPower > 0 ? `${Math.floor(partyPower)} / 推奨${Math.floor(getDungeonRecommendedPower(dungeon))}` : `推奨${Math.floor(getDungeonRecommendedPower(dungeon))}`;
+  const rewardText = `${Math.floor(preview?.g ?? 0)}G / EXP${Math.floor(preview?.exp ?? 0)} / 知名度+${Math.floor(preview?.knownness ?? 0)}`;
+  const remainingText = dungeon?.state === 'available' ? `${Math.ceil(remaining / 1000)}秒` : '—';
+  return `<div class="dungeonSummary">
+    <div class="dungeonSummaryLeft">
+      <div class="dungeonTitle">🕳️ ${escapeHtml(dungeon?.name ?? 'ダンジョン')} Lv${Math.floor(safeFiniteNumber(dungeon?.level, levelDef?.level ?? 1, 1))}</div>
+      <div class="dungeonSummaryGrid">
+        <span>エリア</span><b>${escapeHtml(area?.label ?? dungeon?.areaId ?? '不明')}</b>
+        <span>状態</span><b>${escapeHtml(dungeonStateLabel(dungeon?.state))}</b>
+        <span>残り時間</span><b>${escapeHtml(remainingText)}</b>
+        <span>現在</span><b>${escapeHtml(currentText)}</b>
+        <span>戦力</span><b>${escapeHtml(powerText)}</b>
+        <span>クリア</span><b>${clearCount}回</b>
+      </div>
+    </div>
+    <div class="dungeonSummaryRight">
+      <div class="dungeonSummaryGrid">
+        <span>参加費</span><b>${Math.floor(safeFiniteNumber(dungeon?.recruitCost, 0, 0))}G</b>
+        <span>報酬</span><b>${escapeHtml(rewardText)}</b>
+        <span>ドロップ</span><b>${escapeHtml(itemNames)}</b>
+        <span>参加者</span><b>${participants}</b>
+      </div>
+      ${renderDungeonActionButtons(dungeon)}
+    </div>
+  </div>`;
+}
+
+function renderDungeonActionButtons(dungeon) {
+  const error = getDungeonStartError(dungeon);
+  const canShowStart = dungeon?.state === 'available';
+  const warning = canShowStart && error ? `<div class="warnText dungeonStartWarning">${escapeHtml(error)}</div>` : '';
+  const startButton = canShowStart ? `<button data-dungeon-action="start" data-dungeon-id="${escapeHtml(dungeon?.id)}"${error ? ' disabled' : ''}>攻略開始</button>` : '';
+  return `<div class="dungeonActions">${warning}<div class="dungeonButtons">${startButton}<button data-dungeon-action="close">閉じる</button></div></div>`;
+}
+
+function renderDungeonRouteCompact(dungeon) {
   const nodes = Array.isArray(dungeon?.nodes) ? dungeon.nodes : [];
-  if (nodes.length <= 0) return '';
+  if (nodes.length <= 0) return '<div class="dungeonRouteTitle">遠征ルート</div><div class="dungeonRoute dungeonRouteCompact"><span class="mutedText">開始後に表示されます。</span></div>';
   const participantNames = getVisibleDungeonParticipants(dungeon).map(p => p.name || getSealById(p.sealId)?.name || p.id).join(' / ');
   const html = nodes.map((node, index) => {
     const classes = ['dungeonNode'];
     if (node?.resolved) classes.push('done');
-    if (index === dungeon.currentNodeIndex && ['assembling', 'running'].includes(dungeon.state)) classes.push('current');
-    const marker = node?.resolved ? '✓' : (index === dungeon.currentNodeIndex ? '●' : '○');
-    const names = index === dungeon.currentNodeIndex && participantNames ? `<small>${escapeHtml(participantNames)}</small>` : '';
+    if (index === dungeon?.currentNodeIndex && ['assembling', 'running'].includes(dungeon?.state)) classes.push('current');
+    const marker = node?.resolved ? '✓' : (index === dungeon?.currentNodeIndex ? '●' : '○');
+    const names = index === dungeon?.currentNodeIndex && participantNames ? `<small>${escapeHtml(participantNames)}</small>` : '';
     return `<div class="${classes.join(' ')}"><span>${marker}</span>${escapeHtml(CONFIG.dungeon?.nodeLabels?.[node?.type] ?? node?.type ?? '?')}${names}</div>`;
   }).join('');
-  return `<div class="dungeonRouteTitle">${escapeHtml(CONFIG.dungeon?.labels?.routeTitle ?? '遠征ルート')}</div><div class="dungeonRoute">${html}</div>`;
+  return `<div class="dungeonRouteTitle">${escapeHtml(CONFIG.dungeon?.labels?.routeTitle ?? '遠征ルート')}</div><div class="dungeonRoute dungeonRouteCompact">${html}</div>`;
 }
+
+function renderDungeonRoute(dungeon) { return renderDungeonRouteCompact(dungeon); }
 
 function renderDungeonLog(dungeon) {
   const logs = normalizeDungeonLog(dungeon?.expeditionLog).map(text => `<li>${escapeHtml(text)}</li>`).join('') || '<li>開始するとあざらしの行動が記録されます。</li>';
   return `<div class="dungeonLog"><b>${escapeHtml(CONFIG.dungeon?.labels?.logTitle ?? '遠征ログ')}</b><ul>${logs}</ul></div>`;
+}
+
+function renderDungeonExtraDetails(dungeon) {
+  const area = getDungeonAreaDef(dungeon?.areaId);
+  const clearKey = getDungeonLevelKey(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
+  const clearCount = clampInteger(gameState.dungeonProgress?.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0);
+  return `<div class="dungeonExtraDetails"><b>詳細</b><br>エリア説明: ${escapeHtml(area?.label ?? dungeon?.areaId ?? '不明')} / クリア回数: ${clearCount}</div>`;
 }
 
 function renderDungeonRewardSummary(dungeon) {
