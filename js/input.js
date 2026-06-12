@@ -22,12 +22,12 @@ function markPanelDirty(reason = 'panel') {
   gameState.ui.lastPanelDirtyReason = reason;
 }
 
-const BOTTOM_TABS = Object.freeze([
-  { id: 'build', label: '建設' },
-  { id: 'seals', label: '人物' },
+const MANAGEMENT_PANELS = Object.freeze([
+  { id: 'people', label: '人物' },
   { id: 'dungeons', label: 'ダンジョン' },
   { id: 'progress', label: '発展' }
 ]);
+const BOTTOM_TABS = MANAGEMENT_PANELS;
 const BUILD_CATEGORIES = Object.freeze([
   { id: 'road', label: '道路', toolIds: ['road'] },
   { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'manjuShop', 'blacksmith', 'weaponShop', 'armorShop'] },
@@ -81,7 +81,8 @@ function setSealListSort(sortKey) {
 }
 
 function buildTools() {
-  if (bottomTabBarEl) bottomTabBarEl.innerHTML = BOTTOM_TABS.map(tab => `<button data-tab="${tab.id}">${tab.label}</button>`).join('');
+  if (bottomTabBarEl) bottomTabBarEl.innerHTML = BUILD_CATEGORIES.map(category => `<button data-build-toggle="${category.id}">${category.label}</button>`).join('');
+  if (managementButtonsEl) managementButtonsEl.innerHTML = MANAGEMENT_PANELS.map(panel => `<button data-management-panel="${panel.id}">${panel.label}</button>`).join('');
   if (speedHudEl) {
     const speedButtons = CONFIG.TIME.SPEED_OPTIONS.map(speed => `<button data-speed="${speed}">${speed === 0 ? '⏸' : `x${speed}`}</button>`).join('');
     speedHudEl.innerHTML = `<div class="speedTitle"><b>速度</b><span id="speedStatus"></span></div><div class="speedButtons">${speedButtons}</div>`;
@@ -100,22 +101,59 @@ function setBuildCategory(category) {
   renderUI();
 }
 
+function toggleBuildCategory(categoryId) {
+  if (!gameState.ui) return;
+  const next = BUILD_CATEGORY_IDS.includes(categoryId) ? categoryId : null;
+  if (gameState.ui?.roadEdit?.active && next !== gameState.ui.activeBuildCategory) clearRoadEdit();
+  gameState.ui.activeBuildCategory = gameState.ui.activeBuildCategory === next ? null : next;
+  if (gameState.ui.activeBuildCategory) gameState.ui.buildCategory = gameState.ui.activeBuildCategory;
+  markUIDirty('tab');
+  renderUI();
+}
+
+function closeBuildDrawer() {
+  if (!gameState.ui) return;
+  if (gameState.ui?.roadEdit?.active) clearRoadEdit();
+  gameState.ui.activeBuildCategory = null;
+  markUIDirty('tab');
+  renderUI();
+}
+
+function openManagementPanel(panelId) {
+  if (!gameState.ui) return;
+  const normalized = panelId === 'seals' ? 'people' : panelId;
+  gameState.ui.activeManagementPanel = MANAGEMENT_PANELS.some(panel => panel.id === normalized) ? normalized : null;
+  markUIDirty('tab');
+  renderUI();
+}
+
+function closeManagementPanel() {
+  if (!gameState.ui) return;
+  gameState.ui.activeManagementPanel = null;
+  markUIDirty('tab');
+  renderUI();
+}
+
+function toggleManagementPanel(panelId) {
+  const normalized = panelId === 'seals' ? 'people' : panelId;
+  if (gameState.ui?.activeManagementPanel === normalized) closeManagementPanel();
+  else openManagementPanel(normalized);
+}
+
 function getBuildCategoryForTool(tool) {
   const category = tool?.category ?? categoryForTool(tool);
   return BUILD_CATEGORY_IDS.includes(category) ? category : 'road';
 }
 
 function setActiveBottomTab(tabId) {
-  const next = BOTTOM_TABS.some(tab => tab.id === tabId) ? tabId : null;
-  if (!gameState.ui) return;
-  if (gameState.ui?.roadEdit?.active && next !== gameState.ui.activeBottomTab) clearRoadEdit();
-  gameState.ui.activeBottomTab = next;
-  gameState.ui.panelCollapsed = next === null;
-  markUIDirty('tab');
-  renderUI();
+  if (tabId === 'build') {
+    toggleBuildCategory(gameState.ui?.activeBuildCategory ?? gameState.ui?.buildCategory ?? 'road');
+    return;
+  }
+  openManagementPanel(tabId);
 }
-function toggleBottomTab(tabId) { setActiveBottomTab(gameState.ui?.activeBottomTab === tabId ? null : tabId); }
-function closeBottomPanel() { setActiveBottomTab(null); }
+function toggleBottomTab(tabId) { toggleManagementPanel(tabId); }
+function closeBottomPanel() { closeManagementPanel(); closeBuildDrawer(); }
 function setSelectedTool(toolId) {
   const tool = getBuildToolDef(toolId);
   if (!gameState.ui) return;
@@ -123,8 +161,10 @@ function setSelectedTool(toolId) {
   gameState.ui.selectedTool = tool?.id ?? null;
   gameState.ui.selectedFacilityId = null;
   gameState.ui.placementCategory = categoryForTool(tool) ?? gameState.ui.placementCategory ?? 'facility';
-  if (tool) gameState.ui.buildCategory = getBuildCategoryForTool(tool);
-  if (tool?.id && gameState.ui.activeBottomTab !== 'build') setActiveBottomTab('build');
+  if (tool) {
+    gameState.ui.buildCategory = getBuildCategoryForTool(tool);
+    gameState.ui.activeBuildCategory = gameState.ui.buildCategory;
+  }
   markUIDirty('tool');
   renderUI();
 }
@@ -144,9 +184,10 @@ function categoryForTool(tool) {
   return null;
 }
 function updateToolButtons() {
-  for (const b of bottomTabBarEl?.querySelectorAll('button[data-tab], button[data-bottom-tab]') ?? []) b.classList.toggle('active', (b.dataset.tab ?? b.dataset.bottomTab) === gameState.ui?.activeBottomTab);
+  for (const b of bottomTabBarEl?.querySelectorAll('button[data-build-toggle]') ?? []) b.classList.toggle('active', b.dataset.buildToggle === gameState.ui?.activeBuildCategory);
   for (const b of bottomPanelEl?.querySelectorAll('button[data-tool]') ?? []) b.classList.toggle('active', b.dataset.tool === gameState.ui?.selectedTool);
   for (const b of bottomPanelEl?.querySelectorAll('button[data-build-category]') ?? []) b.classList.toggle('active', b.dataset.buildCategory === (gameState.ui?.buildCategory ?? 'road'));
+  for (const b of managementButtonsEl?.querySelectorAll('button[data-management-panel]') ?? []) b.classList.toggle('active', b.dataset.managementPanel === gameState.ui?.activeManagementPanel);
   for (const b of speedHudEl?.querySelectorAll('button[data-speed]') ?? []) b.classList.toggle('active', Number(b.dataset.speed) === clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE));
   const speedStatus = document.getElementById('speedStatus');
   if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
@@ -163,12 +204,14 @@ function handleUiAction(event, options = {}) {
   const tool = actionTarget.dataset?.tool;
   const speed = actionTarget.dataset?.speed;
   const buildCategory = actionTarget.dataset?.buildCategory;
+  const buildToggle = actionTarget.dataset?.buildToggle;
+  const managementPanel = actionTarget.dataset?.managementPanel;
   const action = actionTarget.dataset?.action;
   const dungeonAction = actionTarget.dataset?.dungeonAction;
   const sealFilter = actionTarget.dataset?.sealFilter;
   const sealSort = actionTarget.dataset?.sealSort;
   const rosterId = actionTarget.dataset?.rosterId;
-  const hasUiAction = Boolean(tab || tool || buildCategory || speed !== undefined || action || dungeonAction || sealFilter || sealSort || rosterId);
+  const hasUiAction = Boolean(tab || tool || buildCategory || buildToggle || managementPanel || speed !== undefined || action || dungeonAction || sealFilter || sealSort || rosterId);
   if (!hasUiAction) return false;
 
   event.preventDefault();
@@ -177,6 +220,8 @@ function handleUiAction(event, options = {}) {
   if (!options.fromPointer && event.detail !== 0 && Date.now() < safeFiniteNumber(gameState.ui?.suppressUiClickUntil, 0, 0)) return true;
 
   if (tab) toggleBottomTab(tab);
+  else if (buildToggle) toggleBuildCategory(buildToggle);
+  else if (managementPanel) toggleManagementPanel(managementPanel);
   else if (buildCategory) setBuildCategory(buildCategory);
   else if (tool) setSelectedTool(tool);
   else if (speed !== undefined) setGameSpeed(Number(speed));
@@ -185,7 +230,8 @@ function handleUiAction(event, options = {}) {
   else if (action === 'clearTool') clearSelectedTool();
   else if (action === 'zoomIn') setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
-  else if (action === 'close-panel' || action === 'closeBottom') closeBottomPanel();
+  else if (action === 'close-panel' || action === 'closeManagement') closeManagementPanel();
+  else if (action === 'closeBuild' || action === 'closeBottom') closeBuildDrawer();
   else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; gameState.ui.selectedPersonRosterId = null; markUIDirty('selection'); renderUI(); }
   else if (dungeonAction === 'start') startDungeon(actionTarget.dataset?.dungeonId);
   else if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; markUIDirty('selection'); renderUI(); }
@@ -210,7 +256,7 @@ function setupBottomPanelDelegation() { return bottomPanelEl ?? null; }
 function isPointerOverUI(event) {
   const target = event?.target;
   if (!target?.closest) return false;
-  return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .start'));
+  return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .managementButtons, .managementPanel, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .start'));
 }
 
 function consumeUiPointerEvent(event) {
@@ -224,7 +270,7 @@ function bindUIEvents() {
   startBtn?.addEventListener('click', event => { event.stopPropagation(); startNewGame(); });
   loadBtn?.addEventListener('click', event => { event.stopPropagation(); loadGame(); });
 
-  const uiContainers = [statsEl, speedHudEl, bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
+  const uiContainers = [statsEl, speedHudEl, managementButtonsEl, managementPanelEl, bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
   for (const element of uiContainers) {
     element.addEventListener('pointerup', handleUiPointerUp);
     element.addEventListener('click', handleUIRootClick);
@@ -331,7 +377,7 @@ function bindInputEvents() {
     const clickedDungeon = selectDungeonAtWorldPosition(gameState.input.mouseWorld?.x, gameState.input.mouseWorld?.y);
     const clickedSeal = sealAtWorldPoint(gameState.input.mouseWorld);
     if (clickedDungeon?.id && (!clickedSeal || distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedDungeon.x, clickedDungeon.y) <= distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedSeal.x, clickedSeal.y))) {
-      setActiveBottomTab('dungeons');
+      openManagementPanel('dungeons');
       return;
     }
     if (clickedSeal?.id) {
@@ -339,7 +385,7 @@ function bindInputEvents() {
       gameState.ui.selectedPersonRosterId = `seal:${clickedSeal.id}`;
       gameState.ui.selectedDungeonId = null;
       gameState.ui.selectedFacilityId = null;
-      setActiveBottomTab('seals');
+      openManagementPanel('people');
       return;
     }
     if (!isPlacementModeActive()) {
@@ -349,7 +395,9 @@ function bindInputEvents() {
         gameState.ui.selectedSealId = null;
         gameState.ui.selectedPersonRosterId = null;
         gameState.ui.selectedDungeonId = null;
-        setActiveBottomTab('build');
+        if (gameState.ui) gameState.ui.activeBuildCategory = gameState.ui.buildCategory ?? 'facility';
+        markUIDirty('selection');
+        renderUI();
         return;
       }
       const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId);
@@ -373,9 +421,10 @@ function bindInputEvents() {
     gameState.input.keys[e.code] = true;
     if (e.code === 'KeyR') rotateTool();
     if (e.code === 'Escape') {
-      if (gameState.ui?.roadEdit?.active) clearRoadEdit();
+      if (gameState.ui?.roadEdit?.active) { clearRoadEdit(); markUIDirty('tool'); renderUI(); return; }
+      if (gameState.ui?.activeBuildCategory) { closeBuildDrawer(); return; }
+      if (gameState.ui?.activeManagementPanel) { closeManagementPanel(); return; }
       clearSelectedTool();
-      if (gameState.ui?.activeBottomTab) closeBottomPanel();
     }
   });
   window.addEventListener('keyup', e => { gameState.input.keys[e.code] = false; });

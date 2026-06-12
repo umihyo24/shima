@@ -454,7 +454,10 @@ function drawHpBar(x, y, w, ratio, color) { ctx.fillStyle = 'rgba(0,0,0,.45)'; c
 function drawLabel(text, x, y, color) { ctx.font = CONFIG.render.bigFont; ctx.fillStyle = 'rgba(0,0,0,.55)'; ctx.fillText(text, x + 1, y + 1); ctx.fillStyle = color; ctx.fillText(text, x, y); }
 
 function drawMinimap() {
-  const w = CONFIG.render.minimapW, h = CONFIG.render.minimapH, x = 14, bottomOffset = gameState.ui?.activeBottomTab ? 360 : 82, y = Math.max(88, canvas.clientHeight - h - bottomOffset);
+  const w = CONFIG.render.minimapW, h = CONFIG.render.minimapH, x = 16;
+  const bottomBase = 72;
+  const drawerOffset = gameState.ui?.activeBuildCategory ? 252 : 0;
+  const y = Math.max(118, canvas.clientHeight - h - bottomBase - drawerOffset);
   ctx.fillStyle = 'rgba(5,18,28,.82)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.strokeRect(x, y, w, h);
   const sx = w / (CONFIG.world.cols * CONFIG.world.tile), sy = h / (CONFIG.world.rows * CONFIG.world.tile);
   ctx.fillStyle = CONFIG.render.blockedLand; ctx.fillRect(x + CONFIG.world.islandX * CONFIG.world.tile * sx, y + CONFIG.world.islandY * CONFIG.world.tile * sy, CONFIG.world.islandW * CONFIG.world.tile * sx, CONFIG.world.islandH * CONFIG.world.tile * sy);
@@ -482,12 +485,14 @@ function renderUI() {
 
   try {
     if (shouldUpdateHud) {
-      renderHUD();
-      renderSpeedControls();
+      renderTopHud();
+      renderSpeedHud();
     }
     if (shouldUpdatePanel) {
-      renderBottomTabBar();
-      renderBottomPanel();
+      renderBuildBar();
+      renderBuildDrawer();
+      renderManagementButtons();
+      renderManagementPanel();
     }
     updateToolButtons();
     if (shouldUpdateHud) gameState.ui.needsHudUpdate = false;
@@ -500,51 +505,59 @@ function renderUI() {
   }
 }
 
-function renderHUD() {
+function renderTopHud() {
   if (!statsEl) return;
   const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
   const nextGoal = getNextKnownnessGoal();
   const saveText = gameState.save?.statusText || '未保存';
   const selectedTool = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
   const direction = getDirectionSideName(gameState.ui?.directionIndex ?? 2);
-  const latestLog = (gameState.logs ?? [])[0] ?? gameState.ui?.message ?? '';
-  statsEl.innerHTML = `<div class="hudRow"><b>${Math.floor(gameState.player?.g ?? 0)} G</b><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><span>知名度 ${Math.floor(knownness)} / ${Math.floor(nextGoal)}</span><span>今月の狩猟 ${gameState.stats?.monthlyHunts ?? 0}</span></div><div class="hudRow"><span>ツール: ${escapeHtml(selectedTool?.label ?? 'なし')}</span><span>入口: ${escapeHtml(direction)}</span><span>保存: ${escapeHtml(saveText)}</span></div>${latestLog ? `<div class="hudMessage">${escapeHtml(latestLog)}</div>` : ''}`;
+  statsEl.innerHTML = `<div class="hudRow"><b>${Math.floor(gameState.player?.g ?? 0)} G</b><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><span>知名度 ${Math.floor(knownness)} / ${Math.floor(nextGoal)}</span><span>今月の狩猟 ${gameState.stats?.monthlyHunts ?? 0}</span></div><div class="hudRow"><span>ツール: ${escapeHtml(selectedTool?.label ?? 'なし')}</span><span>入口: ${escapeHtml(direction)}</span><span>保存: ${escapeHtml(saveText)}</span></div>${renderLogHud()}`;
 }
 
-function renderSpeedControls() {
+function renderHUD() { renderTopHud(); }
+
+function renderLogHud() {
+  const logs = (gameState.logs ?? []).slice(0, 4);
+  if (!logs.length && !gameState.ui?.message) return '';
+  const lines = logs.length ? logs : [gameState.ui.message];
+  return `<div class="hudLog">${lines.map(line => `<div class="hudMessage">${escapeHtml(line)}</div>`).join('')}</div>`;
+}
+
+function renderSpeedHud() {
   const speedStatus = document.getElementById('speedStatus');
   if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
 }
 
-function renderBottomTabBar() {
-  for (const button of bottomTabBarEl?.querySelectorAll('button[data-tab], button[data-bottom-tab]') ?? []) {
-    button.classList.toggle('active', (button.dataset?.tab ?? button.dataset?.bottomTab) === (gameState.ui?.activeBottomTab ?? null));
+function renderBuildBar() {
+  for (const button of bottomTabBarEl?.querySelectorAll('button[data-build-toggle]') ?? []) {
+    button.classList.toggle('active', button.dataset?.buildToggle === (gameState.ui?.activeBuildCategory ?? null));
   }
 }
-
-function renderBottomTabs() { renderBottomTabBar(); }
+function renderBottomTabBar() { renderBuildBar(); }
+function renderBottomTabs() { renderBuildBar(); }
 
 function getBottomPanelContentElement() {
-  return bottomPanelEl?.querySelector?.('.bottom-panel-content') ?? null;
+  return managementPanelEl?.querySelector?.('.management-panel-content') ?? bottomPanelEl?.querySelector?.('.bottom-panel-content') ?? null;
 }
 
-function getBottomPanelScrollElement(tabId = gameState.ui?.activeBottomTab ?? gameState.ui?.renderedBottomPanelTab ?? null) {
-  if (tabId === 'seals') return bottomPanelEl?.querySelector?.('.people-table-wrap') ?? getBottomPanelContentElement();
+function getBottomPanelScrollElement(tabId = gameState.ui?.activeManagementPanel ?? gameState.ui?.renderedBottomPanelTab ?? null) {
+  if (tabId === 'people' || tabId === 'seals') return managementPanelEl?.querySelector?.('.people-table-wrap') ?? bottomPanelEl?.querySelector?.('.people-table-wrap') ?? getBottomPanelContentElement();
   return getBottomPanelContentElement();
 }
 
 function getBottomPanelHeaderElement() {
-  return bottomPanelEl?.querySelector?.('.bottom-panel-header') ?? null;
+  return managementPanelEl?.querySelector?.('.management-panel-header') ?? bottomPanelEl?.querySelector?.('.bottom-panel-header') ?? null;
 }
 
-function saveBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab ?? gameState.ui?.renderedBottomPanelTab ?? null) {
+function saveBottomPanelScrollPosition(tabId = gameState.ui?.activeManagementPanel ?? gameState.ui?.renderedBottomPanelTab ?? null) {
   const scrollElement = getBottomPanelScrollElement(tabId);
   if (!scrollElement || !tabId || !gameState.ui) return;
   gameState.ui.panelScrollTopByTab = gameState.ui.panelScrollTopByTab ?? {};
   gameState.ui.panelScrollTopByTab[tabId] = scrollElement.scrollTop;
 }
 
-function restoreBottomPanelScrollPosition(tabId = gameState.ui?.activeBottomTab ?? null) {
+function restoreBottomPanelScrollPosition(tabId = gameState.ui?.activeManagementPanel ?? null) {
   const scrollElement = getBottomPanelScrollElement(tabId);
   if (!scrollElement || !tabId) return;
   const saved = safeFiniteNumber(gameState.ui?.panelScrollTopByTab?.[tabId], 0, 0);
@@ -566,34 +579,75 @@ function renderBottomPanelHeader(tabId) {
   return `<div><h2>${escapeHtml(meta.title)}</h2>${meta.hint ? `<div class="panelHint">${escapeHtml(meta.hint)}</div>` : ''}</div><button data-action="close-panel" class="subtle">閉じる</button>`;
 }
 
-function renderBottomPanel() {
-  if (!bottomPanelEl) return;
-  const previousTab = gameState.ui?.renderedBottomPanelTab ?? null;
-  saveBottomPanelScrollPosition(previousTab);
+function getManagementPanelContentElement() {
+  return managementPanelEl?.querySelector?.('.management-panel-content') ?? null;
+}
 
-  const active = gameState.ui?.activeBottomTab ?? null;
+function getManagementPanelHeaderElement() {
+  return managementPanelEl?.querySelector?.('.management-panel-header') ?? null;
+}
+
+function renderBuildDrawer() {
+  if (!bottomPanelEl) return;
+  const active = BUILD_CATEGORY_IDS.includes(gameState.ui?.activeBuildCategory) ? gameState.ui.activeBuildCategory : null;
   bottomPanelEl.hidden = !active;
   if (!active) {
     bottomPanelEl.innerHTML = '';
+    return;
+  }
+  if (gameState.ui) gameState.ui.buildCategory = active;
+  bottomPanelEl.innerHTML = `<div class="build-drawer-inner">
+    <div class="build-drawer-tools">
+      <div class="build-drawer-title"><b>${escapeHtml(getBuildCategoryLabel(active))}</b><button data-action="closeBuild" class="subtle">閉じる</button></div>
+      ${renderBuildItemList()}
+    </div>
+    <div class="build-tool-info">${renderBuildToolInfo()}${renderSelectedFacilityInfo()}</div>
+  </div>`;
+}
+
+function renderBottomPanel() { renderBuildDrawer(); }
+
+function renderBuildToolInfo() { return renderSelectedBuildInfo(); }
+
+function renderManagementButtons() {
+  for (const button of managementButtonsEl?.querySelectorAll('button[data-management-panel]') ?? []) {
+    button.classList.toggle('active', button.dataset?.managementPanel === (gameState.ui?.activeManagementPanel ?? null));
+  }
+}
+
+function getManagementPanelMeta(panelId) {
+  const meta = {
+    people: { title: '人物', hint: 'アザラシ一覧・選択詳細' },
+    dungeons: { title: 'ダンジョン', hint: '選択中ダンジョンと攻略状況' },
+    progress: { title: '発展', hint: '知名度と解放状況' }
+  };
+  return meta[panelId] ?? { title: '', hint: '' };
+}
+
+function renderManagementPanel() {
+  if (!managementPanelEl) return;
+  const previousPanel = gameState.ui?.renderedBottomPanelTab ?? null;
+  saveBottomPanelScrollPosition(previousPanel);
+  const active = gameState.ui?.activeManagementPanel ?? null;
+  managementPanelEl.hidden = !active;
+  if (!active) {
+    managementPanelEl.innerHTML = '';
     if (gameState.ui) gameState.ui.renderedBottomPanelTab = null;
     return;
   }
-
-  const tabChanged = previousTab !== active;
-  if (!getBottomPanelContentElement() || !getBottomPanelHeaderElement() || tabChanged) {
-    bottomPanelEl.innerHTML = '<div class="bottom-panel-inner"><div class="bottom-panel-header"></div><div class="bottom-panel-content"></div></div>';
+  const panelChanged = previousPanel !== active;
+  if (!getManagementPanelContentElement() || !getManagementPanelHeaderElement() || panelChanged) {
+    managementPanelEl.innerHTML = '<div class="management-panel-header"></div><div class="management-panel-content"></div>';
   }
   if (gameState.ui) gameState.ui.renderedBottomPanelTab = active;
-
-  const headerElement = getBottomPanelHeaderElement();
-  if (headerElement) headerElement.innerHTML = renderBottomPanelHeader(active);
-
-  const renderers = { build: renderBuildPanel, seals: renderSealsPanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
-  const content = renderers[active]?.() ?? '';
-  const contentElement = getBottomPanelContentElement();
+  const meta = getManagementPanelMeta(active);
+  const headerElement = getManagementPanelHeaderElement();
+  if (headerElement) headerElement.innerHTML = `<div><h2>${escapeHtml(meta.title)}</h2>${meta.hint ? `<div class="panelHint">${escapeHtml(meta.hint)}</div>` : ''}</div><button data-action="closeManagement" class="subtle">閉じる</button>`;
+  const renderers = { people: renderPeoplePanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
+  const contentElement = getManagementPanelContentElement();
   if (contentElement) {
-    contentElement.className = `bottom-panel-content${active === 'seals' ? ' people-panel-content' : ''}${active === 'build' ? ' build-panel-content' : ''}`;
-    contentElement.innerHTML = content;
+    contentElement.className = `management-panel-content${active === 'people' ? ' people-panel-content' : ''}`;
+    contentElement.innerHTML = renderers[active]?.() ?? '';
   }
   restoreBottomPanelScrollPosition(active);
 }
@@ -975,7 +1029,7 @@ function renderProgressPanel() {
       <div class="compactCard progress-wide-card"><b>解放済み訪問者</b><br>${unlocked}</div>
       <div class="compactCard"><b>月次サマリー</b><br>${escapeHtml(monthly)}</div>
       <div class="compactCard progress-wide-card"><b>施設レベル</b><br>${renderFacilityProgressList()}</div>
-      <div class="compactCard progress-wide-card"><b>ログ</b><div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>') || 'なし'}</div></div>
+      <div class="compactCard"><b>最近の出来事</b><div class="log compact-recent-log">${(gameState.logs ?? []).slice(0, 4).map(l => `・${escapeHtml(l)}`).join('<br>') || 'なし'}</div></div>
     </div>`;
 }
 
@@ -1005,9 +1059,9 @@ function clearContextSelectionIfInvalid() {
   if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) { ui.selectedTool = null; changed = true; }
   if (ui.selectedPersonRosterId?.startsWith?.('seal:') && !getSealById(ui.selectedPersonRosterId.slice('seal:'.length))) { ui.selectedPersonRosterId = null; changed = true; }
   if (ui.selectedPersonRosterId?.startsWith?.('profile:') && !getVisitorProfileById(ui.selectedPersonRosterId.slice('profile:'.length))) { ui.selectedPersonRosterId = null; changed = true; }
-  if (ui.activeBottomTab && !BOTTOM_TABS.some(tab => tab.id === ui.activeBottomTab)) { ui.activeBottomTab = null; changed = true; }
-  const collapsed = !ui.activeBottomTab;
-  if (ui.panelCollapsed !== collapsed) { ui.panelCollapsed = collapsed; changed = true; }
+  if (ui.activeManagementPanel === 'seals') { ui.activeManagementPanel = 'people'; changed = true; }
+  if (ui.activeManagementPanel && !MANAGEMENT_PANELS.some(panel => panel.id === ui.activeManagementPanel)) { ui.activeManagementPanel = null; changed = true; }
+  if (ui.activeBuildCategory && !BUILD_CATEGORY_IDS.includes(ui.activeBuildCategory)) { ui.activeBuildCategory = null; changed = true; }
   return changed;
 }
 
