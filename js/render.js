@@ -112,7 +112,11 @@ function drawFacility(o) {
   drawImageOrFallback(ctx, cfg.assetKey ?? `cards.facility_neutral_${o.type}_idle`, x, y, w, h, () => {
     ctx.fillStyle = cfg.color ?? '#777'; ctx.fillRect(x + 5, y + 12, Math.max(8, w - 10), Math.max(8, h - 17));
     ctx.fillStyle = '#3a2115'; ctx.fillRect(x + Math.max(7, w * 0.28), y + h - Math.min(30, h * 0.44), Math.max(10, w * 0.44), Math.min(26, h * 0.34));
-    if (o.type === 'manjuShop') {
+    if (o.type === 'publicToilet') {
+      ctx.fillStyle = '#e9fbff'; ctx.fillRect(x + w * 0.22, y + h * 0.28, w * 0.22, h * 0.4);
+      ctx.fillStyle = '#bfefff'; ctx.fillRect(x + w * 0.56, y + h * 0.28, w * 0.22, h * 0.4);
+      ctx.fillStyle = '#247088'; ctx.fillText('WC', x + w * 0.36, y + h * 0.82);
+    } else if (o.type === 'manjuShop') {
       ctx.fillStyle = '#fff4c0'; ctx.beginPath(); ctx.arc(x + w * 0.5, y + h * 0.32, Math.max(5, w * 0.16), 0, Math.PI * 2); ctx.fill();
       ctx.fillStyle = '#8b4b5f'; ctx.fillText('まん', x + 6, y + h * 0.86);
     } else {
@@ -355,7 +359,7 @@ function drawPlacementPreview() {
           const previewFacility = { type: tool.id, kind: tool.kind, x: gx, y: gy, w: footprint.w, h: footprint.h, directionIndex };
           const entrance = getPlacementPreviewEntranceTile();
           const connected = isEntranceConnectedToRoad(previewFacility);
-          drawEntranceAccessTile(entrance, connected);
+          if (entrance) drawEntranceAccessTile(entrance, connected);
           drawEntranceMarker(previewFacility, { connected, preview: true });
         }
       }
@@ -380,7 +384,7 @@ function drawMovePlacementPreview() {
   const previewFacility = { ...facility, isMoving: false, x: gx, y: gy, w: footprint.w, h: footprint.h, directionIndex };
   const entrance = getFacilityEntranceTile(previewFacility);
   const connected = isEntranceConnectedToRoad(previewFacility);
-  drawEntranceAccessTile(entrance, connected);
+  if (entrance) drawEntranceAccessTile(entrance, connected);
   drawEntranceMarker(previewFacility, { connected, preview: true });
   drawLabel(result.ok ? '移動先をクリック' : result.reason, gx * CONFIG.world.tile, gy * CONFIG.world.tile - 8, result.ok ? '#d8ffe0' : '#ffd6d6');
 }
@@ -727,7 +731,7 @@ function renderSelectedBuildInfo() {
   }
 
   const footprint = getRotatedFootprintSize(selected, gameState.ui?.directionIndex ?? 0);
-  const direction = selected.kind === 'facility'
+  const direction = selected.kind === 'facility' && selected.hasDirection !== false
     ? getDirectionSideName(getFacilityEntranceDirectionIndex({ type: selected.id, kind: selected.kind, x: 0, y: 0, w: footprint.w, h: footprint.h, directionIndex: gameState.ui?.directionIndex ?? 0 }))
     : '-';
   const rows = [
@@ -735,7 +739,8 @@ function renderSelectedBuildInfo() {
     renderBuildMetaRow('サイズ', `${footprint.w}x${footprint.h}`),
     renderBuildMetaRow('コスト', formatBuildCost(selected)),
     renderBuildMetaRow('入口方向', direction),
-    renderBuildMetaRow('道路接続', selected.requiresRoadEntrance ? '必要' : '不要')
+    renderBuildMetaRow('道路接続', selected.requiresRoadEntrance ? '必要' : '不要'),
+    ...(selected.id === 'publicToilet' ? [renderBuildMetaRow('収入', 'なし')] : [])
   ].join('');
   return `<div class="compactCard build-info-card">
     <div class="build-info-title"><b>${escapeHtml(selected.name ?? selected.label ?? selected.id)}</b><span>${escapeHtml(selected.kind ?? '')}</span></div>
@@ -757,9 +762,11 @@ function renderSelectedFacilityInfo() {
   if (!facility) return '';
   const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type] ?? {};
   const name = cfg.label ?? facility.type;
-  const direction = getDirectionSideName(getFacilityEntranceDirectionIndex(facility));
-  const connected = isEntranceConnectedToRoad(facility);
-  return `<div class="compactCard selected-facility-card"><b>マップ上の選択施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})<br>入口: ${escapeHtml(direction)}<br>道路接続: ${connected ? 'あり' : 'なし'}<br>座標: ${facility.x}, ${facility.y}</div>`;
+  const requiresRoad = facilityRequiresRoadConnection(facility);
+  const direction = requiresRoad ? getDirectionSideName(getFacilityEntranceDirectionIndex(facility)) : '-';
+  const connected = requiresRoad ? isEntranceConnectedToRoad(facility) : true;
+  const levelText = isLevelableFacility(facility) ? `<br>Lv${getFacilityLevel(facility)} (${escapeHtml(getFacilityLevelProgressText(facility))})` : '';
+  return `<div class="compactCard selected-facility-card"><b>マップ上の選択施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})${levelText}<br>入口: ${escapeHtml(direction)}<br>道路接続: ${requiresRoad ? (connected ? 'あり' : 'なし') : '不要'}<br>座標: ${facility.x}, ${facility.y}</div>`;
 }
 
 function renderBuildPanel() {

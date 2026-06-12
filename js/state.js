@@ -324,7 +324,7 @@ function normalizeObjects(objects) {
 }
 
 
-const LEVELABLE_FACILITY_TYPES = Object.freeze(['inn', 'restaurant', 'manjuShop']);
+const LEVELABLE_FACILITY_TYPES = Object.freeze(['inn', 'restaurant', 'manjuShop', 'publicToilet']);
 
 function isLevelableFacility(facility) {
   return facility?.kind === 'facility' && LEVELABLE_FACILITY_TYPES.includes(String(facility?.type ?? ''));
@@ -475,6 +475,7 @@ function normalizeSeal(s, index) {
     selectedHuntAreaId: s?.selectedHuntAreaId ? String(s.selectedHuntAreaId) : null,
     visits: clampInteger(s?.visits, 0, Number.MAX_SAFE_INTEGER, isVisitor ? 1 : 0),
     facilityUseCounts: normalizeFacilityUseCounts(s?.facilityUseCounts),
+    toiletNeed: initSealToiletNeed(s),
     lastFacilityId: s?.lastFacilityId ? String(s.lastFacilityId) : null,
     mealCountSinceInn: clampInteger(s?.mealCountSinceInn, 0, Number.MAX_SAFE_INTEGER, 0),
     leaveAfterFacilityUse: s?.leaveAfterFacilityUse === true,
@@ -513,7 +514,8 @@ function normalizeFacilityUseCounts(counts) {
     inn: clampInteger(counts?.inn, 0, Number.MAX_SAFE_INTEGER, 0),
     restaurant: clampInteger(counts?.restaurant, 0, Number.MAX_SAFE_INTEGER, 0),
     manjuShop: clampInteger(counts?.manjuShop, 0, Number.MAX_SAFE_INTEGER, 0),
-    blacksmith: clampInteger(counts?.blacksmith, 0, Number.MAX_SAFE_INTEGER, 0)
+    blacksmith: clampInteger(counts?.blacksmith, 0, Number.MAX_SAFE_INTEGER, 0),
+    publicToilet: clampInteger(counts?.publicToilet, 0, Number.MAX_SAFE_INTEGER, 0)
   };
 }
 
@@ -1328,11 +1330,14 @@ function rotateSelectedPlacement() {
   if (!gameState.ui) return false;
   const edit = gameState.ui.moveEdit;
   if (edit?.active) {
+    const moving = getMovingFacility?.();
+    const movingTool = getTool(moving?.type);
+    if (movingTool?.hasDirection === false || getFacilityConfig(moving?.type)?.hasDirection === false) return false;
     edit.previewDirection = getNextDirection(edit.previewDirection ?? edit.originalDirection ?? 0);
     return true;
   }
   const tool = getTool(gameState.ui.selectedTool);
-  if (tool?.kind === 'facility') {
+  if (tool?.kind === 'facility' && tool?.hasDirection !== false) {
     gameState.ui.directionIndex = getNextDirection(gameState.ui.directionIndex ?? 0);
     return true;
   }
@@ -1344,6 +1349,7 @@ function rotateSelectedFacilityIfAny() {
   const facility = id ? (gameState.world?.objects ?? []).find(object => object?.id === id && object?.kind === 'facility') ?? null : null;
   if (!facility) return false;
   const tool = getTool(facility.type);
+  if (tool?.hasDirection === false || getFacilityConfig(facility.type)?.hasDirection === false) return false;
   const nextDirection = getNextDirection(facility.directionIndex ?? 0);
   facility.isMoving = true;
   const result = canPlaceAt(facility.x, facility.y, tool, nextDirection);
@@ -1394,12 +1400,14 @@ function getEntranceDirectionVector(facility) {
 function getRotatedFootprintSize(definition, directionIndex = 0) {
   const w = Math.max(1, clampInteger(definition?.w, 1, CONFIG.world.cols, CONFIG.placement.decorationSize));
   const h = Math.max(1, clampInteger(definition?.h, 1, CONFIG.world.rows, CONFIG.placement.decorationSize));
+  if (definition?.hasDirection === false) return { w, h };
   const rotation = clampInteger(directionIndex, 0, CONFIG.directions.length - 1, 0) % 2;
   return rotation === 1 ? { w: h, h: w } : { w, h };
 }
 
 function getFacilityEntranceTile(facility) {
   if (!facility) return null;
+  if (!facilityRequiresRoadConnection(facility)) return null;
   const dir = getEntranceDirectionVector(facility);
   const x = clampInteger(facility?.x, 0, CONFIG.world.cols - 1, 0);
   const y = clampInteger(facility?.y, 0, CONFIG.world.rows - 1, 0);
@@ -1439,10 +1447,23 @@ function isPassableTile(gx, gy, options = {}) {
     && tile.obstacle === null;
 }
 
+function facilityRequiresRoadConnection(facility) {
+  const cfg = getFacilityConfig(facility?.type) ?? {};
+  return cfg.requiresRoadConnection === true || cfg.entranceRequired === true || cfg.entranceSide;
+}
+
+function isPublicToiletFacility(facility) {
+  return facility?.kind === 'facility' && String(facility?.type ?? '') === 'publicToilet';
+}
+
 function isFacilityUsable(facility) {
   if (facility?.kind !== 'facility' || !facility?.id) return false;
   const current = (gameState.world.objects ?? []).find(o => o?.id === facility.id);
   if (current !== facility) return false;
+  if (!facilityRequiresRoadConnection(facility)) {
+    const tile = getFacilityInteractionTile(facility);
+    return Number.isFinite(tile?.x) && Number.isFinite(tile?.y) && isPassableTile(tile.x, tile.y);
+  }
   const e = getFacilityEntranceTile(facility);
   return Number.isFinite(e?.x) && Number.isFinite(e?.y) && isEntranceConnectedToRoad(facility) && isPassableTile(e.x, e.y);
 }
@@ -1457,7 +1478,7 @@ function facilityBonus(facility) {
     }
   }
   const count = gameState.world.objects.filter(o => o?.type === cfg.bonusDecoration && adjacentCells.has(`${o.x},${o.y}`)).length;
-  return count * cfg.bonusRate;
+  return count * safeFiniteNumber(cfg.bonusRate, 0, 0);
 }
 
 function getUsableFacilities() {
@@ -1483,7 +1504,7 @@ function getFacilityInteractionTile(facility) {
     for (let y = (facility?.y ?? 0) - radius; y < (facility?.y ?? 0) + (facility?.h ?? 1) + radius; y += 1) {
       for (let x = (facility?.x ?? 0) - radius; x < (facility?.x ?? 0) + (facility?.w ?? 1) + radius; x += 1) {
         if (!isPassableTile(x, y)) continue;
-        candidates.push({ x, y, road: roadAt(x, y) ? 0 : 1, d: distance(x, y, entrance?.x ?? x, entrance?.y ?? y) });
+        candidates.push({ x, y, road: roadAt(x, y) ? 0 : 1, d: distance(x, y, entrance?.x ?? ((facility?.x ?? 0) + (facility?.w ?? 1) / 2), entrance?.y ?? ((facility?.y ?? 0) + (facility?.h ?? 1) / 2)) });
       }
     }
     if (candidates.length > 0) break;
@@ -1511,7 +1532,7 @@ function estimatePathCostBetweenPoints(from, to, reason = 'facility') {
 function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   if (!seal || !facility || !isFacilityUsable(facility)) return -Infinity;
   const allowed = {
-    heal: ['inn'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith'], equipment: Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {})
+    heal: ['inn'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith'], equipment: Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}), toilet: ['publicToilet']
   }[purpose] ?? Object.keys(CONFIG.facilities ?? {});
   if (!allowed.includes(facility.type)) return -Infinity;
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
@@ -1522,6 +1543,7 @@ function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   if (purpose === 'food' && ['restaurant', 'manjuShop'].includes(facility.type) && carriedG < Math.min(getFacilityPrice(facility), 1)) return -Infinity;
   if (purpose === 'spend' && carriedG <= 0 && !chooseCheapestAffordableUpgrade(seal, facility)) return -Infinity;
   if (purpose === 'equipment' && (gearBudget <= 0 || !chooseCheapestAffordableUpgrade(seal, facility))) return -Infinity;
+  if (purpose === 'toilet' && !shouldUseToilet(seal)) return -Infinity;
   const target = facilityInteractionPoint(facility);
   const pathCost = estimatePathCostBetweenPoints({ x: seal.x, y: seal.y }, target, 'facility');
   if (!Number.isFinite(pathCost)) return -Infinity;
@@ -1543,6 +1565,7 @@ function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   }
   if (purpose === 'spend') score += Math.min(carriedG, getFacilityPrice(facility) || CONFIG.facilities.blacksmith?.spendPerVisit || carriedG) * (CONFIG.EQUIPMENT?.FACILITY_SPEND_G_WEIGHT ?? 0.15);
   if (purpose === 'equipment') score += Math.min(gearBudget, Math.max(...Object.values(CONFIG.ITEMS ?? {}).map(item => safeFiniteNumber(item?.price, 0, 0)), 1)) * (CONFIG.EQUIPMENT?.FACILITY_EQUIPMENT_GEAR_WEIGHT ?? 0.12) + getEquipmentScore(chooseCheapestAffordableUpgrade(seal, facility));
+  if (purpose === 'toilet') score += safeFiniteNumber(seal?.toiletNeed, 0, 0) * 3;
   score += Math.random() * (CONFIG.EQUIPMENT?.RANDOM_TIEBREAKER ?? 4);
   return score;
 }
@@ -1579,6 +1602,8 @@ function chooseFacilityAfterHunt(seal) {
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
   if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
+  const toilet = choosePublicToilet(seal);
+  if (toilet && Math.random() < getToiletSelectionChance(seal)) return toilet;
   const equipmentShop = chooseBestFacility(seal, 'equipment', Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}));
   if (equipmentShop) return equipmentShop;
   if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
@@ -1594,6 +1619,7 @@ function chooseFacilityAfterHunt(seal) {
 function getFacilityPurposeForSeal(seal, facility) {
   if (facility?.type === 'inn') return 'heal';
   if (['restaurant', 'manjuShop'].includes(String(facility?.type ?? ''))) return 'food';
+  if (isPublicToiletFacility(facility)) return 'toilet';
   return chooseCheapestAffordableUpgrade(seal, facility) ? 'equipment' : 'spend';
 }
 
@@ -1608,7 +1634,7 @@ function clearLegacyReturnTarget(seal) {
 
 function routeSealDirectlyToFacility(seal, facilityId, reason = 'facility') {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === facilityId && o?.kind === 'facility');
-  if (!seal || !facility || !isFacilityStillValidTarget(seal, facilityId, reason === 'heal' ? 'heal' : reason === 'food' ? 'food' : reason === 'equipment' ? 'equipment' : 'spend')) return false;
+  if (!seal || !facility || !isFacilityStillValidTarget(seal, facilityId, reason === 'heal' ? 'heal' : reason === 'food' ? 'food' : reason === 'equipment' ? 'equipment' : reason === 'toilet' ? 'toilet' : 'spend')) return false;
   seal.targetId = facility.id;
   seal.currentAction = `${(CONFIG.facilities ?? CONFIG.FACILITIES)[facility.type]?.label ?? '施設'}へ向かっています`;
   if (!setSealDestination(seal, facilityInteractionPoint(facility), 'facility')) { seal.targetId = null; return false; }
@@ -1628,6 +1654,65 @@ function choosePostHuntAction(seal) {
   setSealDestination(seal, villageWanderPoint(), 'village-wander');
   seal.currentAction = '村で過ごしています';
   seal.state = seal.type === 'visitor' ? 'idle' : 'choosingFacility';
+  return true;
+}
+
+
+function initSealToiletNeed(seal) {
+  const maxNeed = safeFiniteNumber(CONFIG.TOILET?.maxNeed, 100, 1);
+  const value = Number(seal?.toiletNeed);
+  if (Number.isFinite(value)) return clampNumber(value, 0, maxNeed, 0);
+  return 0;
+}
+
+function resetToiletNeed(seal) {
+  if (!seal) return;
+  seal.toiletNeed = 0;
+}
+
+function addToiletNeed(seal, amount) {
+  if (!seal) return;
+  const maxNeed = safeFiniteNumber(CONFIG.TOILET?.maxNeed, 100, 1);
+  seal.toiletNeed = clampNumber(safeFiniteNumber(seal?.toiletNeed, initSealToiletNeed(seal), 0) + safeFiniteNumber(amount, 0, 0), 0, maxNeed, 0);
+}
+
+function updateToiletNeed(seal, deltaMs) {
+  if (!seal) return;
+  const increasePerMinute = safeFiniteNumber(CONFIG.TOILET?.needIncreasePerMinute, 0, 0);
+  addToiletNeed(seal, increasePerMinute * safeFiniteNumber(deltaMs, 0, 0) / 60000);
+}
+
+function shouldUseToilet(seal) {
+  return safeFiniteNumber(seal?.toiletNeed, initSealToiletNeed(seal), 0) >= safeFiniteNumber(CONFIG.TOILET?.useThreshold, 60, 0);
+}
+
+function getUsablePublicToilets() {
+  return getUsableFacilities().filter(isPublicToiletFacility);
+}
+
+function choosePublicToilet(seal) {
+  if (!shouldUseToilet(seal)) return null;
+  return chooseBestFacility(seal, 'toilet', ['publicToilet']) ?? null;
+}
+
+function getPublicToiletUseDurationMs(facility) {
+  const base = safeFiniteNumber(CONFIG.TOILET?.useDurationMs ?? getFacilityConfig(facility?.type)?.useDurationMs, 5000, 0);
+  const levelReduction = Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(CONFIG.TOILET?.levelDurationReductionPerLevel, 0, 0);
+  const maxReduction = safeFiniteNumber(CONFIG.TOILET?.maxDurationReduction, 0, 0);
+  return Math.max(safeFiniteNumber(CONFIG.TOILET?.minUseDurationMs, 1500, 0), Math.round(base * (1 - Math.min(maxReduction, levelReduction))));
+}
+
+function getPublicToiletFavorGain(facility) {
+  const base = safeFiniteNumber(CONFIG.TOILET?.favorGain ?? getFacilityConfig(facility?.type)?.baseFavorGain, 1, 0);
+  return base + Math.floor(Math.max(0, getFacilityLevel(facility) - 1) / safeFiniteNumber(CONFIG.TOILET?.favorLevelInterval, 3, 1));
+}
+
+function usePublicToilet(seal, facility) {
+  if (!seal || !isPublicToiletFacility(facility) || !isFacilityUsable(facility)) return false;
+  resetToiletNeed(seal);
+  addFavor(seal, getPublicToiletFavorGain(facility));
+  registerFacilityUse(facility, seal, 0);
+  logMessage(Math.random() < 0.5 ? `${seal.name} が公衆トイレに立ち寄りました。` : `${seal.name} がすっきりしました。`);
   return true;
 }
 
