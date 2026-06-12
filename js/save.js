@@ -135,8 +135,8 @@ function applyLoadedGameState(data) {
   gameState.camera.x = safeFiniteNumber(loaded.camera?.x, CONFIG.camera.x);
   gameState.camera.y = safeFiniteNumber(loaded.camera?.y, CONFIG.camera.y);
   gameState.camera.zoom = clampNumber(loaded.camera?.zoom, CONFIG.camera.minZoom, CONFIG.camera.maxZoom, CONFIG.camera.zoom);
-  gameState.ui.activeBottomTab = null;
-  gameState.ui.panelCollapsed = true;
+  gameState.ui.activeBuildCategory = null;
+  gameState.ui.activeManagementPanel = null;
   gameState.ui.selectedTool = null;
   gameState.ui.directionIndex = clampInteger(loaded.ui?.directionIndex, 0, CONFIG.directions.length - 1, 2);
   gameState.ui.selectedSealId = null;

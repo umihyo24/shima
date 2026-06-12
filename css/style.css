@@ -171,3 +171,50 @@ button.subtle { background: rgba(255,255,255,.08); }
 @media (max-width: 560px) {
   .progress-panel-grid { grid-template-columns: 1fr; }
 }
+
+/* Timberborn-inspired separated HUD/build/management layout */
+:root {
+  --bottom-build-height: 56px;
+  --build-drawer-height: 238px;
+  --side-panel-top: 104px;
+  --side-panel-bottom: calc(var(--bottom-build-height) + 18px);
+}
+.compactHud { width: min(520px, calc(100vw - 220px)); max-width: min(520px, calc(100vw - 220px)); min-width: 0; }
+.hudLog { margin-top: 6px; display: grid; gap: 3px; }
+.hudLog .hudMessage { margin-top: 0; max-width: 100%; }
+.managementButtons { position: fixed; top: 104px; right: 12px; z-index: 44; display: grid; gap: 7px; padding: 8px; width: 132px; pointer-events: auto; }
+.managementButtons button { width: 100%; }
+.managementPanel { position: fixed; top: var(--side-panel-top); right: 156px; bottom: var(--side-panel-bottom); z-index: 46; width: min(680px, calc(100vw - 184px)); max-height: calc(100vh - var(--side-panel-top) - var(--side-panel-bottom)); display: grid; grid-template-rows: auto minmax(0, 1fr); padding: 12px; pointer-events: auto; overflow: hidden; }
+.managementPanel[hidden] { display: none; pointer-events: none; }
+.management-panel-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding-bottom: 9px; border-bottom: 1px solid rgba(255,255,255,.14); }
+.management-panel-header h2 { margin: 0; font-size: 17px; }
+.management-panel-content { min-height: 0; overflow: auto; padding-top: 10px; overscroll-behavior: contain; }
+.bottomTabBar, .bottom-tabs, .bottom-tab-bar, .buildBar { height: var(--bottom-build-height); width: min(760px, calc(100vw - 32px)); background: linear-gradient(180deg, rgba(16,54,70,.9), rgba(5,18,28,.95)); box-shadow: 0 -8px 22px rgba(0,0,0,.24); }
+.bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 112px; }
+.bottomPanel, .bottom-panel, .bottom-panel-shell, .buildDrawer { left: 50%; right: auto; transform: translateX(-50%); bottom: var(--bottom-build-height); width: min(940px, calc(100vw - 32px)); height: var(--build-drawer-height); min-height: var(--build-drawer-height); max-height: var(--build-drawer-height); padding: 10px; border: 1px solid rgba(120, 190, 210, .35); border-bottom: 0; border-radius: 12px 12px 0 0; }
+.build-drawer-inner { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(320px, 1fr) minmax(280px, 340px); gap: 12px; }
+.build-drawer-tools, .build-tool-info { min-height: 0; display: flex; flex-direction: column; gap: 8px; overflow: hidden; }
+.build-drawer-title { display: flex; justify-content: space-between; align-items: center; gap: 8px; color: var(--accent); }
+.build-drawer-inner .build-item-list { grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); overflow: auto; }
+.build-tool-info { overflow: auto; padding-right: 3px; }
+.build-tool-info .build-info-card { width: 100%; }
+.progress-panel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); height: auto; overflow: visible; }
+.progress-panel-grid .compactCard, .progress-panel-grid .progress-wide-card { width: 100%; max-width: none; }
+.progress-panel-grid .progress-wide-card { grid-column: span 2; }
+.dungeon-panel-grid { grid-template-columns: minmax(0, 1fr); height: auto; overflow: visible; }
+.dungeonPanel { max-height: none; }
+.dungeonSummary { width: 100%; max-width: 100%; }
+@media (max-width: 900px) {
+  .compactHud { max-width: calc(100vw - 132px); }
+  .managementButtons { top: 96px; right: 8px; width: 112px; }
+  .managementPanel { top: 154px; right: 8px; left: 8px; bottom: calc(var(--bottom-build-height) + 12px); width: auto; max-height: none; }
+  .bottomTabBar, .bottom-tabs, .bottom-tab-bar, .buildBar { width: calc(100vw - 16px); }
+  .bottomPanel, .bottom-panel, .bottom-panel-shell, .buildDrawer { width: calc(100vw - 16px); height: min(44vh, 276px); min-height: min(44vh, 276px); max-height: min(44vh, 276px); }
+  .build-drawer-inner { grid-template-columns: 1fr; }
+  .build-tool-info { display: none; }
+}
+@media (max-width: 560px) {
+  .managementButtons { grid-template-columns: repeat(3, 1fr); width: calc(100vw - 16px); left: 8px; right: 8px; }
+  .managementPanel { top: 148px; }
+  .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 0; }
+}
