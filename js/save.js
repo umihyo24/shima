@@ -22,6 +22,7 @@ function getSerializableGameState() {
     seals: cloneSerializable((gameState.seals ?? []).map(seal => { const copy = { ...seal }; delete copy.path; delete copy.pathTargetKey; delete copy.targetFacility; return copy; }), []),
     visitorProfiles: cloneSerializable(gameState.visitorProfiles, []),
     dungeons: cloneSerializable(normalizeDungeons(gameState.dungeons), []),
+    dungeonProgress: cloneSerializable(normalizeDungeonProgress(gameState.dungeonProgress), { unlocked: {}, clearCounts: {}, totalClears: 0 }),
     relicInventory: cloneSerializable(normalizeRelicInventory(gameState.relicInventory), []),
     shopCatalog: cloneSerializable(normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory), { unlockedItemIds: [], discoveredAt: {} }),
     village: { knownness: safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0), clearCount: clampInteger(gameState.village?.clearCount, 0, Number.MAX_SAFE_INTEGER, 0) },
@@ -166,6 +167,8 @@ function applyLoadedGameState(data) {
   gameState.stats.monthlyKnownnessGained = safeFiniteNumber(loaded.stats?.monthlyKnownnessGained, 0, 0);
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(loaded.stats?.monthlyPlayerIncome, 0, 0);
   gameState.monsters = normalizeMonsters(loaded.monsters);
+  gameState.dungeonProgress = normalizeDungeonProgress(loaded.dungeonProgress);
+  updateDungeonUnlocks();
   gameState.dungeons = normalizeDungeons(loaded.dungeons);
   rebuildLoadedSealRoutes();
   if (!(gameState.seals ?? []).some(seal => seal?.id === gameState.ui.selectedSealId)) gameState.ui.selectedSealId = null;

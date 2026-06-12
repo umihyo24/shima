@@ -928,6 +928,15 @@ function drawDungeon(context, dungeon) {
     context.fillRect(-28, 24, 56 * ratio, 8);
     drawDungeonParticipantCluster(context, dungeon, participants);
   }
+  context.font = `${12 / Math.max(gameState.camera?.zoom ?? 1, 0.1)}px sans-serif`;
+  context.textAlign = 'center';
+  context.textBaseline = 'middle';
+  const stateText = dungeonStateLabel(dungeon.state);
+  const labelWidth = Math.min(96, Math.max(48, context.measureText(stateText).width + 12));
+  context.fillStyle = 'rgba(8, 22, 32, .78)';
+  context.fillRect(-labelWidth / 2, -43, labelWidth, 18);
+  context.fillStyle = '#fff7d1';
+  context.fillText(stateText, 0, -34);
   context.restore();
 }
 
@@ -971,7 +980,7 @@ function drawDungeonPanel() {
   const dungeon = getDungeonById(gameState.ui?.selectedDungeonId);
   if (!dungeon) return '';
   const area = getDungeonAreaDef(dungeon.areaId);
-  const type = getDungeonTypeDef(dungeon.type);
+  const levelDef = getDungeonLevelDef(dungeon.typeId ?? dungeon.type, dungeon.level);
   const preview = dungeon.rewardPreview ?? getDungeonRewardPreview(dungeon);
   const remaining = Math.max(0, safeFiniteNumber(dungeon.expiresInMs, 0, 0));
   const participants = renderDungeonParticipantStatusText(dungeon) || '未編成（開始時に自動選出）';
@@ -984,7 +993,11 @@ function drawDungeonPanel() {
   const current = dungeon.nodes?.[dungeon.currentNodeIndex];
   const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon.state);
   const availability = dungeon.state === 'available' ? `残り時間: ${Math.ceil(remaining / 1000)}秒<br>` : '';
-  return `<div class="panel sealCard dungeonPanel"><b>🕳️ ${escapeHtml(dungeon.name)}</b><br>エリア: ${escapeHtml(area?.label ?? dungeon.areaId)}<br>状態: ${escapeHtml(dungeonStateLabel(dungeon.state))}<br>${availability}現在: ${escapeHtml(currentText)}<br>参加費: ${Math.floor(safeFiniteNumber(dungeon.recruitCost, 0, 0))}G<br>難易度: ${Math.floor(safeFiniteNumber(type?.difficulty, 0, 0))}<br>敵: ${escapeHtml((dungeon.enemyTypes ?? []).join(' / ') || '不明')}<br>報酬見込み: ${Math.floor(preview.g ?? 0)}G / EXP${Math.floor(preview.exp ?? 0)} / 知名度+${Math.floor(preview.knownness ?? 0)}<br>ドロップ候補: ${escapeHtml(itemNames)}<br>参加者: ${participants}<br>${route}${logs}${reward}${canStart.ok || dungeon.state !== 'available' ? '' : `<span class="warnText">${escapeHtml(canStart.reason)}</span><br>`}<div class="dungeonButtons">${startButton}<button data-dungeon-action="close">閉じる</button></div></div>`;
+  const clearKey = getDungeonLevelKey(dungeon.typeId ?? dungeon.type, dungeon.level);
+  const clearCount = clampInteger(gameState.dungeonProgress?.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0);
+  const partyPower = getPartyPower(dungeon.participantIds);
+  const powerText = partyPower > 0 ? `${Math.floor(partyPower)} / 推奨${Math.floor(getDungeonRecommendedPower(dungeon))}` : `推奨${Math.floor(getDungeonRecommendedPower(dungeon))}`;
+  return `<div class="panel sealCard dungeonPanel"><b>🕳️ ${escapeHtml(dungeon.name)}</b><br>エリア: ${escapeHtml(area?.label ?? dungeon.areaId)}<br>状態: ${escapeHtml(dungeonStateLabel(dungeon.state))}<br>${availability}現在: ${escapeHtml(currentText)}<br>推奨戦力: ${escapeHtml(powerText)}<br>参加費: ${Math.floor(safeFiniteNumber(dungeon.recruitCost, 0, 0))}G<br>クリア回数: ${clearCount}<br>報酬見込み: ${Math.floor(preview.g ?? 0)}G / EXP${Math.floor(preview.exp ?? 0)} / 知名度+${Math.floor(preview.knownness ?? 0)}<br>ドロップ候補: ${escapeHtml(itemNames)}<br>参加者: ${participants}<br>${route}${logs}${reward}${canStart.ok || dungeon.state !== 'available' ? '' : `<span class="warnText">${escapeHtml(canStart.reason)}</span><br>`}<div class="dungeonButtons">${startButton}<button data-dungeon-action="close">閉じる</button></div></div>`;
 }
 
 function renderDungeonRoute(dungeon) {
