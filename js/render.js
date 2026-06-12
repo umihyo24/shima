@@ -100,6 +100,7 @@ function drawRoads() {
 
 function drawObjects() {
   for (const o of gameState.world.objects) {
+    if (o?.isMoving === true) continue;
     if (o?.kind === 'facility') drawFacility(o); else drawDecoration(o);
   }
 }
@@ -337,11 +338,12 @@ function drawSeals() {
 function drawPlacementPreview() {
   const edit = gameState.ui?.roadEdit;
   if (edit?.active) drawRoadRoutePreview(edit);
+  else if (isFacilityMoveActive()) drawMovePlacementPreview();
   else {
     const gx = gameState.input?.mouseTile?.x ?? -1;
     const gy = gameState.input?.mouseTile?.y ?? -1;
     const tool = CONFIG.tools.find(t => t?.id === gameState.ui?.selectedTool) ?? null;
-    if (gx >= 0 && gy >= 0 && tool) {
+    if (gx >= 0 && gy >= 0 && tool && tool?.kind !== 'move') {
       if (tool?.kind === 'clear') drawClearPreview(gx, gy);
       else if (tool?.kind !== 'road' || getTile(gx, gy)) {
         const directionIndex = gameState.ui?.directionIndex ?? 0;
@@ -361,6 +363,26 @@ function drawPlacementPreview() {
   }
   const fb = gameState.ui?.placementFeedback;
   if (fb) drawLabel(fb.text, fb.x * CONFIG.world.tile, fb.y * CONFIG.world.tile - 8, fb.ok ? '#d8ffe0' : '#ffd6d6');
+}
+
+function drawMovePlacementPreview() {
+  const edit = gameState.ui?.moveEdit;
+  const facility = getMovingFacility();
+  if (!edit?.active || !facility) return;
+  const tool = getTool(facility.type);
+  const gx = clampInteger(edit.previewX, 0, CONFIG.world.cols - 1, facility.x ?? 0);
+  const gy = clampInteger(edit.previewY, 0, CONFIG.world.rows - 1, facility.y ?? 0);
+  const directionIndex = clampInteger(edit.previewDirection, 0, CONFIG.directions.length - 1, facility.directionIndex ?? 0);
+  const footprint = getRotatedFootprintSize(tool, directionIndex);
+  const result = canPlaceAt(gx, gy, tool, directionIndex);
+  ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
+  ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, footprint.w * CONFIG.world.tile, footprint.h * CONFIG.world.tile);
+  const previewFacility = { ...facility, isMoving: false, x: gx, y: gy, w: footprint.w, h: footprint.h, directionIndex };
+  const entrance = getFacilityEntranceTile(previewFacility);
+  const connected = isEntranceConnectedToRoad(previewFacility);
+  drawEntranceAccessTile(entrance, connected);
+  drawEntranceMarker(previewFacility, { connected, preview: true });
+  drawLabel(result.ok ? '移動先をクリック' : result.reason, gx * CONFIG.world.tile, gy * CONFIG.world.tile - 8, result.ok ? '#d8ffe0' : '#ffd6d6');
 }
 
 function drawRoadRoutePreview(edit) {
@@ -685,7 +707,7 @@ function renderBuildItemList() {
   const activeCategory = BUILD_CATEGORY_IDS.includes(gameState.ui?.buildCategory) ? gameState.ui.buildCategory : 'road';
   const category = BUILD_CATEGORIES.find(item => item?.id === activeCategory) ?? BUILD_CATEGORIES[0];
   const buttons = (category?.toolIds ?? []).map(toolId => {
-    if (toolId === 'rotate') return `<button class="toolButton managementAction" data-action="rotate"><span class="toolName">↻ 回転</span><span class="toolMeta">選択中の施設入口を回転</span></button>`;
+    if (toolId === 'rotate') return `<button class="toolButton managementAction" data-action="rotate"><span class="toolName">↻ 回転</span><span class="toolMeta">選択中の施設入口、または配置プレビューを回転します。</span></button>`;
     const tool = getBuildToolDef(toolId);
     if (!tool) return '';
     const size = `${tool.width ?? tool.w ?? 1}x${tool.height ?? tool.h ?? 1}`;
@@ -700,6 +722,9 @@ function renderBuildItemList() {
 function renderSelectedBuildInfo() {
   const selected = getBuildToolDef(gameState.ui?.selectedTool);
   if (!selected) return `<div class="compactCard build-info-card empty"><b>建設物を選択してください</b></div>`;
+  if (selected.id === 'move') {
+    return `<div class="compactCard build-info-card"><div class="build-info-title"><b>移動</b><span>management</span></div><div class="build-info-section"><b>使い方</b><p>既存施設を選択して移動します。Rで向きを変更できます。右クリック/Escapeでキャンセル。</p></div><div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>`;
+  }
 
   const footprint = getRotatedFootprintSize(selected, gameState.ui?.directionIndex ?? 0);
   const direction = selected.kind === 'facility'

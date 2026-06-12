@@ -287,6 +287,7 @@ function updateSeals(dt) {
       case 'carryingFallenSeal': updateCarrying(seal, dt); break;
       default: seal.state = seal.type === 'visitor' ? 'choosingArrivalAction' : 'choosingHuntArea'; seal.target = null; break;
     }
+    rebuildPathIfStuck(seal);
   }
 }
 
@@ -850,6 +851,32 @@ function advanceSealStateAfterArrival(seal) {
 }
 
 function findPath(startTile, goalTile, options = {}) {
+  return findPathWithFallback(startTile, goalTile, options);
+}
+
+function findPathWithFallback(startTile, goalTile, options = {}) {
+  const maxTier = clampInteger(options?.maxFallbackTier, 0, 3, 3);
+  for (let tier = 0; tier <= Math.min(2, maxTier); tier += 1) {
+    const path = findPathAtFallbackTier(startTile, goalTile, { ...options, fallbackTier: tier });
+    if (Array.isArray(path)) {
+      if (tier > 0 && options?.seal) options.seal.lastPathFallbackTier = tier;
+      return path;
+    }
+  }
+  if (maxTier >= 3 && options?.seal) {
+    const start = worldToGrid(options?.seal?.x ?? 0, options?.seal?.y ?? 0);
+    const goal = { x: clampInteger(goalTile?.x, 0, CONFIG.world.cols - 1, 0), y: clampInteger(goalTile?.y, 0, CONFIG.world.rows - 1, 0) };
+    const target = gridToWorld(goal.x, goal.y);
+    if (options?.seal && !options.seal.warnedEmergencyFallback) {
+      options.seal.warnedEmergencyFallback = true;
+      logMessage(`${options.seal.name}は通常経路が見つからないため、ゆっくり移動して復帰を試みます。`);
+    }
+    return start.x === goal.x && start.y === goal.y ? [target] : [target];
+  }
+  return null;
+}
+
+function findPathAtFallbackTier(startTile, goalTile, options = {}) {
   const start = { x: clampInteger(startTile?.x, 0, CONFIG.world.cols - 1, 0), y: clampInteger(startTile?.y, 0, CONFIG.world.rows - 1, 0) };
   const goal = { x: clampInteger(goalTile?.x, 0, CONFIG.world.cols - 1, 0), y: clampInteger(goalTile?.y, 0, CONFIG.world.rows - 1, 0) };
   if (start.x === goal.x && start.y === goal.y) return [gridToWorld(goal.x, goal.y)];
@@ -868,7 +895,7 @@ function findPath(startTile, goalTile, options = {}) {
     if (current.x === goal.x && current.y === goal.y) return rebuildPath(came, start, goal).map(tile => gridToWorld(tile.x, tile.y));
     for (const dir of CONFIG.directions) {
       const next = { x: current.x + dir.dx, y: current.y + dir.dy };
-      const moveCost = getTileMoveCost(next, options);
+      const moveCost = getTileMovementCost(next, options?.entity ?? options?.seal, options?.fallbackTier ?? 0, options);
       if (!Number.isFinite(moveCost)) continue;
       const nextKey = `${next.x},${next.y}`;
       const nextCost = (cost.get(currentKey) ?? 0) + moveCost;
@@ -894,15 +921,56 @@ function rebuildPath(came, start, goal) {
 }
 
 function getTileMoveCost(tile, options = {}) {
+  return getTileMovementCost(tile, options?.entity ?? options?.seal, options?.fallbackTier ?? 0, options);
+}
+
+function getTileMovementCost(tile, entity, fallbackTier = 0, options = {}) {
   const x = clampInteger(tile?.x, 0, CONFIG.world.cols - 1, -1);
   const y = clampInteger(tile?.y, 0, CONFIG.world.rows - 1, -1);
   const cell = getTile(x, y);
-  if (!cell || objectAt(x, y)) return Infinity;
+  if (!cell) return Infinity;
   if (cell.terrain === CONFIG.tileState.terrainWater) return options.allowWater === true ? CONFIG.movement.waterCost : Infinity;
-  if (roadAt(x, y)) return CONFIG.movement.roadCost;
+  if (roadAt(x, y) && !isFacilityObstacle({ x, y })) return CONFIG.movement.roadCost;
+  if (isFacilityObstacle({ x, y })) {
+    const isSeal = entity && (entity.type === 'resident' || entity.type === 'visitor');
+    return isSeal && fallbackTier >= 2 ? CONFIG.movement.buildableCost * 80 : Infinity;
+  }
   if (cell.terrain === CONFIG.tileState.terrainOutside) return CONFIG.movement.outsideCost;
   if (cell.terrain === CONFIG.tileState.terrainLand && cell.buildState === CONFIG.tileState.buildable && cell.obstacle === null) return CONFIG.movement.buildableCost;
+  if (isSoftObstacle({ x, y, tile: cell }) && fallbackTier >= 1) return CONFIG.movement.buildableCost * 16;
   return Infinity;
+}
+
+function isSoftObstacle(tile) {
+  const cell = tile?.tile ?? getTile(tile?.x, tile?.y);
+  if (!cell) return false;
+  if (objectAt(tile?.x, tile?.y)?.kind === 'decoration') return true;
+  return cell.terrain === CONFIG.tileState.terrainLand && [CONFIG.tileState.obstacleGrass, CONFIG.tileState.obstacleTree, CONFIG.tileState.obstacleRock].includes(cell.obstacle);
+}
+
+function isFacilityObstacle(tile) {
+  return objectAt(tile?.x, tile?.y)?.kind === 'facility';
+}
+
+function detectSealStuck(seal) {
+  if (!seal?.target || !Array.isArray(seal.path) || seal.path.length <= 0) { seal.stuckFrames = 0; seal.lastStuckX = seal?.x; seal.lastStuckY = seal?.y; return false; }
+  const moved = distance(seal.x, seal.y, seal.lastStuckX ?? seal.x, seal.lastStuckY ?? seal.y);
+  if (moved < 0.5) seal.stuckFrames = clampInteger(seal.stuckFrames, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  else seal.stuckFrames = 0;
+  seal.lastStuckX = seal.x;
+  seal.lastStuckY = seal.y;
+  return clampInteger(seal.stuckFrames, 0, Number.MAX_SAFE_INTEGER, 0) > 90;
+}
+
+function rebuildPathIfStuck(seal) {
+  if (!detectSealStuck(seal) || !seal?.target) return false;
+  const reason = String(seal.target?.reason ?? 'unstuck');
+  const previousKey = seal.pathTargetKey;
+  seal.pathTargetKey = null;
+  const rebuilt = setSealDestination(seal, seal.target, reason);
+  seal.stuckFrames = 0;
+  if (!rebuilt) seal.pathTargetKey = previousKey;
+  return rebuilt;
 }
 
 function moveSealToward(seal, target, dt) {

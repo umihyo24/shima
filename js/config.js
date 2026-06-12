@@ -118,6 +118,7 @@ const CONFIG = Object.freeze({
     { id: 'tree', label: '🌲 木', name: '木', category: 'decoration', kind: 'decoration', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '近くの宿屋に装飾ボーナスを与えます。', requiresRoadEntrance: false, levelText: '', notes: '1マス装飾です。施設の近くに置くと効果的です。' },
     { id: 'rock', label: '🪨 岩', name: '岩', category: 'decoration', kind: 'decoration', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '近くの鍛冶屋・武器屋・防具屋に装飾ボーナスを与えます。', requiresRoadEntrance: false, levelText: '', notes: '1マス装飾です。施設の近くに置くと効果的です。' },
     { id: 'clear', label: '⛏️ 開拓', name: '開拓', category: 'management', kind: 'clear', w: 1, h: 1, width: 1, height: 1, cost: null, effectText: '未開拓の草木岩を取り除き、周辺の土地を建設可能にします。', requiresRoadEntrance: false, levelText: '', notes: '費用は開拓回数に応じて増えます。' },
+    { id: 'move', label: '↔️ 移動', name: '移動', category: 'management', kind: 'move', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '既存施設を選択して移動します。Rで向きを変更できます。右クリック/Escapeでキャンセル。', requiresRoadEntrance: false, levelText: '', notes: '移動は無料です。施設レベル・利用回数・収益を保持します。' },
     { id: 'delete', label: '❌ 削除', name: '削除', category: 'management', kind: 'delete', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '配置済みの道路・施設・装飾を撤去します。', requiresRoadEntrance: false, levelText: '', notes: '道路はドラッグでまとめて削除できます。' }
   ],
   FACILITY_LEVELS: { maxLevel: 10, thresholds: [0, 5, 12, 25, 45, 70, 100, 140, 190, 250], priceMultiplierPerLevel: 0.08, healingMultiplierPerLevel: 0.08, incomeMultiplierPerLevel: 0.05 },
