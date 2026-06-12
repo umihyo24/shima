@@ -112,7 +112,24 @@ function drawFacility(o) {
   drawImageOrFallback(ctx, cfg.assetKey ?? `cards.facility_neutral_${o.type}_idle`, x, y, w, h, () => {
     ctx.fillStyle = cfg.color ?? '#777'; ctx.fillRect(x + 5, y + 12, Math.max(8, w - 10), Math.max(8, h - 17));
     ctx.fillStyle = '#3a2115'; ctx.fillRect(x + Math.max(7, w * 0.28), y + h - Math.min(30, h * 0.44), Math.max(10, w * 0.44), Math.min(26, h * 0.34));
-    if (o.type === 'publicToilet') {
+    if (o.type === 'bench') {
+      ctx.fillStyle = '#7a4b2d'; ctx.fillRect(x + w * 0.16, y + h * 0.38, w * 0.68, h * 0.12);
+      ctx.fillRect(x + w * 0.2, y + h * 0.54, w * 0.6, h * 0.12);
+      ctx.fillStyle = '#5a321d'; ctx.fillRect(x + w * 0.22, y + h * 0.64, w * 0.08, h * 0.22);
+      ctx.fillRect(x + w * 0.7, y + h * 0.64, w * 0.08, h * 0.22);
+    } else if (o.type === 'observationDeck') {
+      ctx.fillStyle = '#d8edf4'; ctx.fillRect(x + w * 0.22, y + h * 0.18, w * 0.56, h * 0.18);
+      ctx.fillStyle = '#5d7d8b'; ctx.fillRect(x + w * 0.32, y + h * 0.36, w * 0.1, h * 0.42);
+      ctx.fillRect(x + w * 0.58, y + h * 0.36, w * 0.1, h * 0.42);
+      ctx.strokeStyle = '#264a5c'; ctx.lineWidth = Math.max(1, 2 / gameState.camera.zoom); ctx.strokeRect(x + w * 0.2, y + h * 0.16, w * 0.6, h * 0.22);
+      ctx.fillStyle = '#fff4c0'; ctx.fillText('海', x + w * 0.43, y + h * 0.58);
+    } else if (o.type === 'sealPlaza') {
+      ctx.fillStyle = '#d4c79d'; ctx.fillRect(x + w * 0.08, y + h * 0.08, w * 0.84, h * 0.84);
+      ctx.strokeStyle = 'rgba(90,75,45,.45)'; ctx.lineWidth = Math.max(1, 1 / gameState.camera.zoom);
+      for (let px = 1; px < 3; px += 1) { ctx.beginPath(); ctx.moveTo(x + w * px / 3, y + h * 0.08); ctx.lineTo(x + w * px / 3, y + h * 0.92); ctx.stroke(); }
+      for (let py = 1; py < 3; py += 1) { ctx.beginPath(); ctx.moveTo(x + w * 0.08, y + h * py / 3); ctx.lineTo(x + w * 0.92, y + h * py / 3); ctx.stroke(); }
+      ctx.fillStyle = '#fff4c0'; ctx.fillText('広場', x + w * 0.34, y + h * 0.54);
+    } else if (o.type === 'publicToilet') {
       ctx.fillStyle = '#e9fbff'; ctx.fillRect(x + w * 0.22, y + h * 0.28, w * 0.22, h * 0.4);
       ctx.fillStyle = '#bfefff'; ctx.fillRect(x + w * 0.56, y + h * 0.28, w * 0.22, h * 0.4);
       ctx.fillStyle = '#247088'; ctx.fillText('WC', x + w * 0.36, y + h * 0.82);
@@ -740,7 +757,7 @@ function renderSelectedBuildInfo() {
     renderBuildMetaRow('コスト', formatBuildCost(selected)),
     renderBuildMetaRow('入口方向', direction),
     renderBuildMetaRow('道路接続', selected.requiresRoadEntrance ? '必要' : '不要'),
-    ...(selected.id === 'publicToilet' ? [renderBuildMetaRow('収入', 'なし')] : [])
+    ...(selected.id === 'publicToilet' || isLifeFacility({ kind: 'facility', type: selected.id }) ? [renderBuildMetaRow('収入', 'なし')] : [])
   ].join('');
   return `<div class="compactCard build-info-card">
     <div class="build-info-title"><b>${escapeHtml(selected.name ?? selected.label ?? selected.id)}</b><span>${escapeHtml(selected.kind ?? '')}</span></div>
@@ -766,7 +783,8 @@ function renderSelectedFacilityInfo() {
   const direction = requiresRoad ? getDirectionSideName(getFacilityEntranceDirectionIndex(facility)) : '-';
   const connected = requiresRoad ? isEntranceConnectedToRoad(facility) : true;
   const levelText = isLevelableFacility(facility) ? `<br>Lv${getFacilityLevel(facility)} (${escapeHtml(getFacilityLevelProgressText(facility))})` : '';
-  return `<div class="compactCard selected-facility-card"><b>マップ上の選択施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})${levelText}<br>入口: ${escapeHtml(direction)}<br>道路接続: ${requiresRoad ? (connected ? 'あり' : 'なし') : '不要'}<br>座標: ${facility.x}, ${facility.y}</div>`;
+  const effectText = isLifeFacility(facility) ? `<br>効果: 好感度+${Math.floor(getLifeFacilityFavorGain(facility))}${facility.type === 'bench' ? ` / HP+${Math.floor(getBenchHealAmount(facility))}` : ''}` : '';
+  return `<div class="compactCard selected-facility-card"><b>マップ上の選択施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})${levelText}${effectText}<br>入口: ${escapeHtml(direction)}<br>道路接続: ${requiresRoad ? (connected ? 'あり' : 'なし') : '不要'}<br>座標: ${facility.x}, ${facility.y}</div>`;
 }
 
 function renderBuildPanel() {
@@ -1027,9 +1045,10 @@ function renderFacilityProgressList() {
     const name = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type]?.label ?? facility.type;
     const levelText = isLevelableFacility(facility) ? ` Lv${getFacilityLevel(facility)} / 使用 ${getFacilityUseCount(facility)}（次:${escapeHtml(getFacilityLevelProgressText(facility))}）` : '';
     const shopText = renderFacilityShopItemSummary(facility);
-    const entranceText = getDirectionSideName(getFacilityEntranceDirectionIndex(facility));
-    const roadText = isEntranceConnectedToRoad(facility) ? 'Yes' : 'No';
-    return `${escapeHtml(name)}${levelText} / Entrance: ${escapeHtml(entranceText)} / Road Connected: ${roadText} / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G${shopText}`;
+    const entranceText = facilityRequiresRoadConnection(facility) ? getDirectionSideName(getFacilityEntranceDirectionIndex(facility)) : '-';
+    const roadText = facilityRequiresRoadConnection(facility) ? (isEntranceConnectedToRoad(facility) ? 'Yes' : 'No') : '不要';
+    const effectText = isLifeFacility(facility) ? ` / 効果 好感度+${Math.floor(getLifeFacilityFavorGain(facility))}${facility.type === 'bench' ? ` HP+${Math.floor(getBenchHealAmount(facility))}` : ''}` : ` / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G`;
+    return `${escapeHtml(name)}${levelText} / Entrance: ${escapeHtml(entranceText)} / Road Connected: ${roadText}${effectText}${shopText}`;
   }).join('<br>');
 }
 

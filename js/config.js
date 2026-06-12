@@ -33,7 +33,7 @@ const CONFIG = Object.freeze({
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
-  SAVE_VERSION: 13,
+  SAVE_VERSION: 14,
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
@@ -98,7 +98,10 @@ const CONFIG = Object.freeze({
     'cards.manjuShop': 'assets/cards/facility_neutral_manjuShop_idle.png',
     'facilities.manjuShop': 'assets/cards/facility_neutral_manjuShop_idle.png',
     'cards.facility_neutral_publicToilet_idle': 'assets/cards/facility_neutral_publicToilet_idle.png',
-    'facilities.publicToilet': 'assets/cards/facility_neutral_publicToilet_idle.png'
+    'facilities.publicToilet': 'assets/cards/facility_neutral_publicToilet_idle.png',
+    'facilities.bench': 'assets/cards/facility_life_bench_idle.png',
+    'facilities.observationDeck': 'assets/cards/facility_life_observationDeck_idle.png',
+    'facilities.sealPlaza': 'assets/cards/facility_life_sealPlaza_idle.png'
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   KNOWNNESS: { UNLOCK_THRESHOLDS: [100, 200, 300, 400, 500], PANEL_WIDTH: 210, PANEL_HEIGHT: 74, PANEL_MARGIN: 18 },
@@ -117,6 +120,9 @@ const CONFIG = Object.freeze({
     { id: 'weaponShop', label: '🗡️ 武器屋', name: '武器屋', category: 'facility', kind: 'facility', w: 2, h: 2, width: 2, height: 2, cost: 0, effectText: 'あざらしが武器アップグレードを購入できます。', requiresRoadEntrance: true, levelText: '利用回数で施設レベルが上がり、収益が伸びます。', notes: '入口が道路に接続している必要があります。岩の近くで装飾ボーナスを得ます。' },
     { id: 'armorShop', label: '🛡️ 防具屋', name: '防具屋', category: 'facility', kind: 'facility', w: 2, h: 2, width: 2, height: 2, cost: 0, effectText: 'あざらしが防具アップグレードを購入できます。', requiresRoadEntrance: true, levelText: '利用回数で施設レベルが上がり、収益が伸びます。', notes: '入口が道路に接続している必要があります。岩の近くで装飾ボーナスを得ます。' },
     { id: 'publicToilet', label: '🚻 公衆トイレ', name: '公衆トイレ', category: 'facility', kind: 'facility', w: 2, h: 2, width: 2, height: 2, cost: 0, effectText: 'アザラシがたまに立ち寄り、好感度が少し上がります。', requiresRoadEntrance: false, hasDirection: false, levelText: '利用回数で成長します。収入はありません。', notes: '道路接続は不要で、入口方向やR回転の影響を受けません。' },
+    { id: 'bench', label: '🪑 ベンチ', name: 'ベンチ', category: 'facility', kind: 'facility', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '休憩施設。HPを少し回復し、好感度が上がります。', requiresRoadEntrance: false, hasDirection: false, levelText: '利用回数で施設レベルが上がり、HP回復量が少し伸びます。', notes: '道路接続は不要です。1匹だけ利用できます。' },
+    { id: 'observationDeck', label: '🔭 展望台', name: '展望台', category: 'facility', kind: 'facility', w: 2, h: 2, width: 2, height: 2, cost: 0, effectText: '海を眺める施設。好感度が上がります。', requiresRoadEntrance: false, hasDirection: false, levelText: '利用回数で施設レベルが上がり、好感度上昇量が少し伸びます。', notes: '道路接続は不要です。最大2匹がゆっくり海を眺めます。' },
+    { id: 'sealPlaza', label: '🦭 あざらし広場', name: 'あざらし広場', category: 'facility', kind: 'facility', w: 3, h: 3, width: 3, height: 3, cost: 0, effectText: 'アザラシたちが集まる広場です。', requiresRoadEntrance: false, hasDirection: false, levelText: '利用回数で施設レベルが上がり、好感度上昇量が少し伸びます。', notes: '道路接続は不要です。最大6匹が別々の広場スロットを使います。' },
     { id: 'flower', label: '🌼 花', name: '花', category: 'decoration', kind: 'decoration', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '近くの食堂やまんじゅう屋に装飾ボーナスを与えます。', requiresRoadEntrance: false, levelText: '', notes: '1マス装飾です。施設の近くに置くと効果的です。' },
     { id: 'tree', label: '🌲 木', name: '木', category: 'decoration', kind: 'decoration', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '近くの宿屋に装飾ボーナスを与えます。', requiresRoadEntrance: false, levelText: '', notes: '1マス装飾です。施設の近くに置くと効果的です。' },
     { id: 'rock', label: '🪨 岩', name: '岩', category: 'decoration', kind: 'decoration', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '近くの鍛冶屋・武器屋・防具屋に装飾ボーナスを与えます。', requiresRoadEntrance: false, levelText: '', notes: '1マス装飾です。施設の近くに置くと効果的です。' },
@@ -132,7 +138,10 @@ const CONFIG = Object.freeze({
     blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment'] },
     weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'weapon'] },
     armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'armor'] },
-    publicToilet: { name: '公衆トイレ', label: '公衆トイレ', w: 2, h: 2, basePrice: 0, baseFavorGain: 1, useDurationMs: 5000, color: '#6fb7c8', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'toilet', 'rest'] }
+    publicToilet: { name: '公衆トイレ', label: '公衆トイレ', w: 2, h: 2, basePrice: 0, baseFavorGain: 1, useDurationMs: 5000, color: '#6fb7c8', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'toilet', 'rest'] },
+    bench: { name: 'ベンチ', label: 'ベンチ', w: 1, h: 1, basePrice: 0, spendPerVisit: 0, baseFavorGain: 1, baseHeal: 8, useDurationMs: 5000, capacity: 1, lifeWeight: 0.15, color: '#9b6a3d', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'rest'], useSlots: [{ x: 0.5, y: 0.5 }] },
+    observationDeck: { name: '展望台', label: '展望台', w: 2, h: 2, basePrice: 0, spendPerVisit: 0, baseFavorGain: 2, useDurationMs: 8000, capacity: 2, lifeWeight: 0.10, color: '#7da0b5', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'view'], useSlots: [{ x: 0.7, y: 0.8 }, { x: 1.3, y: 1.2 }] },
+    sealPlaza: { name: 'あざらし広場', label: 'あざらし広場', w: 3, h: 3, basePrice: 0, spendPerVisit: 0, baseFavorGain: 1, useDurationMs: 10000, capacity: 6, lifeWeight: 0.20, color: '#c7b98f', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'social'], useSlots: [{ x: 0.5, y: 0.5 }, { x: 1.5, y: 0.5 }, { x: 2.5, y: 0.5 }, { x: 0.5, y: 1.5 }, { x: 2.5, y: 1.5 }, { x: 1.5, y: 2.5 }] }
   },
   facilities: {
     inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['heal', 'lodging'] },
@@ -141,7 +150,10 @@ const CONFIG = Object.freeze({
     blacksmith: { name: '鍛冶屋', label: '鍛冶屋', w: 2, h: 2, spendPerVisit: 65, color: '#7d6043', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment'] },
     weaponShop: { name: '武器屋', label: '武器屋', w: 2, h: 2, spendPerVisit: 65, color: '#87613f', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'weapon'] },
     armorShop: { name: '防具屋', label: '防具屋', w: 2, h: 2, spendPerVisit: 65, color: '#5f6f82', bonusDecoration: 'rock', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'facility', tags: ['equipment', 'armor'] },
-    publicToilet: { name: '公衆トイレ', label: '公衆トイレ', w: 2, h: 2, basePrice: 0, baseFavorGain: 1, useDurationMs: 5000, color: '#6fb7c8', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'toilet', 'rest'] }
+    publicToilet: { name: '公衆トイレ', label: '公衆トイレ', w: 2, h: 2, basePrice: 0, baseFavorGain: 1, useDurationMs: 5000, color: '#6fb7c8', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'toilet', 'rest'] },
+    bench: { name: 'ベンチ', label: 'ベンチ', w: 1, h: 1, basePrice: 0, spendPerVisit: 0, baseFavorGain: 1, baseHeal: 8, useDurationMs: 5000, capacity: 1, lifeWeight: 0.15, color: '#9b6a3d', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'rest'], useSlots: [{ x: 0.5, y: 0.5 }] },
+    observationDeck: { name: '展望台', label: '展望台', w: 2, h: 2, basePrice: 0, spendPerVisit: 0, baseFavorGain: 2, useDurationMs: 8000, capacity: 2, lifeWeight: 0.10, color: '#7da0b5', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'view'], useSlots: [{ x: 0.7, y: 0.8 }, { x: 1.3, y: 1.2 }] },
+    sealPlaza: { name: 'あざらし広場', label: 'あざらし広場', w: 3, h: 3, basePrice: 0, spendPerVisit: 0, baseFavorGain: 1, useDurationMs: 10000, capacity: 6, lifeWeight: 0.20, color: '#c7b98f', entranceRequired: false, requiresRoadConnection: false, hasDirection: false, category: 'facility', tags: ['life', 'social'], useSlots: [{ x: 0.5, y: 0.5 }, { x: 1.5, y: 0.5 }, { x: 2.5, y: 0.5 }, { x: 0.5, y: 1.5 }, { x: 2.5, y: 1.5 }, { x: 1.5, y: 2.5 }] }
   },
   ROUTES: { entryCorridor: { id: 'south_entry', type: 'entry', waypoints: [{ x: 14, y: 30 }, { x: 14, y: 24 }, { x: 14, y: 17 }] }, huntingCorridors: [ { id: 'coast_exit', type: 'hunting', areaId: 'coast', waypoints: [{ x: 14, y: 17 }, { x: 24, y: 17 }, { x: 24, y: 16 }, { x: 34, y: 16 }, { x: 38, y: 16 }] } ] },
   VISITORS: { ARRIVAL: {
@@ -173,6 +185,7 @@ const CONFIG = Object.freeze({
     { id: 'visitor-sakuramochi', name: 'さくらもち', personality: 'brave', unlockedAtKnownness: 2500, baseStats: { maxHp: 152, attack: 24, defense: 7 }, favor: 0, visits: 0, level: 1, exp: 0, equipment: { weapon: null, armor: null, accessory: null }, gearBudget: 0 }
   ] },
   personalities: { cautious: { label: '慎重', returnHpRatio: 0.50, emergencyHpRatio: 0.25, preferredMinHunts: 1, maxHuntsPerTrip: 2, returnChance: 0.45 }, balanced: { label: '普通', returnHpRatio: 0.35, emergencyHpRatio: 0.20, preferredMinHunts: 2, maxHuntsPerTrip: 3, returnChance: 0.30 }, brave: { label: '勇敢', returnHpRatio: 0.25, emergencyHpRatio: 0.12, preferredMinHunts: 3, maxHuntsPerTrip: 5, returnChance: 0.18 } },
+  LIFE_FACILITIES: { hpRecoveryLevelBonus: 2, favorLevelInterval: 4, plazaDurationLevelBonusMs: 250, selectionChance: 0.45, idleHpEmergencyRatio: 0.25, targetReasons: { lifeVisit: 'lifeVisit' } },
   TOILET: { needIncreasePerMinute: 6, foodNeedIncrease: 25, manjuNeedIncrease: 15, useThreshold: 60, urgentThreshold: 85, maxNeed: 100, useDurationMs: 5000, favorGain: 1, selectionWeight: 0.12, urgentSelectionMultiplier: 3, maxSelectionChance: 0.55, levelDurationReductionPerLevel: 0.04, maxDurationReduction: 0.16, minUseDurationMs: 1500, favorLevelInterval: 3 },
   EQUIPMENT: { GEAR_BUDGET_RATE: 0.35, MONTHLY_DROP_HUNT_THRESHOLD: 3, SCORE_ATTACK_WEIGHT: 4, SCORE_DEFENSE_WEIGHT: 3, SCORE_HP_WEIGHT: 0.4, SCORE_FAVOR_WEIGHT: 1, SLOT_TYPES: ['weapon', 'armor', 'accessory'], SHOP_ITEM_TYPES: { weaponShop: ['weapon'], armorShop: ['armor'], blacksmith: ['weapon', 'armor'] }, STARTER_MAX_TIER: 1, PURCHASE_FAVOR_GAIN: 1, FACILITY_DISTANCE_WEIGHT: 1, FACILITY_BONUS_WEIGHT: 36, RECENT_USAGE_PENALTY: 18, RANDOM_TIEBREAKER: 4, FACILITY_BASE_SCORE: 1000, FACILITY_HEAL_WEIGHT: 140, FACILITY_FOOD_HP_WEIGHT: 20, FACILITY_SPEND_G_WEIGHT: 0.15, FACILITY_FOOD_G_WEIGHT: 0.2, FACILITY_EQUIPMENT_GEAR_WEIGHT: 0.12, MONTHLY_DROP_TABLE: ['driftwood_spear', 'shell_armor', 'lucky_pearl'], monthlyDropTable: ['driftwood_spear', 'shell_armor', 'lucky_pearl'] },
   ITEMS: {

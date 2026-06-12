@@ -15,7 +15,7 @@ function getSerializableGameState() {
     world: {
       tiles: cloneSerializable(gameState.world?.tiles, []),
       roads: cloneSerializable(gameState.world?.roads, []),
-      facilities: cloneSerializable(objects.filter(o => o?.kind === 'facility'), []),
+      facilities: cloneSerializable(objects.filter(o => o?.kind === 'facility').map(o => isLifeFacility(o) ? { ...o, slotReservations: normalizeFacilitySlotReservations(o) } : o), []),
       decorations: cloneSerializable(objects.filter(o => o?.kind === 'decoration'), []),
       nextObjectId: clampInteger(gameState.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1)
     },

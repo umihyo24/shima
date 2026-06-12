@@ -318,13 +318,14 @@ function normalizeObjects(objects) {
       useCount: o?.useCount,
       facilityExp: o?.facilityExp ?? o?.useProgress,
       useProgress: o?.useProgress ?? o?.facilityExp,
-      totalIncome: o?.totalIncome
+      totalIncome: o?.totalIncome,
+      slotReservations: o?.slotReservations
     });
   }).filter(Boolean);
 }
 
 
-const LEVELABLE_FACILITY_TYPES = Object.freeze(['inn', 'restaurant', 'manjuShop', 'publicToilet']);
+const LEVELABLE_FACILITY_TYPES = Object.freeze(['inn', 'restaurant', 'manjuShop', 'publicToilet', 'bench', 'observationDeck', 'sealPlaza']);
 
 function isLevelableFacility(facility) {
   return facility?.kind === 'facility' && LEVELABLE_FACILITY_TYPES.includes(String(facility?.type ?? ''));
@@ -336,13 +337,17 @@ function getFacilityLevelConfig() {
 
 function normalizeFacilityFields(facility) {
   if (!facility || typeof facility !== 'object') return facility;
-  if (!isLevelableFacility(facility)) return facility;
+  if (!isLevelableFacility(facility)) {
+    if (isLifeFacility(facility)) facility.slotReservations = normalizeFacilitySlotReservations(facility);
+    return facility;
+  }
   const cfg = getFacilityLevelConfig();
   facility.level = clampInteger(facility.level, 1, safeFiniteNumber(cfg.maxLevel, 1, 1), 1);
   facility.useCount = clampInteger(facility.useCount, 0, Number.MAX_SAFE_INTEGER, 0);
   facility.facilityExp = clampInteger(facility.facilityExp ?? facility.useProgress, 0, Number.MAX_SAFE_INTEGER, facility.useCount);
   facility.useProgress = facility.facilityExp;
   facility.totalIncome = safeFiniteNumber(facility.totalIncome, 0, 0);
+  if (isLifeFacility(facility)) facility.slotReservations = normalizeFacilitySlotReservations(facility);
   return facility;
 }
 
@@ -515,7 +520,10 @@ function normalizeFacilityUseCounts(counts) {
     restaurant: clampInteger(counts?.restaurant, 0, Number.MAX_SAFE_INTEGER, 0),
     manjuShop: clampInteger(counts?.manjuShop, 0, Number.MAX_SAFE_INTEGER, 0),
     blacksmith: clampInteger(counts?.blacksmith, 0, Number.MAX_SAFE_INTEGER, 0),
-    publicToilet: clampInteger(counts?.publicToilet, 0, Number.MAX_SAFE_INTEGER, 0)
+    publicToilet: clampInteger(counts?.publicToilet, 0, Number.MAX_SAFE_INTEGER, 0),
+    bench: clampInteger(counts?.bench, 0, Number.MAX_SAFE_INTEGER, 0),
+    observationDeck: clampInteger(counts?.observationDeck, 0, Number.MAX_SAFE_INTEGER, 0),
+    sealPlaza: clampInteger(counts?.sealPlaza, 0, Number.MAX_SAFE_INTEGER, 0)
   };
 }
 
@@ -1307,6 +1315,7 @@ function placeObject(type, gx, gy, directionIndex, silent) {
 function deleteAt(gx, gy) {
   const obj = objectAt(gx, gy);
   if (obj?.id) {
+    for (const seal of gameState.seals ?? []) if (seal?.targetId === obj.id) releaseFacilitySlot(obj, seal);
     gameState.world.objects = gameState.world.objects.filter(o => o?.id !== obj.id);
     gameState.ui.placementFeedback = { x: gx, y: gy, ok: true, text: '削除しました。', timer: CONFIG.placement.feedbackSeconds };
     return;
@@ -1449,7 +1458,7 @@ function isPassableTile(gx, gy, options = {}) {
 
 function facilityRequiresRoadConnection(facility) {
   const cfg = getFacilityConfig(facility?.type) ?? {};
-  return cfg.requiresRoadConnection === true || cfg.entranceRequired === true || cfg.entranceSide;
+  return cfg.requiresRoadConnection === true || cfg.entranceRequired === true || Boolean(cfg.entranceSide);
 }
 
 function isPublicToiletFacility(facility) {
@@ -1461,6 +1470,7 @@ function isFacilityUsable(facility) {
   const current = (gameState.world.objects ?? []).find(o => o?.id === facility.id);
   if (current !== facility) return false;
   if (!facilityRequiresRoadConnection(facility)) {
+    if (isLifeFacility(facility)) return true;
     const tile = getFacilityInteractionTile(facility);
     return Number.isFinite(tile?.x) && Number.isFinite(tile?.y) && isPassableTile(tile.x, tile.y);
   }
@@ -1529,10 +1539,131 @@ function estimatePathCostBetweenPoints(from, to, reason = 'facility') {
   }, 0);
 }
 
+
+function isLifeFacility(facility) {
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  return facility?.kind === 'facility' && (cfg.tags ?? []).includes('life') && ['bench', 'observationDeck', 'sealPlaza'].includes(String(facility?.type ?? ''));
+}
+
+function getFacilityUseSlots(facility) {
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  const configured = Array.isArray(cfg.useSlots) ? cfg.useSlots : [];
+  const capacity = clampInteger(cfg.capacity, 1, Number.MAX_SAFE_INTEGER, Math.max(1, configured.length));
+  const fallback = [{ x: safeFiniteNumber(facility?.w, 1, 1) / 2, y: safeFiniteNumber(facility?.h, 1, 1) / 2 }];
+  return (configured.length > 0 ? configured : fallback).slice(0, capacity).map((slot, index) => ({
+    index,
+    x: clampNumber(slot?.x, 0, safeFiniteNumber(facility?.w, 1, 1), 0.5),
+    y: clampNumber(slot?.y, 0, safeFiniteNumber(facility?.h, 1, 1), 0.5)
+  }));
+}
+
+function normalizeFacilitySlotReservations(facility) {
+  const reservations = Array.isArray(facility?.slotReservations) ? facility.slotReservations : [];
+  const slots = getFacilityUseSlots(facility);
+  const activeSealIds = typeof gameState !== 'undefined' && Array.isArray(gameState.seals) ? new Set(gameState.seals.map(seal => String(seal?.id ?? '')).filter(Boolean)) : new Set();
+  const usedSlots = new Set();
+  const normalized = [];
+  for (const reservation of reservations) {
+    const slotIndex = clampInteger(reservation?.slotIndex ?? reservation?.index, 0, Math.max(0, slots.length - 1), -1);
+    const sealId = String(reservation?.sealId ?? '');
+    if (slotIndex < 0 || !sealId || usedSlots.has(slotIndex)) continue;
+    if (activeSealIds.size > 0 && !activeSealIds.has(sealId)) continue;
+    usedSlots.add(slotIndex);
+    normalized.push({ slotIndex, sealId });
+  }
+  return normalized;
+}
+
+function findFreeFacilitySlot(facility, seal = null) {
+  if (!isLifeFacility(facility)) return null;
+  facility.slotReservations = normalizeFacilitySlotReservations(facility);
+  const sealId = String(seal?.id ?? '');
+  const existing = facility.slotReservations.find(reservation => reservation?.sealId === sealId);
+  const slots = getFacilityUseSlots(facility);
+  if (existing) return slots.find(slot => slot.index === existing.slotIndex) ?? null;
+  const used = new Set(facility.slotReservations.map(reservation => reservation.slotIndex));
+  return slots.find(slot => !used.has(slot.index)) ?? null;
+}
+
+function reserveFacilitySlot(facility, seal) {
+  if (!isLifeFacility(facility) || !seal?.id) return null;
+  const slot = findFreeFacilitySlot(facility, seal);
+  if (!slot) return null;
+  facility.slotReservations = normalizeFacilitySlotReservations(facility).filter(reservation => reservation?.sealId !== seal.id);
+  facility.slotReservations.push({ slotIndex: slot.index, sealId: seal.id });
+  seal.facilitySlotIndex = slot.index;
+  return slot;
+}
+
+function releaseFacilitySlot(facility, sealOrId) {
+  if (!facility || !isLifeFacility(facility)) return;
+  const sealId = String(typeof sealOrId === 'object' ? sealOrId?.id ?? '' : sealOrId ?? '');
+  facility.slotReservations = normalizeFacilitySlotReservations(facility).filter(reservation => reservation?.sealId !== sealId);
+  if (typeof sealOrId === 'object' && sealOrId) sealOrId.facilitySlotIndex = null;
+}
+
+function facilitySlotWorldPoint(facility, slot) {
+  if (!facility || !slot) return centerOfObject(facility);
+  return {
+    x: (safeFiniteNumber(facility.x, 0, 0) + safeFiniteNumber(slot.x, 0.5, 0)) * CONFIG.world.tile,
+    y: (safeFiniteNumber(facility.y, 0, 0) + safeFiniteNumber(slot.y, 0.5, 0)) * CONFIG.world.tile
+  };
+}
+
+function getLifeFacilityUseDurationMs(facility) {
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  const base = safeFiniteNumber(cfg.useDurationMs, 5000, 0);
+  if (facility?.type !== 'sealPlaza') return base;
+  return base + Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(CONFIG.LIFE_FACILITIES?.plazaDurationLevelBonusMs, 0, 0);
+}
+
+function getLifeFacilityFavorGain(facility) {
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  const base = safeFiniteNumber(cfg.baseFavorGain, 0, 0);
+  const interval = clampInteger(CONFIG.LIFE_FACILITIES?.favorLevelInterval, 1, Number.MAX_SAFE_INTEGER, 1);
+  return base + Math.floor(Math.max(0, getFacilityLevel(facility) - 1) / interval);
+}
+
+function getBenchHealAmount(facility) {
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  return safeFiniteNumber(cfg.baseHeal, 0, 0) + Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(CONFIG.LIFE_FACILITIES?.hpRecoveryLevelBonus, 0, 0);
+}
+
+function isLifeVisitCandidate(seal) {
+  if (!seal || seal.state === 'fallen' || seal.expeditionId || seal.questingDungeonId) return false;
+  if (['fighting', 'movingToMonster', 'hunting', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing', 'leavingToSea', 'leaving'].includes(String(seal.state ?? ''))) return false;
+  const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+  const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
+  return hpRatio > safeFiniteNumber(CONFIG.LIFE_FACILITIES?.idleHpEmergencyRatio, CONFIG.personalities?.balanced?.emergencyHpRatio ?? 0, 0);
+}
+
+function scoreLifeFacilityForSeal(seal, facility) {
+  if (!isLifeVisitCandidate(seal) || !isLifeFacility(facility) || !isFacilityUsable(facility) || !findFreeFacilitySlot(facility, seal)) return -Infinity;
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  const target = facilitySlotWorldPoint(facility, findFreeFacilitySlot(facility, seal));
+  const pathCost = estimatePathCostBetweenPoints({ x: seal?.x, y: seal?.y }, target, 'lifeVisit');
+  if (!Number.isFinite(pathCost)) return -Infinity;
+  let score = safeFiniteNumber(cfg.lifeWeight, 0, 0) * safeFiniteNumber(CONFIG.EQUIPMENT?.FACILITY_BASE_SCORE, 1000, 0);
+  score -= pathCost * safeFiniteNumber(CONFIG.EQUIPMENT?.FACILITY_DISTANCE_WEIGHT, 1, 0);
+  score -= safeFiniteNumber(seal?.facilityUseCounts?.[facility.type], 0, 0) * safeFiniteNumber(CONFIG.EQUIPMENT?.RECENT_USAGE_PENALTY, 18, 0);
+  score += Math.random() * safeFiniteNumber(CONFIG.EQUIPMENT?.RANDOM_TIEBREAKER, 4, 0);
+  return score;
+}
+
+function chooseLifeFacility(seal) {
+  if (!isLifeVisitCandidate(seal) || Math.random() > safeFiniteNumber(CONFIG.LIFE_FACILITIES?.selectionChance, 0, 0)) return null;
+  const scored = getUsableFacilities()
+    .filter(isLifeFacility)
+    .map(facility => ({ facility, score: scoreLifeFacilityForSeal(seal, facility) }))
+    .filter(entry => Number.isFinite(entry.score));
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.facility ?? null;
+}
+
 function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   if (!seal || !facility || !isFacilityUsable(facility)) return -Infinity;
   const allowed = {
-    heal: ['inn'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith'], equipment: Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}), toilet: ['publicToilet']
+    heal: ['inn'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith'], equipment: Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}), toilet: ['publicToilet'], lifeVisit: ['bench', 'observationDeck', 'sealPlaza']
   }[purpose] ?? Object.keys(CONFIG.facilities ?? {});
   if (!allowed.includes(facility.type)) return -Infinity;
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
@@ -1544,6 +1675,7 @@ function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   if (purpose === 'spend' && carriedG <= 0 && !chooseCheapestAffordableUpgrade(seal, facility)) return -Infinity;
   if (purpose === 'equipment' && (gearBudget <= 0 || !chooseCheapestAffordableUpgrade(seal, facility))) return -Infinity;
   if (purpose === 'toilet' && !shouldUseToilet(seal)) return -Infinity;
+  if (purpose === 'lifeVisit') return scoreLifeFacilityForSeal(seal, facility);
   const target = facilityInteractionPoint(facility);
   const pathCost = estimatePathCostBetweenPoints({ x: seal.x, y: seal.y }, target, 'facility');
   if (!Number.isFinite(pathCost)) return -Infinity;
@@ -1606,6 +1738,8 @@ function chooseFacilityAfterHunt(seal) {
   if (toilet && Math.random() < getToiletSelectionChance(seal)) return toilet;
   const equipmentShop = chooseBestFacility(seal, 'equipment', Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}));
   if (equipmentShop) return equipmentShop;
+  const lifeFacility = chooseLifeFacility(seal);
+  if (lifeFacility) return lifeFacility;
   if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
   if (seal?.carriedG >= (CONFIG.facilities.inn?.basePrice ?? CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal);
   const personality = getPersonalityConfig(seal);
@@ -1617,6 +1751,7 @@ function chooseFacilityAfterHunt(seal) {
 
 
 function getFacilityPurposeForSeal(seal, facility) {
+  if (isLifeFacility(facility)) return 'lifeVisit';
   if (facility?.type === 'inn') return 'heal';
   if (['restaurant', 'manjuShop'].includes(String(facility?.type ?? ''))) return 'food';
   if (isPublicToiletFacility(facility)) return 'toilet';
@@ -1632,12 +1767,22 @@ function clearLegacyReturnTarget(seal) {
   if (isLegacyHub) { seal.target = null; seal.path = []; seal.pathTargetKey = null; seal.targetId = null; }
 }
 
+function clearSealFacilityReservation(seal) {
+  if (!seal?.id) return;
+  const facility = (gameState.world?.objects ?? []).find(o => o?.id === seal.targetId && isLifeFacility(o));
+  if (facility) releaseFacilitySlot(facility, seal);
+}
+
 function routeSealDirectlyToFacility(seal, facilityId, reason = 'facility') {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === facilityId && o?.kind === 'facility');
-  if (!seal || !facility || !isFacilityStillValidTarget(seal, facilityId, reason === 'heal' ? 'heal' : reason === 'food' ? 'food' : reason === 'equipment' ? 'equipment' : reason === 'toilet' ? 'toilet' : 'spend')) return false;
+  const purpose = reason === 'heal' ? 'heal' : reason === 'food' ? 'food' : reason === 'equipment' ? 'equipment' : reason === 'toilet' ? 'toilet' : reason === 'lifeVisit' ? 'lifeVisit' : 'spend';
+  if (!seal || !facility || !isFacilityStillValidTarget(seal, facilityId, purpose)) return false;
+  const slot = purpose === 'lifeVisit' ? reserveFacilitySlot(facility, seal) : null;
+  if (purpose === 'lifeVisit' && !slot) return false;
+  const target = purpose === 'lifeVisit' ? facilitySlotWorldPoint(facility, slot) : facilityInteractionPoint(facility);
   seal.targetId = facility.id;
   seal.currentAction = `${(CONFIG.facilities ?? CONFIG.FACILITIES)[facility.type]?.label ?? '施設'}へ向かっています`;
-  if (!setSealDestination(seal, facilityInteractionPoint(facility), 'facility')) { seal.targetId = null; return false; }
+  if (!setSealDestination(seal, target, purpose === 'lifeVisit' ? 'lifeVisit' : 'facility')) { releaseFacilitySlot(facility, seal); seal.targetId = null; return false; }
   seal.state = 'movingToFacility';
   return true;
 }
