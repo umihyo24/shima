@@ -32,7 +32,7 @@ const BUILD_CATEGORIES = Object.freeze([
   { id: 'road', label: '道路', toolIds: ['road'] },
   { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'manjuShop', 'blacksmith', 'weaponShop', 'armorShop'] },
   { id: 'decoration', label: '装飾', toolIds: ['flower', 'tree', 'rock'] },
-  { id: 'management', label: '管理', toolIds: ['clear', 'delete', 'rotate'] }
+  { id: 'management', label: '管理', toolIds: ['clear', 'move', 'delete', 'rotate'] }
 ]);
 
 const BUILD_CATEGORY_IDS = Object.freeze(BUILD_CATEGORIES.map(category => category.id));
@@ -105,6 +105,7 @@ function toggleBuildCategory(categoryId) {
   if (!gameState.ui) return;
   const next = BUILD_CATEGORY_IDS.includes(categoryId) ? categoryId : null;
   if (gameState.ui?.roadEdit?.active && next !== gameState.ui.activeBuildCategory) clearRoadEdit();
+  if (gameState.ui?.moveEdit?.active && next !== gameState.ui.activeBuildCategory) cancelMoveFacility();
   gameState.ui.activeBuildCategory = gameState.ui.activeBuildCategory === next ? null : next;
   if (gameState.ui.activeBuildCategory) gameState.ui.buildCategory = gameState.ui.activeBuildCategory;
   markUIDirty('tab');
@@ -114,6 +115,7 @@ function toggleBuildCategory(categoryId) {
 function closeBuildDrawer() {
   if (!gameState.ui) return;
   if (gameState.ui?.roadEdit?.active) clearRoadEdit();
+  if (gameState.ui?.moveEdit?.active) cancelMoveFacility();
   gameState.ui.activeBuildCategory = null;
   markUIDirty('tab');
   renderUI();
@@ -158,6 +160,7 @@ function setSelectedTool(toolId) {
   const tool = getBuildToolDef(toolId);
   if (!gameState.ui) return;
   if (gameState.ui?.roadEdit?.active && gameState.ui.selectedTool !== (tool?.id ?? null)) clearRoadEdit();
+  if (gameState.ui?.moveEdit?.active && tool?.id !== 'move') cancelMoveFacility();
   gameState.ui.selectedTool = tool?.id ?? null;
   gameState.ui.selectedFacilityId = null;
   gameState.ui.placementCategory = categoryForTool(tool) ?? gameState.ui.placementCategory ?? 'facility';
@@ -171,6 +174,7 @@ function setSelectedTool(toolId) {
 function clearSelectedTool() {
   if (!gameState.ui) return;
   if (gameState.ui?.roadEdit?.active) clearRoadEdit();
+  if (gameState.ui?.moveEdit?.active) cancelMoveFacility();
   gameState.ui.selectedTool = null;
   markUIDirty('tool');
   renderUI();
@@ -180,7 +184,7 @@ function categoryForTool(tool) {
   if (tool.kind === 'road') return 'road';
   if (tool.kind === 'facility') return 'facility';
   if (tool.kind === 'decoration') return 'decoration';
-  if (['clear', 'delete'].includes(tool.kind)) return 'management';
+  if (['clear', 'delete', 'move'].includes(tool.kind)) return 'management';
   return null;
 }
 function updateToolButtons() {
@@ -192,7 +196,17 @@ function updateToolButtons() {
   const speedStatus = document.getElementById('speedStatus');
   if (speedStatus) speedStatus.textContent = formatSpeedLabel(gameState.time?.timeScale);
 }
-function rotateTool() { if (!gameState.ui) return; gameState.ui.directionIndex = (gameState.ui.directionIndex + 1) % CONFIG.directions.length; markUIDirty('tool'); renderUI(); }
+function rotateTool() {
+  if (!gameState.ui) return false;
+  const rotated = rotateSelectedPlacement() || rotateSelectedFacilityIfAny();
+  if (!rotated) {
+    gameState.ui.placementFeedback = { x: gameState.input?.mouseTile?.x ?? 0, y: gameState.input?.mouseTile?.y ?? 0, ok: false, text: '回転できる対象がありません。', timer: CONFIG.placement.feedbackSeconds };
+    logMessage('回転できる対象がありません。');
+  }
+  markUIDirty('tool');
+  renderUI();
+  return rotated;
+}
 function formatSpeedLabel(speed) { return Number(speed) === 0 ? 'pause' : `x${speed}`; }
 function setGameSpeed(speed) { if (!gameState.time) return; gameState.time.timeScale = CONFIG.TIME.SPEED_OPTIONS.includes(speed) ? speed : CONFIG.TIME.DEFAULT_SCALE; markUIDirty('speed'); renderUI(); }
 
@@ -259,6 +273,28 @@ function isPointerOverUI(event) {
   return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .managementButtons, .managementPanel, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .start'));
 }
 
+function clearContextSelection() {
+  if (!gameState.ui) return false;
+  const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId);
+  gameState.ui.selectedSealId = null;
+  gameState.ui.selectedPersonRosterId = null;
+  gameState.ui.selectedDungeonId = null;
+  gameState.ui.selectedFacilityId = null;
+  if (hadSelection) markUIDirty('selection');
+  return hadSelection;
+}
+
+function cancelCurrentAction(reason = 'cancel') {
+  if (!gameState.ui) return false;
+  if (gameState.ui.roadEdit?.active) { clearRoadEdit(); markUIDirty('tool'); renderUI(); return true; }
+  if (gameState.ui.moveEdit?.active) { cancelMoveFacility(); markUIDirty('tool'); renderUI(); return true; }
+  if (gameState.ui.selectedTool) { clearSelectedTool(); return true; }
+  if (clearContextSelection()) { renderUI(); return true; }
+  if (gameState.ui.activeBuildCategory) { closeBuildDrawer(); return true; }
+  if (gameState.ui.activeManagementPanel) { closeManagementPanel(); return true; }
+  return false;
+}
+
 function consumeUiPointerEvent(event) {
   if (!isPointerOverUI(event)) return;
   event.stopPropagation();
@@ -302,7 +338,7 @@ function placementClickHasPriority(tool, tile) {
 
 function isPlacementModeActive() {
   const kind = CONFIG.tools.find(t => t?.id === gameState.ui?.selectedTool)?.kind;
-  return ['road', 'facility', 'decoration', 'clear', 'delete'].includes(kind);
+  return ['road', 'facility', 'decoration', 'clear', 'delete', 'move'].includes(kind) || isFacilityMoveActive();
 }
 
 
@@ -315,6 +351,13 @@ function handlePlacementClick(tool, tile) {
     renderUI();
     return true;
   }
+  if (isFacilityMoveActive()) {
+    updateMovePreview(normalized.x, normalized.y);
+    confirmMoveFacility();
+    markUIDirty('all');
+    renderUI();
+    return true;
+  }
   gameState.ui.selectedDungeonId = null;
   if (tool?.kind === 'road') {
     if (!startRoadEdit('place', normalized)) {
@@ -322,6 +365,10 @@ function handlePlacementClick(tool, tile) {
       logMessage(`道路の始点にできません：${result.reason || '配置できないマスです。'}`);
       gameState.ui.placementFeedback = { x: normalized.x, y: normalized.y, ok: false, text: result.reason || '始点にできません。', timer: CONFIG.placement.feedbackSeconds };
     }
+  } else if (tool?.kind === 'move') {
+    const facility = getMovableFacilityAt(normalized.x, normalized.y);
+    if (facility?.id) startMoveFacility(facility.id);
+    else gameState.ui.placementFeedback = { x: normalized.x, y: normalized.y, ok: false, text: '移動できる施設がありません。', timer: CONFIG.placement.feedbackSeconds };
   } else if (tool?.kind === 'delete') {
     if (hasRoadAt(normalized.x, normalized.y)) startRoadEdit('delete', normalized);
     else deleteAt(normalized.x, normalized.y);
@@ -341,6 +388,7 @@ function bindInputEvents() {
     if (isPointerOverUI(e)) return;
     updateMouse(e.clientX, e.clientY);
     if (gameState.ui?.roadEdit?.active && !gameState.camera.dragging) updateRoadEditPreview(gameState.input?.mouseTile);
+    if (gameState.ui?.moveEdit?.active && !gameState.camera.dragging) updateMovePreview(gameState.input?.mouseTile?.x, gameState.input?.mouseTile?.y);
     if (gameState.camera.dragging) {
       gameState.camera.x -= e.movementX / gameState.camera.zoom;
       gameState.camera.y -= e.movementY / gameState.camera.zoom;
@@ -350,7 +398,7 @@ function bindInputEvents() {
 
   canvas.addEventListener('mousedown', e => {
     if (isPointerOverUI(e)) return;
-    if (e.button === 2) { clearRoadEdit(); e.preventDefault(); return; }
+    if (e.button === 2) { cancelCurrentAction('right-click'); e.preventDefault(); return; }
     if (e.button !== CONFIG.camera.dragButton) return;
     updateMouse(e.clientX, e.clientY);
     gameState.camera.dragging = true;
@@ -410,7 +458,7 @@ function bindInputEvents() {
     renderUI();
   });
 
-  canvas.addEventListener('contextmenu', e => { clearRoadEdit(); e.preventDefault(); });
+  canvas.addEventListener('contextmenu', e => { cancelCurrentAction('contextmenu'); e.preventDefault(); });
   canvas.addEventListener('wheel', e => {
     if (isPointerOverUI(e)) return;
     e.preventDefault();
@@ -421,10 +469,7 @@ function bindInputEvents() {
     gameState.input.keys[e.code] = true;
     if (e.code === 'KeyR') rotateTool();
     if (e.code === 'Escape') {
-      if (gameState.ui?.roadEdit?.active) { clearRoadEdit(); markUIDirty('tool'); renderUI(); return; }
-      if (gameState.ui?.activeBuildCategory) { closeBuildDrawer(); return; }
-      if (gameState.ui?.activeManagementPanel) { closeManagementPanel(); return; }
-      clearSelectedTool();
+      cancelCurrentAction('escape');
     }
   });
   window.addEventListener('keyup', e => { gameState.input.keys[e.code] = false; });
