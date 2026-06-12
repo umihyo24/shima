@@ -30,7 +30,7 @@ const MANAGEMENT_PANELS = Object.freeze([
 const BOTTOM_TABS = MANAGEMENT_PANELS;
 const BUILD_CATEGORIES = Object.freeze([
   { id: 'road', label: '道路', toolIds: ['road'] },
-  { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'manjuShop', 'publicToilet', 'blacksmith', 'weaponShop', 'armorShop'] },
+  { id: 'facility', label: '施設', toolIds: ['inn', 'restaurant', 'manjuShop', 'publicToilet', 'bench', 'observationDeck', 'sealPlaza', 'blacksmith', 'weaponShop', 'armorShop'] },
   { id: 'decoration', label: '装飾', toolIds: ['flower', 'tree', 'rock'] },
   { id: 'management', label: '管理', toolIds: ['clear', 'move', 'delete', 'rotate'] }
 ]);

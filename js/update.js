@@ -405,6 +405,7 @@ function updateChoosingArrivalAction(seal) {
 
 
 function updateChoosingHuntArea(seal) {
+  clearSealFacilityReservation(seal);
   const areaId = seal?.selectedHuntAreaId ?? 'coast';
   seal.selectedHuntAreaId = areaId;
   seal.targetId = null;
@@ -540,21 +541,24 @@ function updateChoosingPostHuntFacility(seal, dt) {
 
 function updateMovingToFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
-  if (!facility || !isFacilityUsable(facility)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
+  if (!facility || !isFacilityUsable(facility)) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const validPurpose = getFacilityPurposeForSeal(seal, facility);
-  if (!isFacilityStillValidTarget(seal, seal.targetId, validPurpose)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
-  const target = facilityInteractionPoint(facility);
-  if (!setSealDestination(seal, target, 'facility')) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
+  if (!isFacilityStillValidTarget(seal, seal.targetId, validPurpose)) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
+  const slot = validPurpose === 'lifeVisit' ? findFreeFacilitySlot(facility, seal) : null;
+  const target = validPurpose === 'lifeVisit' ? facilitySlotWorldPoint(facility, slot) : facilityInteractionPoint(facility);
+  if (!setSealDestination(seal, target, validPurpose === 'lifeVisit' ? 'lifeVisit' : 'facility')) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, target.x, target.y) <= CONFIG.seal.contactDistance) {
-    seal.actionTimer = isPublicToiletFacility(facility) ? getPublicToiletUseDurationMs(facility) / 1000 : (facility.type === 'inn' ? CONFIG.seal.restSeconds : CONFIG.seal.spendSeconds);
+    seal.actionTimer = isLifeFacility(facility) ? getLifeFacilityUseDurationMs(facility) / 1000 : (isPublicToiletFacility(facility) ? getPublicToiletUseDurationMs(facility) / 1000 : (facility.type === 'inn' ? CONFIG.seal.restSeconds : CONFIG.seal.spendSeconds));
     seal.currentAction = `${CONFIG.facilities[facility.type]?.label ?? '施設'}を利用中`;
+    if (isLifeFacility(facility)) { seal.x = target.x; seal.y = target.y; }
     seal.state = 'usingFacility';
   }
 }
 
 function updateUsingFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
+  if (isLifeFacility(facility)) { updateUsingLifeFacility(seal, facility, dt); return; }
   if (isPublicToiletFacility(facility)) { updateUsingPublicToilet(seal, facility, dt); return; }
   if (facility?.type === 'inn') { updateResting(seal, dt); return; }
   const purpose = getFacilityPurposeForSeal(seal, facility);
@@ -641,6 +645,7 @@ function visitorShouldLeave(seal) {
 }
 
 function afterVillageActivity(seal) {
+  clearSealFacilityReservation(seal);
   seal.targetId = null;
   seal.target = null;
   seal.path = [];
@@ -670,6 +675,7 @@ function updateLeavingToSea(seal, dt) {
 function updateLeaving(seal, dt) { updateLeavingToSea(seal, dt); }
 
 function persistAndRemoveVisitor(seal) {
+  clearSealFacilityReservation(seal);
   if (seal?.type !== 'visitor') return;
   writeBackVisitorProfile(seal);
   logMessage(`${seal.name} が帰っていきました。`);
@@ -696,7 +702,55 @@ function getToiletSelectionChance(seal) {
   return need >= urgent ? Math.min(safeFiniteNumber(CONFIG.TOILET?.maxSelectionChance, 0.55, 0), base * safeFiniteNumber(CONFIG.TOILET?.urgentSelectionMultiplier, 3, 0)) : base;
 }
 
+function finishLifeFacilityUse(seal, facility) {
+  const type = String(facility?.type ?? '');
+  if (type === 'bench') useBench(seal, facility);
+  else if (type === 'observationDeck') useObservationDeck(seal, facility);
+  else if (type === 'sealPlaza') useSealPlaza(seal, facility);
+}
+
+function useBench(seal, facility) {
+  if (!seal || !isLifeFacility(facility)) return;
+  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getBenchHealAmount(facility));
+  addFavor(seal, getLifeFacilityFavorGain(facility));
+  registerFacilityUse(facility, seal, 0);
+  logMessage(`${seal.name} がベンチで休憩しました。`);
+}
+
+function useObservationDeck(seal, facility) {
+  if (!seal || !isLifeFacility(facility)) return;
+  addFavor(seal, getLifeFacilityFavorGain(facility));
+  registerFacilityUse(facility, seal, 0);
+  logMessage(`${seal.name} が海を眺めています。`);
+}
+
+function useSealPlaza(seal, facility) {
+  if (!seal || !isLifeFacility(facility)) return;
+  addFavor(seal, getLifeFacilityFavorGain(facility));
+  registerFacilityUse(facility, seal, 0);
+  logMessage(`${seal.name} があざらし広場でのんびりしています。`);
+}
+
+function updateUsingLifeFacility(seal, facility, dt) {
+  if (!seal || !isLifeFacility(facility) || !isFacilityUsable(facility)) {
+    clearSealFacilityReservation(seal);
+    if (seal) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; }
+    return;
+  }
+  const slot = findFreeFacilitySlot(facility, seal);
+  if (!slot) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
+  const target = facilitySlotWorldPoint(facility, slot);
+  seal.x = target.x;
+  seal.y = target.y;
+  seal.actionTimer -= dt;
+  if (seal.actionTimer > 0) return;
+  finishLifeFacilityUse(seal, facility);
+  releaseFacilitySlot(facility, seal);
+  afterVillageActivity(seal);
+}
+
 function updateUsingPublicToilet(seal, facility, dt) {
+
   if (!seal || !isPublicToiletFacility(facility) || !isFacilityUsable(facility)) {
     if (seal) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; }
     return;
@@ -1220,6 +1274,7 @@ function isSealEligibleForDungeon(seal, dungeon) {
 
 function clearSealCurrentTaskForExpedition(seal) {
   if (!seal) return;
+  clearSealFacilityReservation(seal);
   const targetId = seal.targetId ? String(seal.targetId) : null;
   if (targetId) {
     const monster = (gameState.monsters ?? []).find(item => item?.id === targetId);
