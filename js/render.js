@@ -581,7 +581,7 @@ function renderBottomPanel() {
 
   const tabChanged = previousTab !== active;
   if (!getBottomPanelContentElement() || !getBottomPanelHeaderElement() || tabChanged) {
-    bottomPanelEl.innerHTML = '<div class="bottom-panel-header"></div><div class="bottom-panel-content"></div>';
+    bottomPanelEl.innerHTML = '<div class="bottom-panel-inner"><div class="bottom-panel-header"></div><div class="bottom-panel-content"></div></div>';
   }
   if (gameState.ui) gameState.ui.renderedBottomPanelTab = active;
 
@@ -924,10 +924,12 @@ function renderDungeonsPanel() {
     const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon.state);
     return `<div class="compactCard"><b>${escapeHtml(dungeon.name)}</b><br>${escapeHtml(dungeonStateLabel(dungeon.state))}: ${escapeHtml(currentText)}<br>参加: ${participants}</div>`;
   }).join('') : '<div class="compactCard">攻略中のダンジョンはありません。</div>'; 
-  return `<div class="compactGrid">
+  return `<div class="dungeon-panel-grid">
       ${renderSelectedDungeonDetail()}
-      <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
-      ${runningHtml}
+      <div class="dungeon-running-list">
+        <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
+        ${runningHtml}
+      </div>
     </div>`;
 }
 
@@ -966,14 +968,14 @@ function renderProgressPanel() {
   const thresholds = (CONFIG.KNOWNNESS?.UNLOCK_THRESHOLDS ?? [100, 200, 300, 400, 500]).map(value => `<span class="thresholdPill ${knownness >= value ? 'done' : ''}">${value}</span>`).join('');
   const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked).map(profile => escapeHtml(profile.name)).join('、') || 'なし';
   const monthly = `狩猟${gameState.stats?.monthlyHunts ?? 0}回 / 前月知名度+${Math.floor(safeFiniteNumber(gameState.stats?.monthlyKnownnessGained, 0, 0))} / 今月収入${Math.floor(safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0))}G`;
-  return `<div class="compactGrid">
+  return `<div class="progress-panel-grid">
       <div class="compactCard"><b>知名度</b><br>${Math.floor(knownness)} / ${Math.floor(nextGoal)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(1, ratio)) * 100}%"></div></div>次の目標: ${Math.floor(nextGoal)}</div>
       <div class="compactCard"><b>次の訪問者</b><br>${nextUnlock ? `${escapeHtml(nextUnlock.name)}（${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))}）` : 'すべて解放済み'}</div>
       <div class="compactCard"><b>しきい値</b><div class="thresholdList">${thresholds}</div></div>
-      <div class="compactCard"><b>解放済み訪問者</b><br>${unlocked}</div>
+      <div class="compactCard progress-wide-card"><b>解放済み訪問者</b><br>${unlocked}</div>
       <div class="compactCard"><b>月次サマリー</b><br>${escapeHtml(monthly)}</div>
-      <div class="compactCard"><b>施設レベル</b><br>${renderFacilityProgressList()}</div>
-      <div class="compactCard"><b>ログ</b><div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>') || 'なし'}</div></div>
+      <div class="compactCard progress-wide-card"><b>施設レベル</b><br>${renderFacilityProgressList()}</div>
+      <div class="compactCard progress-wide-card"><b>ログ</b><div class="log">${(gameState.logs ?? []).map(l => `・${escapeHtml(l)}`).join('<br>') || 'なし'}</div></div>
     </div>`;
 }
 
@@ -1123,7 +1125,7 @@ function drawDungeons() {
 function renderDungeonPanel() {
   const dungeon = getDungeonById(gameState.ui?.selectedDungeonId);
   if (!dungeon) return '';
-  return `<div class="panel sealCard dungeonPanel">${renderDungeonSummary(dungeon)}<div class="dungeonDetailScroll">${renderDungeonRouteCompact(dungeon)}${renderDungeonLog(dungeon)}${renderDungeonRewardSummary(dungeon)}${renderDungeonExtraDetails(dungeon)}</div></div>`;
+  return `<div class="compactCard sealCard dungeonPanel">${renderDungeonSummary(dungeon)}<div class="dungeonDetailScroll">${renderDungeonRouteCompact(dungeon)}${renderDungeonLog(dungeon)}${renderDungeonRewardSummary(dungeon)}${renderDungeonExtraDetails(dungeon)}</div></div>`;
 }
 
 function drawDungeonPanel() { return renderDungeonPanel(); }

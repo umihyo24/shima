@@ -6,7 +6,7 @@
   --accent: #ffe38a;
   --muted: #cdefff;
   --bottom-tab-height: 56px;
-  --bottom-panel-width: 1180px;
+  --bottom-content-width: 1180px;
   --bottom-panel-height: 320px;
 }
 * { box-sizing: border-box; }
@@ -29,18 +29,19 @@ button.subtle { background: rgba(255,255,255,.08); }
 .speedButtons { display: grid; grid-template-columns: repeat(4, minmax(34px, 1fr)); gap: 5px; pointer-events: auto; }
 .speedButtons button { padding: 6px 7px; text-align: center; }
 .bottomUi, .bottom-ui { position: fixed; left: 0; right: 0; bottom: 0; height: 0; z-index: 42; pointer-events: none; }
-.bottomTabBar, .bottom-tabs, .bottom-tab-bar { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 50; display: flex; gap: 7px; justify-content: center; align-items: center; width: fit-content; max-width: calc(100vw - 32px); height: var(--bottom-tab-height); padding: 7px 12px; pointer-events: auto; overflow-x: auto; overflow-y: hidden; background: linear-gradient(180deg, rgba(5,18,28,.2), rgba(5,18,28,.78)); border-radius: 12px 12px 0 0; }
-.bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 92px; padding: 8px 12px; }
-.bottomPanel, .bottom-panel { position: fixed; left: 50%; bottom: var(--bottom-tab-height); transform: translateX(-50%); z-index: 49; pointer-events: auto; width: min(var(--bottom-panel-width), calc(100vw - 32px)); height: var(--bottom-panel-height); max-height: var(--bottom-panel-height); min-height: var(--bottom-panel-height); overflow: hidden; padding: 0; display: flex; flex-direction: column; border-radius: 12px; }
-.bottomPanel[hidden], .bottom-panel[hidden] { display: none; pointer-events: none; }
-.bottom-panel-header { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 14px 9px; border-bottom: 1px solid rgba(255,255,255,.14); pointer-events: auto; }
+.bottomTabBar, .bottom-tabs, .bottom-tab-bar { position: fixed; left: 50%; bottom: 0; transform: translateX(-50%); z-index: 50; display: flex; gap: 7px; justify-content: center; align-items: center; width: min(var(--bottom-content-width), calc(100vw - 32px)); max-width: calc(100vw - 32px); height: var(--bottom-tab-height); padding: 7px 12px; pointer-events: auto; overflow-x: auto; overflow-y: hidden; background: linear-gradient(180deg, rgba(5,18,28,.2), rgba(5,18,28,.78)); border-radius: 10px 10px 0 0; border: 1px solid rgba(120,190,210,.24); border-bottom: 0; box-shadow: none; }
+.bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 92px; padding: 8px 12px; flex: 0 0 auto; }
+.bottomPanel, .bottom-panel, .bottom-panel-shell { position: fixed; left: 0; right: 0; bottom: var(--bottom-tab-height); z-index: 45; pointer-events: auto; width: 100%; height: var(--bottom-panel-height); max-height: var(--bottom-panel-height); min-height: var(--bottom-panel-height); overflow: hidden; padding: 0; background: linear-gradient(to bottom, rgba(4, 28, 38, .94), rgba(4, 28, 38, .88)); border: 0; border-top: 1px solid rgba(120, 190, 210, .35); border-radius: 8px 8px 0 0; box-shadow: 0 -8px 22px rgba(0,0,0,.18); backdrop-filter: blur(6px); }
+.bottomPanel[hidden], .bottom-panel[hidden], .bottom-panel-shell.hidden { display: none; pointer-events: none; }
+.bottom-panel-inner { width: min(var(--bottom-content-width), calc(100vw - 32px)); height: 100%; margin: 0 auto; padding: 12px 16px; box-sizing: border-box; display: flex; flex-direction: column; min-height: 0; }
+.bottom-panel-header { flex: 0 0 auto; display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 0 0 9px; border-bottom: 1px solid rgba(255,255,255,.14); pointer-events: auto; }
 .bottom-panel-header h2 { margin: 0; font-size: 17px; }
-.bottom-panel-content { flex: 1 1 auto; height: 100%; min-height: 0; overflow: hidden; padding: 12px; overscroll-behavior: contain; pointer-events: auto; }
+.bottom-panel-content { flex: 1 1 auto; height: 100%; min-height: 0; overflow: hidden; padding: 10px 0 0; overscroll-behavior: contain; pointer-events: auto; }
 .bottomPanel button, .bottom-panel button, .bottom-panel-content button { pointer-events: auto; }
 .panelHeader { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 10px; }
 .panelHeader h2 { margin: 0; font-size: 17px; }
 .panelHint { color: var(--muted); font-size: 13px; }
-.compactGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; }
+.compactGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; align-content: start; }
 .compactCard { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); border-radius: 9px; padding: 9px 10px; line-height: 1.45; font-size: 13px; }
 .compactCard b { color: var(--accent); }
 .build-panel-layout { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(300px, .9fr); gap: 12px; }
@@ -91,7 +92,7 @@ button.subtle { background: rgba(255,255,255,.08); }
   .speedButtons { grid-template-columns: repeat(2, 1fr); }
   .bottomUi, .bottom-ui { left: 0; right: 0; bottom: 0; }
   .bottomTabBar, .bottom-tabs, .bottom-tab-bar { width: calc(100vw - 16px); max-width: calc(100vw - 16px); justify-content: center; gap: 4px; padding: 5px 6px; }
-  .bottomPanel, .bottom-panel { width: calc(100vw - 16px); }
+  .bottom-panel-inner { width: calc(100vw - 16px); padding: 9px 10px; }
   .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 0; flex: 1 1 auto; padding: 7px 4px; }
   .bottom-panel-header { padding: 9px 10px 7px; }
   .bottom-panel-content { padding: 9px; }
@@ -105,17 +106,21 @@ button.subtle { background: rgba(255,255,255,.08); }
 .people-filter-buttons button { padding: 5px 8px; font-size: 12px; }
 .people-counts { color: var(--muted); font-size: 12px; font-weight: 700; }
 .people-table-wrap { min-height: 0; max-width: 100%; overflow: auto; border: 1px solid rgba(255,255,255,.13); border-radius: 9px; background: rgba(0,0,0,.12); overscroll-behavior: contain; }
-.people-table { width: max-content; min-width: min(860px, 100%); border-collapse: collapse; font-size: 12px; }
+.people-table { width: max-content; min-width: 720px; max-width: 920px; border-collapse: collapse; font-size: 12px; table-layout: auto; }
 .people-table th { position: sticky; top: 0; z-index: 1; background: rgba(8, 32, 44, .96); border-bottom: 1px solid rgba(255,255,255,.16); text-align: left; }
 .people-table td { border-bottom: 1px solid rgba(255,255,255,.08); padding: 5px 7px; white-space: nowrap; }
-.people-table th, .people-table td { max-width: 180px; }
+.people-table th, .people-table td { max-width: 140px; }
+.people-table th:nth-child(1), .people-table td:nth-child(1) { width: 104px; }
+.people-table th:nth-child(2), .people-table td:nth-child(2) { width: 72px; }
+.people-table th:nth-child(3), .people-table td:nth-child(3) { width: 94px; }
+.people-table th:nth-child(4), .people-table td:nth-child(4), .people-table th:nth-child(5), .people-table td:nth-child(5) { width: 86px; }
 .people-table td:nth-child(6) { max-width: 260px; overflow: hidden; text-overflow: ellipsis; }
 .people-table tbody tr { cursor: pointer; }
 .people-table tbody tr:hover { background: rgba(255,255,255,.08); }
 .people-table tbody tr.selected { background: rgba(255, 210, 90, .22); color: #fff9dc; }
 .sortHeader { width: 100%; border: 0; border-radius: 0; background: transparent; box-shadow: none; padding: 6px 7px; text-align: left; font-size: 12px; color: var(--muted); }
 .emptyPeople { text-align: center; color: var(--muted); padding: 18px; }
-.people-detail { max-height: 86px; overflow: auto; max-width: 720px; }
+.people-detail { max-height: 86px; overflow: auto; max-width: 760px; }
 @media (max-width: 900px) {
   .people-table { min-width: 760px; font-size: 11px; }
   .people-detail { max-height: 74px; }
@@ -130,7 +135,7 @@ button.subtle { background: rgba(255,255,255,.08); }
 .dungeonLog { margin-top: 7px; }
 .dungeonLog ul { margin: 4px 0 8px 18px; padding: 0; }
 .dungeonReward { margin-top: 8px; padding: 7px; border-radius: 8px; background: rgba(255,211,79,.12); }
-.dungeonPanel { grid-column: 1 / -1; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; height: 100%; max-height: calc(var(--bottom-panel-height) - 86px); overflow: hidden; }
+.dungeonPanel { grid-column: 1 / -1; display: grid; grid-template-rows: auto minmax(0, 1fr); gap: 8px; height: 100%; max-height: calc(var(--bottom-panel-height) - 86px); overflow: hidden; box-shadow: none; }
 .dungeonSummary { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(240px, 1fr); gap: 10px; align-items: start; width: min(100%, 900px); max-width: 900px; padding: 8px; border: 1px solid rgba(157,252,255,.18); border-radius: 10px; background: rgba(0,0,0,.14); }
 .dungeonTitle { font-size: 15px; font-weight: 900; color: var(--accent); margin-bottom: 5px; }
 .dungeonSummaryGrid { display: grid; grid-template-columns: max-content minmax(0, 1fr); gap: 3px 8px; font-size: 12px; line-height: 1.35; }
@@ -151,3 +156,18 @@ button.subtle { background: rgba(255,255,255,.08); }
   .dungeonSummaryGrid { font-size: 11px; }
 }
 .build-panel-content { overflow: hidden; }
+
+.progress-panel-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 260px)); gap: 9px; align-content: start; align-items: start; overflow: auto; height: 100%; padding-right: 3px; }
+.progress-panel-grid .compactCard { width: min(100%, 260px); max-width: 260px; }
+.progress-panel-grid .progress-wide-card { width: min(100%, 540px); max-width: 540px; grid-column: span 2; }
+.dungeon-panel-grid { display: grid; grid-template-columns: minmax(0, 760px) minmax(190px, 260px); gap: 9px; align-content: start; height: 100%; overflow: hidden; }
+.dungeon-panel-grid > .compactCard { align-self: start; }
+.dungeon-running-list { display: grid; gap: 8px; align-content: start; overflow: auto; min-height: 0; }
+@media (max-width: 900px) {
+  .progress-panel-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .progress-panel-grid .compactCard, .progress-panel-grid .progress-wide-card { width: 100%; max-width: none; grid-column: auto; }
+  .dungeon-panel-grid { grid-template-columns: 1fr; overflow: auto; }
+}
+@media (max-width: 560px) {
+  .progress-panel-grid { grid-template-columns: 1fr; }
+}
