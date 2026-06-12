@@ -592,7 +592,7 @@ function renderBottomPanel() {
   const content = renderers[active]?.() ?? '';
   const contentElement = getBottomPanelContentElement();
   if (contentElement) {
-    contentElement.className = `bottom-panel-content${active === 'seals' ? ' people-panel-content' : ''}`;
+    contentElement.className = `bottom-panel-content${active === 'seals' ? ' people-panel-content' : ''}${active === 'build' ? ' build-panel-content' : ''}`;
     contentElement.innerHTML = content;
   }
   restoreBottomPanelScrollPosition(active);
@@ -603,15 +603,69 @@ function panelHeader(title, hint = '') {
 }
 
 
-function renderFacilityToolInfo(tool) {
-  if (tool?.kind !== 'facility') return '';
-  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[tool.id] ?? {};
-  const price = safeFiniteNumber(cfg.basePrice ?? cfg.fee ?? cfg.spendPerVisit, 0, 0);
-  const heal = safeFiniteNumber(cfg.baseHeal ?? cfg.healPerSecond, 0, 0);
-  const tags = Array.isArray(cfg.tags) ? cfg.tags.join(', ') : '';
-  const footprint = getRotatedFootprintSize(tool, gameState.ui?.directionIndex ?? 0);
-  const preview = { type: tool.id, kind: tool.kind, x: 0, y: 0, w: footprint.w, h: footprint.h, directionIndex: gameState.ui?.directionIndex ?? 0 };
-  return `<br>サイズ: ${footprint.w}x${footprint.h}<br>基本料金: ${Math.floor(price)}G<br>回復: ${Math.floor(heal)}${cfg.healPerSecond ? '/秒' : ''}<br>入口: ${escapeHtml(getDirectionSideName(getFacilityEntranceDirectionIndex(preview)))}<br>タグ: ${escapeHtml(tags || '-')}`;
+function getBuildCategoryLabel(categoryId) {
+  return BUILD_CATEGORIES.find(category => category?.id === categoryId)?.label ?? categoryId ?? '';
+}
+
+function formatBuildCost(tool) {
+  if (!tool) return '-';
+  if (tool.kind === 'clear') return `${getClearingCost()}G`;
+  const cost = tool.cost;
+  if (typeof cost === 'number') return cost > 0 ? `${Math.floor(cost)}G` : '無料';
+  return cost ? String(cost) : '無料';
+}
+
+function renderBuildMetaRow(label, value) {
+  const text = value === undefined || value === null || value === '' ? '-' : value;
+  return `<div class="build-info-row"><span>${escapeHtml(label)}</span><b>${escapeHtml(text)}</b></div>`;
+}
+
+function renderBuildCategoryTabs() {
+  const activeCategory = gameState.ui?.buildCategory ?? 'road';
+  return `<div class="build-category-tabs" role="tablist" aria-label="建設カテゴリ">
+    ${BUILD_CATEGORIES.map(category => `<button type="button" role="tab" data-build-category="${escapeHtml(category.id)}" class="${category.id === activeCategory ? 'active' : ''}" aria-selected="${category.id === activeCategory ? 'true' : 'false'}">${escapeHtml(category.label)}</button>`).join('')}
+  </div>`;
+}
+
+function renderBuildItemList() {
+  const activeCategory = BUILD_CATEGORY_IDS.includes(gameState.ui?.buildCategory) ? gameState.ui.buildCategory : 'road';
+  const category = BUILD_CATEGORIES.find(item => item?.id === activeCategory) ?? BUILD_CATEGORIES[0];
+  const buttons = (category?.toolIds ?? []).map(toolId => {
+    if (toolId === 'rotate') return `<button class="toolButton managementAction" data-action="rotate"><span class="toolName">↻ 回転</span><span class="toolMeta">選択中の施設入口を回転</span></button>`;
+    const tool = getBuildToolDef(toolId);
+    if (!tool) return '';
+    const size = `${tool.width ?? tool.w ?? 1}x${tool.height ?? tool.h ?? 1}`;
+    return `<button class="toolButton buildItemButton" data-tool="${escapeHtml(tool.id)}">
+      <span class="toolName">${escapeHtml(tool.label ?? tool.name ?? tool.id)}</span>
+      <span class="toolMeta">${escapeHtml(size)} / ${escapeHtml(formatBuildCost(tool))}</span>
+    </button>`;
+  }).join('');
+  return `<div class="build-item-list" aria-label="${escapeHtml(category?.label ?? '')}の建設アイテム">${buttons}</div>`;
+}
+
+function renderSelectedBuildInfo() {
+  const selected = getBuildToolDef(gameState.ui?.selectedTool);
+  if (!selected) return `<div class="compactCard build-info-card empty"><b>建設物を選択してください</b></div>`;
+
+  const footprint = getRotatedFootprintSize(selected, gameState.ui?.directionIndex ?? 0);
+  const direction = selected.kind === 'facility'
+    ? getDirectionSideName(getFacilityEntranceDirectionIndex({ type: selected.id, kind: selected.kind, x: 0, y: 0, w: footprint.w, h: footprint.h, directionIndex: gameState.ui?.directionIndex ?? 0 }))
+    : '-';
+  const rows = [
+    renderBuildMetaRow('カテゴリ', getBuildCategoryLabel(selected.category ?? getBuildCategoryForTool(selected))),
+    renderBuildMetaRow('サイズ', `${footprint.w}x${footprint.h}`),
+    renderBuildMetaRow('コスト', formatBuildCost(selected)),
+    renderBuildMetaRow('入口方向', direction),
+    renderBuildMetaRow('道路接続', selected.requiresRoadEntrance ? '必要' : '不要')
+  ].join('');
+  return `<div class="compactCard build-info-card">
+    <div class="build-info-title"><b>${escapeHtml(selected.name ?? selected.label ?? selected.id)}</b><span>${escapeHtml(selected.kind ?? '')}</span></div>
+    <div class="build-info-grid">${rows}</div>
+    <div class="build-info-section"><b>効果</b><p>${escapeHtml(getBuildToolEffectText(selected.id) || '-')}</p></div>
+    <div class="build-info-section"><b>レベル</b><p>${escapeHtml(selected.levelText || '-')}</p></div>
+    <div class="build-info-section"><b>配置メモ</b><p>${escapeHtml(selected.notes || '-')}</p></div>
+    <div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div>
+  </div>`;
 }
 
 function getSelectedFacility() {
@@ -626,28 +680,22 @@ function renderSelectedFacilityInfo() {
   const name = cfg.label ?? facility.type;
   const direction = getDirectionSideName(getFacilityEntranceDirectionIndex(facility));
   const connected = isEntranceConnectedToRoad(facility);
-  return `<div class="compactCard"><b>選択中の施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})<br>Entrance: ${escapeHtml(direction)}<br>Road Connected: ${connected ? 'Yes' : 'No'}<br>座標: ${facility.x}, ${facility.y}</div>`;
+  return `<div class="compactCard selected-facility-card"><b>マップ上の選択施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})<br>入口: ${escapeHtml(direction)}<br>道路接続: ${connected ? 'あり' : 'なし'}<br>座標: ${facility.x}, ${facility.y}</div>`;
 }
 
 function renderBuildPanel() {
-  const categoryHtml = BUILD_CATEGORIES.map(category => {
-    const buttons = category.toolIds.map(toolId => {
-      const tool = CONFIG.tools.find(item => item?.id === toolId);
-      if (!tool) return '';
-      return `<button class="toolButton" data-tool="${escapeHtml(tool.id)}">${escapeHtml(tool.label)}</button>`;
-    }).join('');
-    return `<div class="compactCard"><b>${escapeHtml(category.label)}</b><div class="categoryButtons">${buttons}</div></div>`;
-  }).join('');
-  const selected = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
-  return `<div class="buildPanel">
-      <div class="buildCategories">${categoryHtml}</div>
-      <div>
-        <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(getDirectionSideName(gameState.ui?.directionIndex ?? 2))}${renderFacilityToolInfo(selected)}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
-        ${renderSelectedFacilityInfo()}
-        <div class="compactCard helpText"><b>操作</b><br>WASD/矢印: カメラ移動<br>ドラッグ: カメラ移動 / 短いクリック: 配置<br>ホイール: ズーム<br>開拓: 未開拓の草木岩を${getClearingCost()}Gで除去<br><div class="zoomBtns"><button data-action="zoomOut">−</button><button data-action="zoomIn">＋</button></div></div>
-        <div class="compactCard savePanel"><b>セーブ</b><br>${escapeHtml(gameState.save?.statusText || '未保存')}<br>最終保存: ${escapeHtml(formatSaveTime(gameState.save?.lastSavedAt))}<br><button data-action="manualSave">手動保存</button></div>
-      </div>
-    </div>`;
+  const activeCategory = BUILD_CATEGORY_IDS.includes(gameState.ui?.buildCategory) ? gameState.ui.buildCategory : 'road';
+  if (gameState.ui && gameState.ui.buildCategory !== activeCategory) gameState.ui.buildCategory = activeCategory;
+  return `<div class="build-panel-layout">
+    <div class="build-panel-left">
+      ${renderBuildCategoryTabs()}
+      ${renderBuildItemList()}
+    </div>
+    <div class="build-panel-right">
+      ${renderSelectedBuildInfo()}
+      ${renderSelectedFacilityInfo()}
+    </div>
+  </div>`;
 }
 
 function renderSealsPanel() { return renderPeoplePanel(); }
