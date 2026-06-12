@@ -38,34 +38,49 @@ const CONFIG = Object.freeze({
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
   dungeon: {
-    spawnIntervalMs: 90000,
-    initialSpawnDelayMs: 18000,
-    maxActive: 2,
     clickRadius: 26,
     completedDisplayMs: 10000,
     returnDisplayMs: 6000,
     logMax: 8,
     states: { available: 'available', assembling: 'assembling', running: 'running', returning: 'returning', completed: 'completed', expired: 'expired' },
-    stateLabels: { available: '発見済み', assembling: '集合中', running: '探索中', returning: '帰還中', completed: '攻略完了', expired: '消滅' },
-    nodeTypes: { entrance: 'entrance', battle: 'battle', chest: 'chest', trap: 'trap', event: 'event', boss: 'boss', exit: 'exit' },
-    nodeLabels: { entrance: '入口', battle: '戦闘', chest: '宝箱', trap: '罠', event: '出来事', boss: 'ボス', exit: '出口' },
-    routeTemplate: ['entrance', 'battle', 'chest', 'trap', 'battle', 'boss', 'exit'],
-    nodeDurationsMs: { entrance: 3500, battle: 5200, chest: 3600, trap: 4200, event: 3800, boss: 6500, exit: 3200 },
+    stateLabels: { available: '探索可', assembling: '集合中', running: '攻略中', returning: '帰還中', completed: '攻略完了', expired: '消滅' },
+    nodeLabels: { entrance: '入口', battle: '戦闘', chest: '宝箱', trap: '罠', boss: 'ボス', exit: '出口' },
     progressSpeedByPersonality: { cautious: 0.9, brave: 1.08, balanced: 1 },
-    outcome: { battleDamage: 3, braveDamageBonus: 2, cautiousTrapDamageReduction: 2, trapDamage: 4, rewardBattleMultiplier: 0.12, rewardChestMultiplier: 0.18, rewardBossMultiplier: 0.3, rewardTrapPenaltyMultiplier: 0.08, expBattleBonus: 3 },
+    outcome: { battleDamage: 3, braveDamageBonus: 2, cautiousTrapDamageReduction: 2, trapDamage: 4, lowPowerRewardMultiplier: 0.65, rewardBattleMultiplier: 0.08, rewardChestMultiplier: 0.12, rewardBossMultiplier: 0.18, rewardTrapPenaltyMultiplier: 0.05, expBattleBonus: 3 },
     labels: { movingToDungeon: '遠征集合中', waitingAtDungeon: '入口で待機中', runningText: '探索中', returningText: '帰還中', peopleExpedition: '遠征中', participantCount: '探索中 {count}匹', assemblingCount: '集合中 {count}匹', returningCount: '帰還中 {count}匹', noParticipants: '参加者なし', routeTitle: '遠征ルート', logTitle: '遠征ログ', completedReward: '獲得報酬' },
     spawnAttempts: 40,
     minDistanceFromVillageTiles: 4,
-    participant: { min: 1, max: 3, clearFavor: 2, allowUnlockedProfileRecruit: true, personalityBonus: { brave: 16, balanced: 8, cautious: 2 }, activeSealBonus: 12, residentBonus: 6 },
-    areas: { coast: { id: 'coast', label: '外の冒険エリア coast', bounds: { x: 34, y: 5, w: 16, h: 24 }, types: ['tidal_cave'] } },
+    participant: { min: 1, max: 3, clearFavor: 2, allowUnlockedProfileRecruit: true, personalityBonus: { brave: 16, balanced: 8, cautious: 2 }, activeSealBonus: 12, residentBonus: 6 }
+  },
+  DUNGEONS: {
+    spawnIntervalMs: 90000,
+    initialSpawnDelayMs: 18000,
+    maxActiveDungeons: 2,
+    expiresInMs: 180000,
+    clearCountToUnlockNextLevel: 3,
+    nodeTypes: { entrance: 'entrance', battle: 'battle', chest: 'chest', trap: 'trap', boss: 'boss', exit: 'exit' },
+    spawnAreas: { coast: { id: 'coast', label: '外の冒険エリア coast', bounds: { x: 34, y: 5, w: 16, h: 24 } } },
+    nodeDurationsMs: { entrance: 3000, battle: 4600, chest: 3200, trap: 3600, boss: 5600, exit: 2800 },
     types: {
-      tidal_cave: { id: 'tidal_cave', name: '潮騒の洞窟', durationMs: 24000, expiresInMs: 180000, recruitCost: 40, difficulty: 36, enemyTypes: ['crab'], dropTableId: 'coast_relics', rewards: { g: 95, exp: 32, knownness: 8 } }
-    },
-    dropTables: { coast_relics: [
-      { itemId: 'driftwood_spear', count: 1, weight: 4 },
-      { itemId: 'shell_armor', count: 1, weight: 3 },
-      { itemId: 'lucky_pearl', count: 1, weight: 2 }
-    ] }
+      crabNest: {
+        id: 'crabNest', name: 'カニの巣', areaId: 'coast', focus: 'weapon', levels: [
+          { id: 'crabNest-1', name: 'カニの巣', level: 1, knownnessRequired: 0, recommendedPower: 42, recruitCost: 35, durationMultiplier: 0.85, rewardG: 85, rewardExp: 26, rewardKnownness: 8, dropTable: [{ itemId: 'driftwood_spear', count: 1, weight: 7 }, { itemId: 'crab_claw_spear', count: 1, weight: 2 }], nodePattern: ['entrance', 'battle', 'chest', 'boss', 'exit'] },
+          { id: 'crabNest-2', name: 'カニの巣', level: 2, knownnessRequired: 0, recommendedPower: 58, recruitCost: 55, durationMultiplier: 1.0, rewardG: 120, rewardExp: 38, rewardKnownness: 12, dropTable: [{ itemId: 'driftwood_spear', count: 1, weight: 4 }, { itemId: 'crab_claw_spear', count: 1, weight: 6 }], nodePattern: ['entrance', 'battle', 'trap', 'chest', 'boss', 'exit'] },
+          { id: 'crabNest-3', name: 'カニの巣', level: 3, knownnessRequired: 0, recommendedPower: 78, recruitCost: 80, durationMultiplier: 1.2, rewardG: 165, rewardExp: 54, rewardKnownness: 18, dropTable: [{ itemId: 'crab_claw_spear', count: 1, weight: 8 }, { itemId: 'shell_armor', count: 1, weight: 2 }], nodePattern: ['entrance', 'battle', 'battle', 'chest', 'trap', 'boss', 'exit'] },
+          { id: 'crabNest-4', name: 'カニの巣', level: 4, knownnessRequired: 0, recommendedPower: 102, recruitCost: 110, durationMultiplier: 1.4, rewardG: 220, rewardExp: 72, rewardKnownness: 25, dropTable: [{ itemId: 'crab_claw_spear', count: 1, weight: 9 }, { itemId: 'sailor_coat', count: 1, weight: 1 }], nodePattern: ['entrance', 'battle', 'trap', 'battle', 'chest', 'boss', 'exit'] },
+          { id: 'crabNest-5', name: 'カニの巣', level: 5, knownnessRequired: 0, recommendedPower: 132, recruitCost: 145, durationMultiplier: 1.65, rewardG: 295, rewardExp: 96, rewardKnownness: 34, dropTable: [{ itemId: 'crab_claw_spear', count: 1, weight: 10 }, { itemId: 'sailor_coat', count: 1, weight: 2 }], nodePattern: ['entrance', 'battle', 'battle', 'trap', 'chest', 'battle', 'boss', 'exit'] }
+        ]
+      },
+      wreck: {
+        id: 'wreck', name: '沈没船', areaId: 'coast', focus: 'armor', levels: [
+          { id: 'wreck-1', name: '沈没船', level: 1, knownnessRequired: 300, recommendedPower: 88, recruitCost: 90, durationMultiplier: 1.15, rewardG: 155, rewardExp: 48, rewardKnownness: 18, dropTable: [{ itemId: 'shell_armor', count: 1, weight: 7 }, { itemId: 'sailor_coat', count: 1, weight: 2 }], nodePattern: ['entrance', 'trap', 'chest', 'battle', 'boss', 'exit'] },
+          { id: 'wreck-2', name: '沈没船', level: 2, knownnessRequired: 300, recommendedPower: 112, recruitCost: 120, durationMultiplier: 1.3, rewardG: 210, rewardExp: 66, rewardKnownness: 25, dropTable: [{ itemId: 'shell_armor', count: 1, weight: 4 }, { itemId: 'sailor_coat', count: 1, weight: 6 }], nodePattern: ['entrance', 'trap', 'battle', 'chest', 'boss', 'exit'] },
+          { id: 'wreck-3', name: '沈没船', level: 3, knownnessRequired: 300, recommendedPower: 140, recruitCost: 155, durationMultiplier: 1.5, rewardG: 280, rewardExp: 88, rewardKnownness: 34, dropTable: [{ itemId: 'sailor_coat', count: 1, weight: 8 }, { itemId: 'crab_claw_spear', count: 1, weight: 2 }], nodePattern: ['entrance', 'trap', 'battle', 'chest', 'trap', 'boss', 'exit'] },
+          { id: 'wreck-4', name: '沈没船', level: 4, knownnessRequired: 300, recommendedPower: 172, recruitCost: 195, durationMultiplier: 1.75, rewardG: 365, rewardExp: 112, rewardKnownness: 45, dropTable: [{ itemId: 'sailor_coat', count: 1, weight: 9 }, { itemId: 'crab_claw_spear', count: 1, weight: 2 }], nodePattern: ['entrance', 'trap', 'battle', 'battle', 'chest', 'boss', 'exit'] },
+          { id: 'wreck-5', name: '沈没船', level: 5, knownnessRequired: 300, recommendedPower: 210, recruitCost: 240, durationMultiplier: 2.0, rewardG: 470, rewardExp: 145, rewardKnownness: 58, dropTable: [{ itemId: 'sailor_coat', count: 1, weight: 10 }, { itemId: 'crab_claw_spear', count: 1, weight: 3 }], nodePattern: ['entrance', 'trap', 'battle', 'trap', 'chest', 'battle', 'boss', 'exit'] }
+        ]
+      }
+    }
   },
   sealStates: { movingToDungeon: 'movingToDungeon', waitingAtDungeon: 'waitingAtDungeon', expeditionRunning: 'expeditionRunning', returningFromDungeon: 'returningFromDungeon', questing: 'questing', arrivingFromSea: 'arrivingFromSea', choosingArrivalAction: 'choosingArrivalAction', movingToFacility: 'movingToFacility', usingFacility: 'usingFacility', choosingHuntArea: 'choosingHuntArea', movingToHuntArea: 'movingToHuntArea', hunting: 'hunting', movingToMonster: 'movingToMonster', fighting: 'fighting', returningFromHunt: 'returningFromHunt', choosingPostHuntFacility: 'choosingPostHuntFacility', leavingToSea: 'leavingToSea', idle: 'idle', fallen: 'fallen', rescuing: 'rescuing', carryingFallenSeal: 'carryingFallenSeal', arriving: 'arriving', movingToHuntExit: 'movingToHuntExit', choosingFacility: 'choosingFacility', leaving: 'leaving' },
   CALENDAR: { WEEK_DURATION_MS: 12000, WEEKS_PER_MONTH: 4, MONTHS_PER_YEAR: 12 },
@@ -154,7 +169,9 @@ const CONFIG = Object.freeze({
   EQUIPMENT: { GEAR_BUDGET_RATE: 0.35, MONTHLY_DROP_HUNT_THRESHOLD: 3, SCORE_ATTACK_WEIGHT: 4, SCORE_DEFENSE_WEIGHT: 3, SCORE_HP_WEIGHT: 0.4, SCORE_FAVOR_WEIGHT: 1, SLOT_TYPES: ['weapon', 'armor', 'accessory'], SHOP_ITEM_TYPES: { weaponShop: ['weapon'], armorShop: ['armor'], blacksmith: ['weapon', 'armor'] }, STARTER_MAX_TIER: 1, PURCHASE_FAVOR_GAIN: 1, FACILITY_DISTANCE_WEIGHT: 1, FACILITY_BONUS_WEIGHT: 36, RECENT_USAGE_PENALTY: 18, RANDOM_TIEBREAKER: 4, FACILITY_BASE_SCORE: 1000, FACILITY_HEAL_WEIGHT: 140, FACILITY_FOOD_HP_WEIGHT: 20, FACILITY_SPEND_G_WEIGHT: 0.15, FACILITY_FOOD_G_WEIGHT: 0.2, FACILITY_EQUIPMENT_GEAR_WEIGHT: 0.12, MONTHLY_DROP_TABLE: ['driftwood_spear', 'shell_armor', 'lucky_pearl'], monthlyDropTable: ['driftwood_spear', 'shell_armor', 'lucky_pearl'] },
   ITEMS: {
     driftwood_spear: { id: 'driftwood_spear', name: '流木の槍', type: 'weapon', price: 90, attackBonus: 6, defenseBonus: 0, hpBonus: 0, favorBonus: 1, shopType: 'blacksmith', tier: 1 },
-    shell_armor: { id: 'shell_armor', name: '貝殻のよろい', type: 'armor', price: 120, attackBonus: 0, defenseBonus: 4, hpBonus: 14, favorBonus: 1, shopType: 'blacksmith', tier: 1 },
+    shell_armor: { id: 'shell_armor', name: '貝殻のよろい', type: 'armor', price: 120, attackBonus: 0, defenseBonus: 4, hpBonus: 14, favorBonus: 1, shopType: 'armorShop', tier: 1 },
+    crab_claw_spear: { id: 'crab_claw_spear', name: 'カニ爪の槍', type: 'weapon', price: 190, attackBonus: 12, defenseBonus: 0, hpBonus: 0, favorBonus: 2, shopType: 'weaponShop', tier: 2 },
+    sailor_coat: { id: 'sailor_coat', name: '船乗りのコート', type: 'armor', price: 230, attackBonus: 0, defenseBonus: 7, hpBonus: 26, favorBonus: 2, shopType: 'armorShop', tier: 2 },
     lucky_pearl: { id: 'lucky_pearl', name: '幸運の真珠', type: 'accessory', price: 150, attackBonus: 1, defenseBonus: 1, hpBonus: 8, favorBonus: 2, shopType: 'restaurant', tier: 1 }
   },
   seal: { maxHp: 130, attack: 18, defense: 5, baseSpeed: 50, roadSpeedMultiplier: 1.55, lowHpRatio: 0.4, innHpThreshold: 0.45, mediumHpRatio: 0.72, mediumInnChance: 0.35, mealsBeforeInnSoftLimit: 2, mealsInnChanceBoost: 0.35, fallenRecoveryPerSecond: 3, standHpRatio: 0.36, restTargetRatio: 0.88, contactDistance: 15, rescueScanDistance: 380, spendSeconds: 1.4, restSeconds: 1, startG: 0, spread: 24, huntDurationLimit: 42, noMonsterExploreSeconds: 8, favorHuntDurationBonus: 0.35, maxFavorHuntDurationBonus: 8, carriedGReturnThreshold: 56, carriedGReturnChance: 0.35, wanderSeconds: 2.5, levelExp: 48, levelHpGain: 10, levelAttackGain: 2, favorDefeat: 2, favorLevelUp: 4, favorFacilityUse: 1, favorRescued: 3, facilityChoiceWeights: { inn: 1.2, restaurant: 1.0, manjuShop: 1.05, blacksmith: 0.8 }, blacksmithAttackChance: 0.45, blacksmithAttackGain: 1 },

@@ -917,52 +917,86 @@ function removeDefeatedMonsters() {
 }
 
 
-function spawnDungeon(areaId) {
-  const area = getDungeonAreaDef(areaId);
-  const typeId = area?.types?.[Math.floor(Math.random() * Math.max(1, area?.types?.length ?? 1))];
-  const type = getDungeonTypeDef(typeId);
-  const point = area && type ? findDungeonSpawnPoint(area.id) : null;
-  if (!area || !type || !point) return null;
+function getUnlockedDungeonLevelDefs() {
+  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
+  updateDungeonUnlocks(false);
+  const defs = [];
+  for (const type of Object.values(CONFIG.DUNGEONS?.types ?? {})) {
+    for (const levelDef of type?.levels ?? []) if (isDungeonLevelUnlocked(type.id, levelDef.level)) defs.push({ ...levelDef, typeId: type.id, typeName: type.name, areaId: type.areaId });
+  }
+  return defs;
+}
+
+function updateDungeonUnlocks(announce = true) {
+  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
+  const knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0);
+  const neededClears = clampInteger(CONFIG.DUNGEONS?.clearCountToUnlockNextLevel, 1, Number.MAX_SAFE_INTEGER, 3);
+  for (const type of Object.values(CONFIG.DUNGEONS?.types ?? {})) {
+    for (const levelDef of type?.levels ?? []) {
+      const level = clampInteger(levelDef?.level, 1, Number.MAX_SAFE_INTEGER, 1);
+      const key = getDungeonLevelKey(type.id, level);
+      const knownOk = knownness >= safeFiniteNumber(levelDef?.knownnessRequired, 0, 0);
+      const previousOk = level <= 1 || clampInteger(gameState.dungeonProgress.clearCounts?.[getDungeonLevelKey(type.id, level - 1)], 0, Number.MAX_SAFE_INTEGER, 0) >= neededClears;
+      if (knownOk && previousOk && gameState.dungeonProgress.unlocked?.[key] !== true) {
+        gameState.dungeonProgress.unlocked[key] = true;
+        if (announce) logMessage(`${type.name} Lv${level} が発見されるようになりました`);
+      }
+    }
+  }
+}
+
+function spawnDungeon() {
+  const defs = getUnlockedDungeonLevelDefs();
+  if (defs.length <= 0) return null;
+  const levelDef = defs[Math.floor(Math.random() * defs.length)];
+  const type = getDungeonTypeDef(levelDef.typeId);
+  const area = getDungeonAreaDef(levelDef.areaId ?? type?.areaId ?? 'coast');
+  const point = area ? findDungeonSpawnPoint(area.id) : null;
+  if (!type || !area || !point) return null;
   const dungeon = {
     id: `dungeon-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+    typeId: type.id,
     type: type.id,
-    name: type.name,
+    level: levelDef.level,
+    name: `${levelDef.name || type.name} Lv${levelDef.level}`,
     areaId: area.id,
     x: point.x,
     y: point.y,
     state: 'available',
-    expiresInMs: safeFiniteNumber(type.expiresInMs, 0, 0),
+    expiresInMs: safeFiniteNumber(CONFIG.DUNGEONS?.expiresInMs, 180000, 0),
     progressMs: 0,
-    durationMs: safeFiniteNumber(type.durationMs, 1, 1),
-    recruitCost: safeFiniteNumber(type.recruitCost, 0, 0),
+    durationMs: getDungeonDurationMs(levelDef),
+    recruitCost: safeFiniteNumber(levelDef.recruitCost, 0, 0),
     participantIds: [],
-    nodes: normalizeDungeonNodes(null, type),
+    nodes: createDungeonNodes(type.id, levelDef.level),
     currentNodeIndex: 0,
     nodeTimerMs: 0,
     expeditionLog: [],
     reward: normalizeDungeonReward(null),
     startedAt: null,
     completedAt: null,
-    rewardPreview: getDungeonRewardPreview({ type: type.id, dropTableId: type.dropTableId }),
+    rewardPreview: getDungeonRewardPreview({ typeId: type.id, level: levelDef.level }),
     enemyRefs: [],
-    enemyTypes: (type.enemyTypes ?? []).map(String),
-    dropTableId: String(type.dropTableId ?? ''),
+    enemyTypes: ['crab'],
+    dropTableId: '',
     completedDisplayMs: 0
   };
   gameState.dungeons = Array.isArray(gameState.dungeons) ? gameState.dungeons : [];
   gameState.dungeons.push(dungeon);
-  logMessage(`${dungeon.name}が${area.label ?? area.id}に現れました。地図上の洞窟をクリックできます。`);
+  logMessage(`${dungeon.name}が${area.label ?? area.id}に現れました。地図上の入口をクリックできます。`);
   return dungeon;
 }
 
 function updateDungeons(deltaMs) {
+  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
+  updateDungeonUnlocks(false);
   gameState.dungeons = normalizeDungeons(gameState.dungeons);
   gameState.timers.dungeonSpawnMs = safeFiniteNumber(gameState.timers?.dungeonSpawnMs, 0, 0) + safeFiniteNumber(deltaMs, 0, 0);
   for (const dungeon of [...(gameState.dungeons ?? [])]) {
     if (dungeon?.state === 'available') {
       dungeon.expiresInMs -= safeFiniteNumber(deltaMs, 0, 0);
       if (dungeon.expiresInMs <= 0) expireDungeon(dungeon);
-    } else if (dungeon?.state === 'assembling') updateAssemblingDungeon(dungeon);
+    } else if (dungeon?.state === 'assembling') updateAssemblingDungeon(dungeon, deltaMs);
     else if (dungeon?.state === 'running') updateRunningDungeon(dungeon, deltaMs);
     else if (dungeon?.state === 'returning') updateReturningDungeon(dungeon, deltaMs);
     else if (dungeon?.state === 'completed' || dungeon?.state === 'expired') dungeon.completedDisplayMs = safeFiniteNumber(dungeon.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0) - safeFiniteNumber(deltaMs, 0, 0);
@@ -970,11 +1004,10 @@ function updateDungeons(deltaMs) {
   gameState.dungeons = (gameState.dungeons ?? []).filter(dungeon => !['completed', 'expired'].includes(dungeon?.state) || safeFiniteNumber(dungeon?.completedDisplayMs, 0, 0) > 0);
   cleanupOrphanedExpeditions();
   const activeCount = (gameState.dungeons ?? []).filter(dungeon => ['available', 'assembling', 'running', 'returning'].includes(dungeon?.state)).length;
-  const interval = (gameState.dungeons ?? []).length <= 0 ? CONFIG.dungeon.initialSpawnDelayMs : CONFIG.dungeon.spawnIntervalMs;
-  if (activeCount < CONFIG.dungeon.maxActive && gameState.timers.dungeonSpawnMs >= interval) {
+  const interval = (gameState.dungeons ?? []).length <= 0 ? CONFIG.DUNGEONS?.initialSpawnDelayMs : CONFIG.DUNGEONS?.spawnIntervalMs;
+  if (activeCount < clampInteger(CONFIG.DUNGEONS?.maxActiveDungeons, 1, Number.MAX_SAFE_INTEGER, 2) && gameState.timers.dungeonSpawnMs >= safeFiniteNumber(interval, 90000, 1)) {
     gameState.timers.dungeonSpawnMs = 0;
-    const areas = Object.keys(CONFIG.dungeon?.areas ?? {});
-    if (areas.length > 0) spawnDungeon(areas[Math.floor(Math.random() * areas.length)]);
+    spawnDungeon();
   }
   clearSelectedDungeonIfInvalid();
 }
@@ -988,6 +1021,19 @@ function selectDungeonAtWorldPosition(worldX, worldY) {
   gameState.ui.selectedDungeonId = selected?.id ?? null;
   if (selected) gameState.ui.selectedSealId = null;
   return selected;
+}
+
+function getSealPowerScore(seal) {
+  const stats = getSealEffectiveStats(seal);
+  return safeFiniteNumber(stats.attack, 0, 0) + safeFiniteNumber(stats.defense, 0, 0) + safeFiniteNumber(stats.maxHp, 0, 0) * 0.12 + Math.max(0, clampInteger(seal?.level, 1, Number.MAX_SAFE_INTEGER, 1) - 1) * 4;
+}
+
+function getPartyPower(participantIds) {
+  return normalizeDungeonParticipantIds(participantIds).map(p => getSealById(p.sealId)).filter(Boolean).reduce((sum, seal) => sum + getSealPowerScore(seal), 0);
+}
+
+function getDungeonRecommendedPower(dungeon) {
+  return safeFiniteNumber(getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level)?.recommendedPower, 0, 0);
 }
 
 function canStartDungeon(dungeon) {
@@ -1009,8 +1055,7 @@ function startDungeon(dungeonId) {
   dungeon.progressMs = 0;
   dungeon.currentNodeIndex = 0;
   dungeon.nodeTimerMs = 0;
-  dungeon.nodes = normalizeDungeonNodes(dungeon.nodes, getDungeonTypeDef(dungeon.type));
-  for (const node of dungeon.nodes ?? []) { node.resolved = false; node.logText = ''; node.rewardPart = normalizeDungeonReward(null); }
+  dungeon.nodes = createDungeonNodes(dungeon.typeId, dungeon.level);
   dungeon.expeditionLog = [];
   dungeon.reward = normalizeDungeonReward(null);
   dungeon.startedAt = Date.now();
@@ -1042,9 +1087,10 @@ function chooseDungeonParticipants(dungeon) {
   const candidates = [];
   for (const seal of gameState.seals ?? []) {
     if (!seal || seal.state === 'fallen' || seal.expeditionId || activeDungeonIds.has(seal.id)) continue;
-    if (['leavingToSea', 'leaving'].includes(seal.state)) continue;
-    const stats = getSealEffectiveStats(seal);
-    candidates.push({ kind: 'seal', id: seal.id, sealId: seal.id, profileId: seal.profileId, name: seal.name, score: safeFiniteNumber(seal.favor, 0, 0) * 3 + safeFiniteNumber(seal.level, 1, 1) * 10 + safeFiniteNumber(stats.attack, 0, 0) + safeFiniteNumber(stats.defense, 0, 0) + (cfg.personalityBonus?.[seal.personality] ?? 0) + (seal.type === 'resident' ? cfg.residentBonus : cfg.activeSealBonus) });
+    const availableStates = ['idle', 'choosingHuntArea', 'choosingFacility', 'choosingArrivalAction'];
+    if (!availableStates.includes(seal.state)) continue;
+    const idleBonus = seal.state === 'idle' ? 14 : 8;
+    candidates.push({ kind: 'seal', id: seal.id, sealId: seal.id, profileId: seal.profileId, name: seal.name, score: getSealPowerScore(seal) + safeFiniteNumber(seal.favor, 0, 0) * 3 + idleBonus + (cfg.personalityBonus?.[seal.personality] ?? 0) + (seal.type === 'resident' ? cfg.residentBonus : cfg.activeSealBonus) });
   }
   return candidates.sort((a, b) => b.score - a.score).slice(0, max).map(({ score, ...participant }) => participant);
 }
@@ -1093,7 +1139,7 @@ function updateRunningDungeon(dungeon, deltaMs) {
     seal.state = 'expeditionRunning';
     seal.currentAction = `${dungeon.name}を探索中`;
   }
-  const nodes = Array.isArray(dungeon.nodes) && dungeon.nodes.length > 0 ? dungeon.nodes : normalizeDungeonNodes(null, getDungeonTypeDef(dungeon.type));
+  const nodes = Array.isArray(dungeon.nodes) && dungeon.nodes.length > 0 ? dungeon.nodes : createDungeonNodes(dungeon.typeId, dungeon.level);
   dungeon.nodes = nodes;
   const node = nodes[clampInteger(dungeon.currentNodeIndex, 0, Math.max(0, nodes.length - 1), 0)];
   if (!node) { completeDungeon(dungeon); return; }
@@ -1121,15 +1167,34 @@ function resolveDungeonNode(dungeon, node, participants) {
 
 function completeDungeon(dungeon) {
   if (!dungeon || dungeon.state !== 'running') return;
-  const type = getDungeonTypeDef(dungeon.type);
-  const rewards = type?.rewards ?? {};
-  const baseReward = { g: safeFiniteNumber(rewards.g, 0, 0), exp: safeFiniteNumber(rewards.exp, 0, 0), knownness: safeFiniteNumber(rewards.knownness, 0, 0), items: rollDungeonDrops(dungeon.dropTableId) };
+  const levelDef = getDungeonLevelDef(dungeon.typeId ?? dungeon.type, dungeon.level);
+  const baseReward = { g: safeFiniteNumber(levelDef?.rewardG, 0, 0), exp: safeFiniteNumber(levelDef?.rewardExp, 0, 0), knownness: safeFiniteNumber(levelDef?.rewardKnownness, 0, 0), items: rollDungeonDrop(dungeon) };
   dungeon.reward = mergeDungeonReward(baseReward, dungeon.reward);
+  const power = getPartyPower(dungeon.participantIds);
+  const recommended = getDungeonRecommendedPower(dungeon);
+  if (recommended > 0 && power < recommended) {
+    const multiplier = safeFiniteNumber(CONFIG.dungeon?.outcome?.lowPowerRewardMultiplier, 0.65, 0.1);
+    dungeon.reward.g = Math.floor(dungeon.reward.g * multiplier);
+    dungeon.reward.exp = Math.floor(dungeon.reward.exp * multiplier);
+    dungeon.reward.knownness = Math.floor(dungeon.reward.knownness * multiplier);
+    addDungeonLog(dungeon, `推奨戦力不足のため報酬が少し減りました（戦力${Math.floor(power)}/${Math.floor(recommended)}）。`);
+  }
   dungeon.completedAt = Date.now();
-  for (const drop of dungeon.reward.items ?? []) addRelicItem(drop.itemId, drop.count, dungeon.name);
+  for (const drop of dungeon.reward.items ?? []) {
+    const unlocked = unlockCatalogItem(drop.itemId, dungeon.name);
+    if (!unlocked) {
+      gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + CONFIG.knownness.duplicateRelicReward;
+      const item = getItemDef(drop.itemId);
+      logMessage(`${item?.name ?? drop.itemId}を再発見しました（知名度+${CONFIG.knownness.duplicateRelicReward}）。`);
+    }
+  }
   gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) + safeFiniteNumber(dungeon.reward.g, 0, 0);
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0) + safeFiniteNumber(dungeon.reward.g, 0, 0);
   gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + safeFiniteNumber(dungeon.reward.knownness, 0, 0);
+  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
+  const clearKey = getDungeonLevelKey(dungeon.typeId ?? dungeon.type, dungeon.level);
+  gameState.dungeonProgress.clearCounts[clearKey] = clampInteger(gameState.dungeonProgress.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  gameState.dungeonProgress.totalClears = clampInteger(gameState.dungeonProgress.totalClears, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
   const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => getSealById(p.sealId)).filter(Boolean);
   for (const seal of participants) {
     seal.exp = safeFiniteNumber(seal.exp, 0, 0) + safeFiniteNumber(dungeon.reward.exp, 0, 0);
@@ -1138,9 +1203,7 @@ function completeDungeon(dungeon) {
     applyLevelUps(seal);
     if (seal.type === 'visitor') writeBackVisitorProfile(seal);
     const profile = seal.profileId ? getVisitorProfileById(seal.profileId) : null;
-    if (profile) {
-      addDungeonRewardToProfile(profile, dungeon.reward.exp, CONFIG.dungeon?.participant?.clearFavor ?? 2);
-    }
+    if (profile) addDungeonRewardToProfile(profile, dungeon.reward.exp, CONFIG.dungeon?.participant?.clearFavor ?? 2);
     seal.state = 'returningFromDungeon';
     seal.currentAction = `${dungeon.name}から帰還中`;
     setSealDestination(seal, getDungeonReturnPoint(seal), 'dungeon-return');
@@ -1149,6 +1212,7 @@ function completeDungeon(dungeon) {
   dungeon.completedDisplayMs = CONFIG.dungeon?.returnDisplayMs ?? CONFIG.dungeon?.completedDisplayMs ?? 0;
   addDungeonLog(dungeon, `攻略完了！ ${Math.floor(dungeon.reward.g)}G / EXP${Math.floor(dungeon.reward.exp)} / 知名度+${Math.floor(dungeon.reward.knownness)}を獲得。`);
   unlockKnownVisitors();
+  updateDungeonUnlocks(true);
   logMessage(`${dungeon.name}を攻略完了！ ${Math.floor(dungeon.reward.g)}G / EXP${Math.floor(dungeon.reward.exp)} / 知名度+${Math.floor(dungeon.reward.knownness)} / ${(dungeon.reward.items ?? []).map(drop => `${getItemDef(drop.itemId)?.name ?? drop.itemId}x${drop.count}`).join('、') || 'ドロップなし'}`);
   updateHud();
 }
@@ -1208,19 +1272,22 @@ function addDungeonRewardToProfile(profile, rewardExp, rewardFavor) {
   }
 }
 
-function rollDungeonDrops(dropTableId) {
-  const table = CONFIG.dungeon?.dropTables?.[String(dropTableId ?? '')] ?? [];
+function createDungeonNodes(typeId, level) {
+  return normalizeDungeonNodes(null, getDungeonLevelDef(typeId, level));
+}
+
+function rollDungeonDrop(dungeon) {
+  const table = getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level)?.dropTable ?? [];
   if (table.length <= 0) return [];
   const total = table.reduce((sum, entry) => sum + Math.max(0, safeFiniteNumber(entry?.weight, 0, 0)), 0);
   let roll = Math.random() * Math.max(total, 1);
   for (const entry of table) {
     roll -= Math.max(0, safeFiniteNumber(entry?.weight, 0, 0));
-    if (roll <= 0) return [{ itemId: String(entry.itemId), count: clampInteger(entry.count, 1, Number.MAX_SAFE_INTEGER, 1) }];
+    if (roll <= 0) return [{ itemId: String(entry.itemId), count: clampInteger(entry.count, 1, Number.MAX_SAFE_INTEGER, 1) }].filter(item => getItemDef(item.itemId));
   }
   const fallback = table[0];
-  return fallback ? [{ itemId: String(fallback.itemId), count: clampInteger(fallback.count, 1, Number.MAX_SAFE_INTEGER, 1) }] : [];
+  return fallback ? [{ itemId: String(fallback.itemId), count: clampInteger(fallback.count, 1, Number.MAX_SAFE_INTEGER, 1) }].filter(item => getItemDef(item.itemId)) : [];
 }
-
 
 function getDungeonEntrancePoint(dungeon) {
   return { x: safeFiniteNumber(dungeon?.x, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x), y: safeFiniteNumber(dungeon?.y, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y) + 18 };
@@ -1260,14 +1327,14 @@ function getNodeContributionScore(seal, nodeType) {
   return safeFiniteNumber(seal?.favor, 0, 0) + (personality === 'balanced' ? 4 : 0);
 }
 
-function calculateNodeRewardPart(dungeon, node, participants) {
-  const base = getDungeonTypeDef(dungeon?.type)?.rewards ?? {};
+function calculateNodeRewardPart(dungeon, node) {
+  const levelDef = getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
   const outcome = CONFIG.dungeon?.outcome ?? {};
   const multiplier = node?.type === 'chest' ? outcome.rewardChestMultiplier : node?.type === 'boss' ? outcome.rewardBossMultiplier : node?.type === 'battle' ? outcome.rewardBattleMultiplier : node?.type === 'trap' ? -outcome.rewardTrapPenaltyMultiplier : 0;
   return normalizeDungeonReward({
-    g: Math.max(0, Math.round(safeFiniteNumber(base.g, 0, 0) * safeFiniteNumber(multiplier, 0, -1))),
+    g: Math.max(0, Math.round(safeFiniteNumber(levelDef?.rewardG, 0, 0) * safeFiniteNumber(multiplier, 0, -1))),
     exp: Math.max(0, Math.round((node?.type === 'battle' || node?.type === 'boss') ? safeFiniteNumber(outcome.expBattleBonus, 0, 0) : 0)),
-    knownness: node?.type === 'event' ? 1 : 0,
+    knownness: 0,
     items: []
   });
 }
@@ -1284,12 +1351,11 @@ function buildDungeonNodeLog(dungeon, node, lead, rewardPart) {
   const name = lead?.name ?? CONFIG.dungeon?.labels?.noParticipants ?? 'あざらし';
   const itemText = (rewardPart?.items ?? []).map(item => getItemDef(item.itemId)?.name ?? item.itemId).join('、');
   const templates = {
-    entrance: `${name}が入口を調べている`,
+    entrance: `${name}が入口を調べて進路を確認した`,
     battle: `${name}がカニの群れを追い払った`,
     chest: itemText ? `${itemText}を発見した` : '宝箱を発見した',
     trap: `${name}が罠を慎重に避けた`,
-    event: `${name}が潮の音から道を読んだ`,
-    boss: `${name}たちがボスを撃退した`,
+    boss: `${name}たちが最奥の強敵を撃退した`,
     exit: `${name}が出口の光を見つけた`
   };
   return templates[node?.type] ?? `${name}が探索を進めた`;
@@ -1348,9 +1414,8 @@ function expireDungeon(dungeon) {
 }
 
 function getDungeonRewardPreview(dungeon) {
-  const type = getDungeonTypeDef(dungeon?.type);
-  const table = CONFIG.dungeon?.dropTables?.[String(dungeon?.dropTableId || type?.dropTableId || '')] ?? [];
-  return { g: safeFiniteNumber(type?.rewards?.g, 0, 0), exp: safeFiniteNumber(type?.rewards?.exp, 0, 0), knownness: safeFiniteNumber(type?.rewards?.knownness, 0, 0), itemIds: table.map(entry => String(entry?.itemId ?? '')).filter(Boolean) };
+  const levelDef = getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
+  return { g: safeFiniteNumber(levelDef?.rewardG, 0, 0), exp: safeFiniteNumber(levelDef?.rewardExp, 0, 0), knownness: safeFiniteNumber(levelDef?.rewardKnownness, 0, 0), itemIds: (levelDef?.dropTable ?? []).map(entry => String(entry?.itemId ?? '')).filter(Boolean) };
 }
 
 function clearSelectedDungeonIfInvalid() {

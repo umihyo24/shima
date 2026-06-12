@@ -13,6 +13,7 @@ function createNewGameState() {
     shopCatalog: { unlockedItemIds: [], discoveredAt: {} },
     monsters: [],
     dungeons: [],
+    dungeonProgress: { unlocked: {}, clearCounts: {}, totalClears: 0 },
     images: {},
     logs: [],
     timers: { spawn: 0, monsterSpawn: 0, visitorSpawn: 0, dungeonSpawnMs: 0, ui: 0 },
@@ -223,7 +224,7 @@ function unlockCatalogItem(itemId, source = '') {
   if (ids.includes(item.id)) return false;
   ids.push(item.id);
   gameState.shopCatalog.discoveredAt[item.id] = Date.now();
-  if (source) logMessage(`${item.name}が商品カタログに追加されました（${source}）。`);
+  if (source) logMessage(`${item.name} を発見！商品に追加されました`);
   return true;
 }
 
@@ -542,30 +543,64 @@ function assetKeyForVisitorProfile(profileId) {
 }
 
 
+function normalizeDungeonProgress(progress) {
+  const clearCounts = {};
+  for (const [key, value] of Object.entries(progress?.clearCounts ?? {})) clearCounts[String(key)] = clampInteger(value, 0, Number.MAX_SAFE_INTEGER, 0);
+  const unlocked = {};
+  for (const type of Object.values(CONFIG.DUNGEONS?.types ?? {})) {
+    for (const levelDef of type?.levels ?? []) {
+      const key = getDungeonLevelKey(type.id, levelDef.level);
+      unlocked[key] = progress?.unlocked?.[key] === true;
+    }
+  }
+  return { unlocked, clearCounts, totalClears: clampInteger(progress?.totalClears, 0, Number.MAX_SAFE_INTEGER, 0) };
+}
+
+function getDungeonLevelKey(typeId, level) { return `${String(typeId ?? '')}:${clampInteger(level, 1, Number.MAX_SAFE_INTEGER, 1)}`; }
+
+function getDungeonTypeDef(typeId) { return CONFIG.DUNGEONS?.types?.[String(typeId ?? '')] ?? null; }
+function getDungeonAreaDef(areaId) { return CONFIG.DUNGEONS?.spawnAreas?.[String(areaId ?? '')] ?? null; }
+
+function getDungeonLevelDef(typeId, level) {
+  const type = getDungeonTypeDef(typeId);
+  const targetLevel = clampInteger(level, 1, Number.MAX_SAFE_INTEGER, 1);
+  const levelDef = (type?.levels ?? []).find(item => clampInteger(item?.level, 1, Number.MAX_SAFE_INTEGER, 1) === targetLevel) ?? null;
+  return levelDef ? { ...levelDef, typeId: type.id, typeName: type.name, areaId: type.areaId } : null;
+}
+
+function isDungeonLevelUnlocked(typeId, level) {
+  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
+  return gameState.dungeonProgress.unlocked?.[getDungeonLevelKey(typeId, level)] === true;
+}
+
 function normalizeDungeons(dungeons) {
   if (!Array.isArray(dungeons)) return [];
   const states = Object.values(CONFIG.dungeon?.states ?? { available: 'available', assembling: 'assembling', running: 'running', returning: 'returning', completed: 'completed', expired: 'expired' });
   return dungeons.map((dungeon, index) => {
-    const type = getDungeonTypeDef(dungeon?.type);
-    const area = getDungeonAreaDef(dungeon?.areaId);
-    if (!type || !area) return null;
+    const typeId = String(dungeon?.typeId ?? dungeon?.type ?? '');
+    const level = clampInteger(dungeon?.level, 1, Number.MAX_SAFE_INTEGER, 1);
+    const levelDef = getDungeonLevelDef(typeId, level);
+    const type = getDungeonTypeDef(typeId);
+    const area = getDungeonAreaDef(dungeon?.areaId ?? levelDef?.areaId ?? type?.areaId ?? 'coast');
+    if (!type || !levelDef || !area) return null;
     const point = isValidDungeonWorldPoint(dungeon?.x, dungeon?.y, area.id) ? { x: safeFiniteNumber(dungeon.x, 0), y: safeFiniteNumber(dungeon.y, 0) } : findDungeonSpawnPoint(area.id);
     if (!point) return null;
     const state = states.includes(dungeon?.state) ? dungeon.state : 'available';
-    const rewardPreview = getDungeonRewardPreview({ type: type.id, dropTableId: type.dropTableId });
-    const nodes = normalizeDungeonNodes(dungeon?.nodes, type);
+    const nodes = normalizeDungeonNodes(dungeon?.nodes, levelDef);
     return {
       id: String(dungeon?.id || `dungeon-${Date.now()}-${index}`),
+      typeId: type.id,
       type: type.id,
-      name: String(dungeon?.name || type.name),
+      level: levelDef.level,
+      name: String(dungeon?.name || `${levelDef.name || type.name} Lv${levelDef.level}`),
       areaId: area.id,
       x: safeFiniteNumber(point.x, 0),
       y: safeFiniteNumber(point.y, 0),
       state,
-      expiresInMs: safeFiniteNumber(dungeon?.expiresInMs, type.expiresInMs, 0),
+      expiresInMs: safeFiniteNumber(dungeon?.expiresInMs, CONFIG.DUNGEONS?.expiresInMs, 0),
       progressMs: safeFiniteNumber(dungeon?.progressMs, 0, 0),
-      durationMs: safeFiniteNumber(dungeon?.durationMs, type.durationMs, 1),
-      recruitCost: safeFiniteNumber(dungeon?.recruitCost, type.recruitCost, 0),
+      durationMs: getDungeonDurationMs(levelDef),
+      recruitCost: safeFiniteNumber(dungeon?.recruitCost, levelDef.recruitCost, 0),
       participantIds: normalizeDungeonParticipantIds(dungeon?.participantIds),
       nodes,
       currentNodeIndex: clampInteger(dungeon?.currentNodeIndex, 0, ['returning', 'completed'].includes(state) ? nodes.length : Math.max(0, nodes.length - 1), 0),
@@ -574,29 +609,37 @@ function normalizeDungeons(dungeons) {
       reward: normalizeDungeonReward(dungeon?.reward),
       startedAt: safeFiniteNumber(dungeon?.startedAt, null, 0) || null,
       completedAt: safeFiniteNumber(dungeon?.completedAt, null, 0) || null,
-      rewardPreview,
+      rewardPreview: getDungeonRewardPreview({ typeId: type.id, level: levelDef.level }),
       enemyRefs: Array.isArray(dungeon?.enemyRefs) ? dungeon.enemyRefs.map(String) : [],
-      enemyTypes: Array.isArray(dungeon?.enemyTypes) ? dungeon.enemyTypes.map(String) : (type.enemyTypes ?? []).map(String),
-      dropTableId: String(dungeon?.dropTableId || type.dropTableId || ''),
+      enemyTypes: ['crab'],
+      dropTableId: '',
       completedDisplayMs: safeFiniteNumber(dungeon?.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0)
     };
   }).filter(Boolean);
 }
 
-function normalizeDungeonNodes(nodes, type) {
-  const valid = Object.values(CONFIG.dungeon?.nodeTypes ?? {});
-  const source = Array.isArray(nodes) && nodes.length > 0 ? nodes : (CONFIG.dungeon?.routeTemplate ?? []).map(nodeType => ({ type: nodeType }));
+function normalizeDungeonNodes(nodes, levelDef) {
+  const valid = Object.values(CONFIG.DUNGEONS?.nodeTypes ?? {});
+  const pattern = Array.isArray(levelDef?.nodePattern) && levelDef.nodePattern.length > 0 ? levelDef.nodePattern : ['entrance', 'battle', 'chest', 'boss', 'exit'];
+  const source = Array.isArray(nodes) && nodes.length > 0 ? nodes : pattern.map(nodeType => ({ type: nodeType }));
+  const multiplier = safeFiniteNumber(levelDef?.durationMultiplier, 1, 0.1);
   return source.map((node, index) => {
-    const nodeType = valid.includes(node?.type) ? node.type : (CONFIG.dungeon?.routeTemplate?.[index] ?? 'event');
+    const fallbackType = pattern[index] ?? 'battle';
+    const nodeType = valid.includes(node?.type) ? node.type : fallbackType;
     return {
       id: String(node?.id || `node-${index}-${nodeType}`),
       type: nodeType,
-      durationMs: safeFiniteNumber(node?.durationMs, CONFIG.dungeon?.nodeDurationsMs?.[nodeType] ?? Math.max(1, safeFiniteNumber(type?.durationMs, 1, 1) / Math.max(1, source.length)), 1),
+      durationMs: safeFiniteNumber(node?.durationMs, (CONFIG.DUNGEONS?.nodeDurationsMs?.[nodeType] ?? 3500) * multiplier, 1),
       resolved: node?.resolved === true,
       logText: String(node?.logText ?? ''),
       rewardPart: normalizeDungeonReward(node?.rewardPart)
     };
   });
+}
+
+function getDungeonDurationMs(levelDef) {
+  const nodes = normalizeDungeonNodes(null, levelDef);
+  return nodes.reduce((sum, node) => sum + safeFiniteNumber(node?.durationMs, 0, 0), 0);
 }
 
 function normalizeDungeonReward(reward) {
@@ -616,16 +659,13 @@ function normalizeDungeonLog(log) {
 function normalizeDungeonParticipantIds(ids) {
   if (!Array.isArray(ids)) return [];
   return ids.map(participant => typeof participant === 'object' ? {
-    kind: String(participant?.kind ?? ''),
-    id: String(participant?.id ?? ''),
+    kind: String(participant?.kind ?? 'seal'),
+    id: String(participant?.id ?? participant?.sealId ?? ''),
     sealId: participant?.sealId ? String(participant.sealId) : null,
     profileId: participant?.profileId ? String(participant.profileId) : null,
     name: String(participant?.name ?? '')
   } : { kind: 'seal', id: String(participant), sealId: String(participant), profileId: null, name: '' }).filter(participant => participant.id);
 }
-
-function getDungeonTypeDef(typeId) { return CONFIG.dungeon?.types?.[String(typeId ?? '')] ?? null; }
-function getDungeonAreaDef(areaId) { return CONFIG.dungeon?.areas?.[String(areaId ?? '')] ?? null; }
 
 function isValidDungeonWorldPoint(x, y, areaId) {
   const gx = Math.floor(safeFiniteNumber(x, -1) / CONFIG.world.tile);
@@ -696,6 +736,8 @@ function initGame(residentName) {
   gameState.visitorProfiles = createDefaultVisitorProfiles();
   gameState.relicInventory = [];
   gameState.dungeons = [];
+  gameState.dungeonProgress = normalizeDungeonProgress(null);
+  updateDungeonUnlocks();
   gameState.shopCatalog = { unlockedItemIds: [], discoveredAt: {} };
   gameState.ui.selectedSealId = null;
   gameState.ui.selectedPersonRosterId = null;
