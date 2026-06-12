@@ -253,6 +253,7 @@ function updateSeals(dt) {
   for (const seal of [...(gameState.seals ?? [])]) {
     if (!seal) continue;
     if (seal.type === 'visitor') seal.visitTimerMs = safeFiniteNumber(seal.visitTimerMs, 0, 0) + dt * 1000;
+    updateToiletNeed(seal, dt * 1000);
     if (seal.expeditionId && ['movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing'].includes(seal.state)) { updateExpeditionSeal(seal, dt); continue; }
     if (seal.state === 'questing') continue;
     if (seal.state === 'fallen') { updateFallen(seal, dt); continue; }
@@ -374,6 +375,8 @@ function chooseArrivalActionForVisitor(seal) {
     const inn = getBestFacilityForSeal(seal, typeConfig.lowHp ?? ['inn']);
     if (inn) return { type: 'facility', facility: inn, action: '宿屋で回復します' };
   }
+  const arrivalToilet = choosePublicToilet(seal);
+  if (arrivalToilet && Math.random() < getToiletSelectionChance(seal)) return { type: 'facility', facility: arrivalToilet, action: '公衆トイレへ立ち寄ります' };
   const equipmentShop = getBestFacilityForSeal(seal, typeConfig.gear ?? Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}));
   if (equipmentShop && chooseCheapestAffordableUpgrade(seal, equipmentShop)) return { type: 'facility', facility: equipmentShop, action: `${CONFIG.facilities?.[equipmentShop.type]?.label ?? '店'}で装備を見ます` };
   if (hpRatio < safeFiniteNumber(arrival.restaurantHpRatio, 0.82, 0) || Math.random() < safeFiniteNumber(arrival.preHuntFacilityChance, 0, 0)) {
@@ -544,7 +547,7 @@ function updateMovingToFacility(seal, dt) {
   if (!setSealDestination(seal, target, 'facility')) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, target.x, target.y) <= CONFIG.seal.contactDistance) {
-    seal.actionTimer = facility.type === 'inn' ? CONFIG.seal.restSeconds : CONFIG.seal.spendSeconds;
+    seal.actionTimer = isPublicToiletFacility(facility) ? getPublicToiletUseDurationMs(facility) / 1000 : (facility.type === 'inn' ? CONFIG.seal.restSeconds : CONFIG.seal.spendSeconds);
     seal.currentAction = `${CONFIG.facilities[facility.type]?.label ?? '施設'}を利用中`;
     seal.state = 'usingFacility';
   }
@@ -552,6 +555,7 @@ function updateMovingToFacility(seal, dt) {
 
 function updateUsingFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
+  if (isPublicToiletFacility(facility)) { updateUsingPublicToilet(seal, facility, dt); return; }
   if (facility?.type === 'inn') { updateResting(seal, dt); return; }
   const purpose = getFacilityPurposeForSeal(seal, facility);
   if (!facility || !isFacilityStillValidTarget(seal, seal.targetId, purpose)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
@@ -572,6 +576,7 @@ function updateUsingFacility(seal, dt) {
   const income = isLevelableFacility(facility) ? registerFacilityUse(facility, seal, spent) : spent;
   addPlayerIncome(income);
   if (['restaurant', 'manjuShop'].includes(facility.type)) {
+    addToiletNeed(seal, facility.type === 'restaurant' ? CONFIG.TOILET?.foodNeedIncrease : CONFIG.TOILET?.manjuNeedIncrease);
     seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getFacilityHealAmount(facility));
     seal.mealCountSinceInn = clampInteger(seal.mealCountSinceInn, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
   }
@@ -680,6 +685,26 @@ function updateIdle(seal, dt) {
     seal.wanderTimer = CONFIG.seal.wanderSeconds;
   }
   updateSealMovement(seal, dt * 1000);
+}
+
+
+function getToiletSelectionChance(seal) {
+  if (!shouldUseToilet(seal)) return 0;
+  const base = safeFiniteNumber(CONFIG.TOILET?.selectionWeight, 0.12, 0);
+  const need = safeFiniteNumber(seal?.toiletNeed, 0, 0);
+  const urgent = safeFiniteNumber(CONFIG.TOILET?.urgentThreshold, 85, 0);
+  return need >= urgent ? Math.min(safeFiniteNumber(CONFIG.TOILET?.maxSelectionChance, 0.55, 0), base * safeFiniteNumber(CONFIG.TOILET?.urgentSelectionMultiplier, 3, 0)) : base;
+}
+
+function updateUsingPublicToilet(seal, facility, dt) {
+  if (!seal || !isPublicToiletFacility(facility) || !isFacilityUsable(facility)) {
+    if (seal) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; }
+    return;
+  }
+  seal.actionTimer -= dt;
+  if (seal.actionTimer > 0) return;
+  usePublicToilet(seal, facility);
+  afterVillageActivity(seal);
 }
 
 function addFavor(seal, amount) {
