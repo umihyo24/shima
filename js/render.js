@@ -120,7 +120,7 @@ function drawFacility(o) {
   });
   const usable = isFacilityUsable(o);
   ctx.strokeStyle = usable ? '#5cff7d' : '#ff5a50'; ctx.lineWidth = 3 / gameState.camera.zoom; ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
-  const e = entranceTile(o); ctx.fillStyle = usable ? '#64ff95' : '#ff5757'; ctx.beginPath(); ctx.arc((e.x + 0.5) * CONFIG.world.tile, (e.y + 0.5) * CONFIG.world.tile, 7, 0, Math.PI * 2); ctx.fill();
+  drawEntranceMarker(o, { connected: isEntranceConnectedToRoad(o), subtle: true });
   if (isLevelableFacility(o)) {
     const label = `Lv${getFacilityLevel(o)}`;
     ctx.font = '11px system-ui';
@@ -128,6 +128,72 @@ function drawFacility(o) {
     ctx.fillStyle = 'rgba(0,0,0,.58)'; ctx.fillRect(x + 4, y + 4, lw, 17);
     ctx.fillStyle = '#fff8ba'; ctx.fillText(label, x + 8, y + 17);
   }
+}
+
+
+function getFacilityFootprintEdgePoint(facility, inset = 0) {
+  const dir = getEntranceDirectionVector(facility);
+  const x = safeFiniteNumber(facility?.x, 0, 0) * CONFIG.world.tile;
+  const y = safeFiniteNumber(facility?.y, 0, 0) * CONFIG.world.tile;
+  const w = Math.max(1, safeFiniteNumber(facility?.w, CONFIG.placement.facilitySize, 1)) * CONFIG.world.tile;
+  const h = Math.max(1, safeFiniteNumber(facility?.h, CONFIG.placement.facilitySize, 1)) * CONFIG.world.tile;
+  if (dir.name === 'N') return { x: x + w / 2, y: y + inset };
+  if (dir.name === 'E') return { x: x + w - inset, y: y + h / 2 };
+  if (dir.name === 'S') return { x: x + w / 2, y: y + h - inset };
+  return { x: x + inset, y: y + h / 2 };
+}
+
+function drawEntranceMarker(facility, options = {}) {
+  if (!facility || facility?.kind !== 'facility') return;
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  if (cfg.entranceRequired !== true && !cfg.entranceSide) return;
+  const dir = getEntranceDirectionVector(facility);
+  const connected = options?.connected === true;
+  const subtle = options?.subtle === true;
+  const color = connected ? (CONFIG.UI?.entranceConnectedColor ?? '#34e86b') : (CONFIG.UI?.entranceDisconnectedColor ?? '#ff4d4d');
+  const edge = getFacilityFootprintEdgePoint(facility, subtle ? CONFIG.world.tile * 0.12 : 0);
+  const arrowLength = CONFIG.world.tile * (subtle ? 0.28 : 0.42);
+  const headSize = CONFIG.world.tile * (subtle ? 0.1 : 0.14);
+  const startX = edge.x - dir.dx * arrowLength * (subtle ? 0.55 : 0.15);
+  const startY = edge.y - dir.dy * arrowLength * (subtle ? 0.55 : 0.15);
+  const endX = edge.x + dir.dx * arrowLength * (subtle ? 0.45 : 0.85);
+  const endY = edge.y + dir.dy * arrowLength * (subtle ? 0.45 : 0.85);
+  ctx.save();
+  ctx.globalAlpha = subtle ? 0.86 : 1;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = Math.max(2, (subtle ? 3 : 5) / Math.max(gameState.camera?.zoom ?? 1, 0.1));
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(startX, startY);
+  ctx.lineTo(endX, endY);
+  ctx.stroke();
+  const angle = Math.atan2(dir.dy, dir.dx);
+  ctx.beginPath();
+  ctx.moveTo(endX, endY);
+  ctx.lineTo(endX - Math.cos(angle - Math.PI / 6) * headSize, endY - Math.sin(angle - Math.PI / 6) * headSize);
+  ctx.lineTo(endX - Math.cos(angle + Math.PI / 6) * headSize, endY - Math.sin(angle + Math.PI / 6) * headSize);
+  ctx.closePath();
+  ctx.fill();
+  ctx.fillStyle = subtle ? 'rgba(20,18,14,.55)' : 'rgba(20,18,14,.72)';
+  const doorW = CONFIG.world.tile * (subtle ? 0.22 : 0.28);
+  const doorH = CONFIG.world.tile * (subtle ? 0.12 : 0.16);
+  ctx.translate(edge.x, edge.y);
+  ctx.rotate(angle + Math.PI / 2);
+  ctx.fillRect(-doorW / 2, -doorH / 2, doorW, doorH);
+  ctx.restore();
+}
+
+function drawEntranceAccessTile(tile, connected) {
+  if (!tile || !getTile(tile.x, tile.y)) return;
+  const inset = Math.max(2, CONFIG.world.tile * 0.08);
+  ctx.save();
+  ctx.fillStyle = connected ? (CONFIG.UI?.entranceAccessConnected ?? 'rgba(52,232,107,.42)') : (CONFIG.UI?.entranceAccessDisconnected ?? 'rgba(255,77,77,.42)');
+  ctx.fillRect(tile.x * CONFIG.world.tile + inset, tile.y * CONFIG.world.tile + inset, CONFIG.world.tile - inset * 2, CONFIG.world.tile - inset * 2);
+  ctx.strokeStyle = connected ? (CONFIG.UI?.entranceConnectedColor ?? '#34e86b') : (CONFIG.UI?.entranceDisconnectedColor ?? '#ff4d4d');
+  ctx.lineWidth = Math.max(2, 3 / Math.max(gameState.camera?.zoom ?? 1, 0.1));
+  ctx.strokeRect(tile.x * CONFIG.world.tile + inset, tile.y * CONFIG.world.tile + inset, CONFIG.world.tile - inset * 2, CONFIG.world.tile - inset * 2);
+  ctx.restore();
 }
 
 function drawDecoration(o) {
@@ -278,9 +344,18 @@ function drawPlacementPreview() {
     if (gx >= 0 && gy >= 0 && tool) {
       if (tool?.kind === 'clear') drawClearPreview(gx, gy);
       else if (tool?.kind !== 'road' || getTile(gx, gy)) {
-        const result = canPlaceAt(gx, gy, tool);
+        const directionIndex = gameState.ui?.directionIndex ?? 0;
+        const footprint = getRotatedFootprintSize(tool, directionIndex);
+        const result = canPlaceAt(gx, gy, tool, directionIndex);
         ctx.fillStyle = result.ok ? CONFIG.render.valid : CONFIG.render.invalid;
-        ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, (tool?.w ?? 1) * CONFIG.world.tile, (tool?.h ?? 1) * CONFIG.world.tile);
+        ctx.fillRect(gx * CONFIG.world.tile, gy * CONFIG.world.tile, footprint.w * CONFIG.world.tile, footprint.h * CONFIG.world.tile);
+        if (tool?.kind === 'facility') {
+          const previewFacility = { type: tool.id, kind: tool.kind, x: gx, y: gy, w: footprint.w, h: footprint.h, directionIndex };
+          const entrance = getPlacementPreviewEntranceTile();
+          const connected = isEntranceConnectedToRoad(previewFacility);
+          drawEntranceAccessTile(entrance, connected);
+          drawEntranceMarker(previewFacility, { connected, preview: true });
+        }
       }
     }
   }
@@ -431,7 +506,7 @@ function renderHUD() {
   const nextGoal = getNextKnownnessGoal();
   const saveText = gameState.save?.statusText || '未保存';
   const selectedTool = CONFIG.tools.find(tool => tool?.id === gameState.ui?.selectedTool) ?? null;
-  const direction = CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S';
+  const direction = getDirectionSideName(gameState.ui?.directionIndex ?? 2);
   const latestLog = (gameState.logs ?? [])[0] ?? gameState.ui?.message ?? '';
   statsEl.innerHTML = `<div class="hudRow"><b>${Math.floor(gameState.player?.g ?? 0)} G</b><span class="dateLine">${gameState.calendar?.year ?? 1}年 ${gameState.calendar?.month ?? 1}月 ${gameState.calendar?.week ?? 1}w</span><span>知名度 ${Math.floor(knownness)} / ${Math.floor(nextGoal)}</span><span>今月の狩猟 ${gameState.stats?.monthlyHunts ?? 0}</span></div><div class="hudRow"><span>ツール: ${escapeHtml(selectedTool?.label ?? 'なし')}</span><span>入口: ${escapeHtml(direction)}</span><span>保存: ${escapeHtml(saveText)}</span></div>${latestLog ? `<div class="hudMessage">${escapeHtml(latestLog)}</div>` : ''}`;
 }
@@ -534,7 +609,24 @@ function renderFacilityToolInfo(tool) {
   const price = safeFiniteNumber(cfg.basePrice ?? cfg.fee ?? cfg.spendPerVisit, 0, 0);
   const heal = safeFiniteNumber(cfg.baseHeal ?? cfg.healPerSecond, 0, 0);
   const tags = Array.isArray(cfg.tags) ? cfg.tags.join(', ') : '';
-  return `<br>サイズ: ${tool.w}x${tool.h}<br>基本料金: ${Math.floor(price)}G<br>回復: ${Math.floor(heal)}${cfg.healPerSecond ? '/秒' : ''}<br>タグ: ${escapeHtml(tags || '-')}`;
+  const footprint = getRotatedFootprintSize(tool, gameState.ui?.directionIndex ?? 0);
+  const preview = { type: tool.id, kind: tool.kind, x: 0, y: 0, w: footprint.w, h: footprint.h, directionIndex: gameState.ui?.directionIndex ?? 0 };
+  return `<br>サイズ: ${footprint.w}x${footprint.h}<br>基本料金: ${Math.floor(price)}G<br>回復: ${Math.floor(heal)}${cfg.healPerSecond ? '/秒' : ''}<br>入口: ${escapeHtml(getDirectionSideName(getFacilityEntranceDirectionIndex(preview)))}<br>タグ: ${escapeHtml(tags || '-')}`;
+}
+
+function getSelectedFacility() {
+  const id = gameState.ui?.selectedFacilityId ?? null;
+  return id ? (gameState.world?.objects ?? []).find(object => object?.id === id && object?.kind === 'facility') ?? null : null;
+}
+
+function renderSelectedFacilityInfo() {
+  const facility = getSelectedFacility();
+  if (!facility) return '';
+  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type] ?? {};
+  const name = cfg.label ?? facility.type;
+  const direction = getDirectionSideName(getFacilityEntranceDirectionIndex(facility));
+  const connected = isEntranceConnectedToRoad(facility);
+  return `<div class="compactCard"><b>選択中の施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})<br>Entrance: ${escapeHtml(direction)}<br>Road Connected: ${connected ? 'Yes' : 'No'}<br>座標: ${facility.x}, ${facility.y}</div>`;
 }
 
 function renderBuildPanel() {
@@ -550,7 +642,8 @@ function renderBuildPanel() {
   return `<div class="buildPanel">
       <div class="buildCategories">${categoryHtml}</div>
       <div>
-        <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(CONFIG.directions[gameState.ui?.directionIndex]?.name ?? 'S')}${renderFacilityToolInfo(selected)}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
+        <div class="compactCard"><b>選択中</b><br>${escapeHtml(selected?.label ?? 'なし')}<br>配置カテゴリ: ${escapeHtml(gameState.ui?.placementCategory ?? 'facility')}<br>入口方向: ${escapeHtml(getDirectionSideName(gameState.ui?.directionIndex ?? 2))}${renderFacilityToolInfo(selected)}<div class="buildActions"><button data-action="rotate">R 回転</button><button data-action="clearTool" class="subtle">ツール解除</button></div></div>
+        ${renderSelectedFacilityInfo()}
         <div class="compactCard helpText"><b>操作</b><br>WASD/矢印: カメラ移動<br>ドラッグ: カメラ移動 / 短いクリック: 配置<br>ホイール: ズーム<br>開拓: 未開拓の草木岩を${getClearingCost()}Gで除去<br><div class="zoomBtns"><button data-action="zoomOut">−</button><button data-action="zoomIn">＋</button></div></div>
         <div class="compactCard savePanel"><b>セーブ</b><br>${escapeHtml(gameState.save?.statusText || '未保存')}<br>最終保存: ${escapeHtml(formatSaveTime(gameState.save?.lastSavedAt))}<br><button data-action="manualSave">手動保存</button></div>
       </div>
@@ -798,7 +891,9 @@ function renderFacilityProgressList() {
     const name = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type]?.label ?? facility.type;
     const levelText = isLevelableFacility(facility) ? ` Lv${getFacilityLevel(facility)} / 使用 ${getFacilityUseCount(facility)}（次:${escapeHtml(getFacilityLevelProgressText(facility))}）` : '';
     const shopText = renderFacilityShopItemSummary(facility);
-    return `${escapeHtml(name)}${levelText} / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G${shopText}`;
+    const entranceText = getDirectionSideName(getFacilityEntranceDirectionIndex(facility));
+    const roadText = isEntranceConnectedToRoad(facility) ? 'Yes' : 'No';
+    return `${escapeHtml(name)}${levelText} / Entrance: ${escapeHtml(entranceText)} / Road Connected: ${roadText} / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G${shopText}`;
   }).join('<br>');
 }
 
@@ -856,6 +951,7 @@ function clearContextSelectionIfInvalid() {
   let changed = false;
   if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) { ui.selectedSealId = null; changed = true; }
   if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) { ui.selectedDungeonId = null; changed = true; }
+  if (ui.selectedFacilityId && !(gameState.world?.objects ?? []).some(object => object?.id === ui.selectedFacilityId && object?.kind === 'facility')) { ui.selectedFacilityId = null; changed = true; }
   if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) { ui.selectedTool = null; changed = true; }
   if (ui.selectedPersonRosterId?.startsWith?.('seal:') && !getSealById(ui.selectedPersonRosterId.slice('seal:'.length))) { ui.selectedPersonRosterId = null; changed = true; }
   if (ui.selectedPersonRosterId?.startsWith?.('profile:') && !getVisitorProfileById(ui.selectedPersonRosterId.slice('profile:'.length))) { ui.selectedPersonRosterId = null; changed = true; }
