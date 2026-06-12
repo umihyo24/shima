@@ -43,15 +43,29 @@ button.subtle { background: rgba(255,255,255,.08); }
 .compactGrid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 9px; }
 .compactCard { background: rgba(255,255,255,.07); border: 1px solid rgba(255,255,255,.12); border-radius: 9px; padding: 9px 10px; line-height: 1.45; font-size: 13px; }
 .compactCard b { color: var(--accent); }
-.buildPanel { display: grid; grid-template-columns: minmax(180px, 1fr) minmax(220px, 1.25fr); gap: 12px; }
-.buildCategories { display: grid; gap: 8px; }
-.categoryButtons { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.build-panel-layout { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(300px, .9fr); gap: 12px; }
+.build-panel-left, .build-panel-right { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
+.build-panel-right { overflow: hidden; }
+.build-category-tabs { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.build-category-tabs button { min-width: 0; }
+.build-item-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-content: start; gap: 8px; padding-right: 4px; }
 .toolButton { min-width: 96px; text-align: left; }
+.buildItemButton, .managementAction { min-height: 58px; display: flex; flex-direction: column; align-items: flex-start; justify-content: center; gap: 4px; text-align: left; }
+.toolName { font-weight: 800; }
+.toolMeta { color: var(--muted); font-size: 12px; line-height: 1.25; }
+.build-info-card { flex: 0 0 auto; overflow: hidden; }
+.build-info-card.empty { display: flex; align-items: center; justify-content: center; min-height: 120px; color: var(--muted); }
+.build-info-title { display: flex; justify-content: space-between; gap: 10px; align-items: baseline; margin-bottom: 8px; }
+.build-info-title span { color: var(--muted); font-size: 12px; }
+.build-info-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; margin-bottom: 8px; }
+.build-info-row { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid rgba(255,255,255,.1); padding-bottom: 4px; font-size: 12px; }
+.build-info-row span { color: var(--muted); }
+.build-info-row b { text-align: right; }
+.build-info-section { margin-top: 7px; color: var(--muted); font-size: 13px; line-height: 1.45; }
+.build-info-section b { color: var(--text); }
+.build-info-section p { margin: 3px 0 0; }
+.selected-facility-card { flex: 0 0 auto; }
 .buildActions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
-.helpText, .savePanel { color: var(--muted); font-size: 13px; line-height: 1.55; }
-.savePanel { margin-top: 10px; padding-top: 10px; border-top: 1px solid rgba(255,255,255,.16); }
-.zoomBtns { display: flex; gap: 6px; margin-top: 7px; }
-.zoomBtns button { min-width: 42px; text-align: center; }
 .bar { height: 9px; border-radius: 99px; background: rgba(0,0,0,.35); overflow: hidden; margin: 5px 0 8px; }
 .fill { height: 100%; background: linear-gradient(90deg,#79e54c,#16b15e); }
 .sealCard { padding: 9px 10px; }
@@ -81,7 +95,8 @@ button.subtle { background: rgba(255,255,255,.08); }
   .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 0; flex: 1 1 auto; padding: 7px 4px; }
   .bottom-panel-header { padding: 9px 10px 7px; }
   .bottom-panel-content { padding: 9px; }
-  .buildPanel { grid-template-columns: 1fr; }
+  .build-panel-layout { grid-template-columns: 1fr; }
+  .build-category-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 .people-panel-content { overflow: hidden; }
 .people-panel { height: 100%; min-height: 0; display: grid; grid-template-rows: auto minmax(0, 1fr) auto; gap: 8px; }
@@ -135,3 +150,4 @@ button.subtle { background: rgba(255,255,255,.08); }
   .dungeonSummary { grid-template-columns: 1fr; gap: 7px; padding: 7px; max-width: 100%; }
   .dungeonSummaryGrid { font-size: 11px; }
 }
+.build-panel-content { overflow: hidden; }
