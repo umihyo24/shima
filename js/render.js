@@ -636,7 +636,7 @@ function getManagementPanelHeaderElement() {
 
 function renderBuildDrawer() {
   if (!bottomPanelEl) return;
-  const active = BUILD_CATEGORY_IDS.includes(gameState.ui?.activeBuildCategory) ? gameState.ui.activeBuildCategory : null;
+  const active = normalizeBuildCategory(gameState.ui?.activeBuildCategory, null);
   bottomPanelEl.hidden = !active;
   if (!active) {
     bottomPanelEl.innerHTML = '';
@@ -722,15 +722,15 @@ function renderBuildMetaRow(label, value) {
 }
 
 function renderBuildCategoryTabs() {
-  const activeCategory = gameState.ui?.buildCategory ?? 'road';
+  const activeCategory = normalizeBuildCategory(gameState.ui?.buildCategory);
   return `<div class="build-category-tabs" role="tablist" aria-label="建設カテゴリ">
-    ${BUILD_CATEGORIES.map(category => `<button type="button" role="tab" data-build-category="${escapeHtml(category.id)}" class="${category.id === activeCategory ? 'active' : ''}" aria-selected="${category.id === activeCategory ? 'true' : 'false'}">${escapeHtml(category.label)}</button>`).join('')}
+    ${BUILD_CATEGORIES.map(category => `<button type="button" role="tab" data-build-category="${escapeHtml(category.id)}" class="${category.id === activeCategory ? 'active' : ''}" aria-selected="${category.id === activeCategory ? 'true' : 'false'}">${escapeHtml(`${category.icon ? `${category.icon} ` : ''}${category.label}`)}</button>`).join('')}
   </div>`;
 }
 
 function renderBuildItemList() {
-  const activeCategory = BUILD_CATEGORY_IDS.includes(gameState.ui?.buildCategory) ? gameState.ui.buildCategory : 'road';
-  const category = BUILD_CATEGORIES.find(item => item?.id === activeCategory) ?? BUILD_CATEGORIES[0];
+  const activeCategory = normalizeBuildCategory(gameState.ui?.buildCategory);
+  const category = BUILD_CATEGORIES.find(item => item?.id === activeCategory) ?? BUILD_CATEGORIES[0] ?? null;
   const buttons = (category?.toolIds ?? []).map(toolId => {
     if (toolId === 'rotate') return `<button class="toolButton managementAction" data-action="rotate"><span class="toolName">↻ 回転</span><span class="toolMeta">選択中の施設入口、または配置プレビューを回転します。</span></button>`;
     const tool = getBuildToolDef(toolId);
@@ -756,7 +756,7 @@ function renderSelectedBuildInfo() {
     ? getDirectionSideName(getFacilityEntranceDirectionIndex({ type: selected.id, kind: selected.kind, x: 0, y: 0, w: footprint.w, h: footprint.h, directionIndex: gameState.ui?.directionIndex ?? 0 }))
     : '-';
   const rows = [
-    renderBuildMetaRow('カテゴリ', getBuildCategoryLabel(selected.category ?? getBuildCategoryForTool(selected))),
+    renderBuildMetaRow('カテゴリ', getBuildCategoryLabel(getBuildCategoryForTool(selected))),
     renderBuildMetaRow('サイズ', `${footprint.w}x${footprint.h}`),
     renderBuildMetaRow('コスト', formatBuildCost(selected)),
     renderBuildMetaRow('入口方向', direction),
@@ -792,7 +792,7 @@ function renderSelectedFacilityInfo() {
 }
 
 function renderBuildPanel() {
-  const activeCategory = BUILD_CATEGORY_IDS.includes(gameState.ui?.buildCategory) ? gameState.ui.buildCategory : 'road';
+  const activeCategory = normalizeBuildCategory(gameState.ui?.buildCategory);
   if (gameState.ui && gameState.ui.buildCategory !== activeCategory) gameState.ui.buildCategory = activeCategory;
   return `<div class="build-panel-layout">
     <div class="build-panel-left">
@@ -1209,7 +1209,8 @@ function clearContextSelectionIfInvalid() {
   if (ui.selectedPersonRosterId?.startsWith?.('profile:') && !getVisitorProfileById(ui.selectedPersonRosterId.slice('profile:'.length))) { ui.selectedPersonRosterId = null; changed = true; }
   if (ui.activeManagementPanel === 'seals') { ui.activeManagementPanel = 'people'; changed = true; }
   if (ui.activeManagementPanel && !MANAGEMENT_PANELS.some(panel => panel.id === ui.activeManagementPanel)) { ui.activeManagementPanel = null; changed = true; }
-  if (ui.activeBuildCategory && !BUILD_CATEGORY_IDS.includes(ui.activeBuildCategory)) { ui.activeBuildCategory = null; changed = true; }
+  if (ui.activeBuildCategory) { const normalized = normalizeBuildCategory(ui.activeBuildCategory, null); if (normalized !== ui.activeBuildCategory) { ui.activeBuildCategory = normalized; changed = true; } }
+  if (ui.buildCategory !== undefined) { const normalizedBuildCategory = normalizeBuildCategory(ui.buildCategory); if (normalizedBuildCategory !== ui.buildCategory) { ui.buildCategory = normalizedBuildCategory; changed = true; } }
   return changed;
 }
 
