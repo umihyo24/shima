@@ -38,6 +38,8 @@ const BUILD_CATEGORIES = Object.freeze([
 const BUILD_CATEGORY_IDS = Object.freeze(BUILD_CATEGORIES.map(category => category.id));
 
 const SEAL_LIST_FILTERS = Object.freeze(['all', 'resident', 'activeVisitors', 'unlockedVisitors', 'lockedVisitors', 'hunting', 'questing', 'resting']);
+const INSPECTOR_TYPES = Object.freeze(['seal', 'facility', 'dungeon']);
+
 const SEAL_LIST_SORT_KEYS = Object.freeze(['name', 'type', 'hpRate', 'level', 'favor', 'state', 'stayTime', 'hunts', 'weapon', 'armor', 'accessory']);
 
 function getSealListState() {
@@ -49,14 +51,50 @@ function getSealListState() {
   return gameState.ui.sealList;
 }
 
+function getSelectedSeal() { return getSealById(gameState.ui?.selectedSealId) ?? null; }
+
+function openInspector(type, id) {
+  if (!gameState.ui) return false;
+  const normalizedType = INSPECTOR_TYPES.includes(type) ? type : null;
+  const normalizedId = id == null ? null : String(id);
+  if (!normalizedType || !normalizedId) return closeInspector();
+  gameState.ui.inspector = { type: normalizedType, id: normalizedId, open: true };
+  markUIDirty('selection');
+  return true;
+}
+
+function closeInspector() {
+  if (!gameState.ui) return false;
+  const wasOpen = gameState.ui.inspector?.open === true || gameState.ui.inspector?.type || gameState.ui.inspector?.id;
+  gameState.ui.inspector = { type: null, id: null, open: false };
+  if (wasOpen) markUIDirty('selection');
+  return wasOpen;
+}
+
+function selectSeal(sealId, source = 'unknown') {
+  const seal = getSealById(sealId);
+  if (!gameState.ui || !seal?.id) return false;
+  gameState.ui.selectedSealId = seal.id;
+  gameState.ui.selectedPersonRosterId = `seal:${seal.id}`;
+  gameState.ui.selectedDungeonId = null;
+  gameState.ui.selectedFacilityId = null;
+  if (gameState.ui.selectedTool) gameState.ui.selectedTool = null;
+  openInspector('seal', seal.id);
+  markUIDirty('selection');
+  renderUI();
+  return true;
+}
+
 function selectPersonByRosterId(rosterId) {
   const id = String(rosterId ?? '');
   if (!gameState.ui || !id) return;
   const sealId = id.startsWith('seal:') ? id.slice('seal:'.length) : null;
   gameState.ui.selectedPersonRosterId = id;
-  gameState.ui.selectedSealId = sealId && getSealById(sealId) ? sealId : null;
+  if (sealId && selectSeal(sealId, 'people')) return;
+  gameState.ui.selectedSealId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  closeInspector();
   markUIDirty('selection');
   renderUI();
 }
@@ -246,7 +284,7 @@ function handleUiAction(event, options = {}) {
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
   else if (action === 'close-panel' || action === 'closeManagement') closeManagementPanel();
   else if (action === 'closeBuild' || action === 'closeBottom') closeBuildDrawer();
-  else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; gameState.ui.selectedPersonRosterId = null; markUIDirty('selection'); renderUI(); }
+  else if (action === 'closeInspector' || action === 'closeSeal') { closeInspector(); clearContextSelection(); renderUI(); }
   else if (dungeonAction === 'start') startDungeon(actionTarget.dataset?.dungeonId);
   else if (dungeonAction === 'select') { gameState.ui.selectedDungeonId = actionTarget.dataset?.dungeonId ?? null; markUIDirty('dungeon'); renderUI(); }
   else if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; markUIDirty('selection'); renderUI(); }
@@ -271,16 +309,17 @@ function setupBottomPanelDelegation() { return bottomPanelEl ?? null; }
 function isPointerOverUI(event) {
   const target = event?.target;
   if (!target?.closest) return false;
-  return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .managementButtons, .managementPanel, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .start'));
+  return Boolean(target.closest('.hud, .topHud, .speed-panel, .speedHud, .managementButtons, .managementPanel, .bottom-tabs, .bottomTabBar, .bottom-panel, .bottomPanel, .inspectorPanel, .start'));
 }
 
 function clearContextSelection() {
   if (!gameState.ui) return false;
-  const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId);
+  const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId || gameState.ui.inspector?.open);
   gameState.ui.selectedSealId = null;
   gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  closeInspector();
   if (hadSelection) markUIDirty('selection');
   return hadSelection;
 }
@@ -290,9 +329,10 @@ function cancelCurrentAction(reason = 'cancel') {
   if (gameState.ui.roadEdit?.active) { clearRoadEdit(); markUIDirty('tool'); renderUI(); return true; }
   if (gameState.ui.moveEdit?.active) { cancelMoveFacility(); markUIDirty('tool'); renderUI(); return true; }
   if (gameState.ui.selectedTool) { clearSelectedTool(); return true; }
-  if (clearContextSelection()) { renderUI(); return true; }
-  if (gameState.ui.activeBuildCategory) { closeBuildDrawer(); return true; }
+  if (gameState.ui.inspector?.open) { closeInspector(); clearContextSelection(); renderUI(); return true; }
   if (gameState.ui.activeManagementPanel) { closeManagementPanel(); return true; }
+  if (gameState.ui.activeBuildCategory) { closeBuildDrawer(); return true; }
+  if (clearContextSelection()) { renderUI(); return true; }
   return false;
 }
 
@@ -307,7 +347,7 @@ function bindUIEvents() {
   startBtn?.addEventListener('click', event => { event.stopPropagation(); startNewGame(); });
   loadBtn?.addEventListener('click', event => { event.stopPropagation(); loadGame(); });
 
-  const uiContainers = [statsEl, speedHudEl, managementButtonsEl, managementPanelEl, bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
+  const uiContainers = [statsEl, speedHudEl, managementButtonsEl, managementPanelEl, document.getElementById('inspectorPanel'), bottomTabBarEl, bottomPanelEl, startScreen].filter(Boolean);
   for (const element of uiContainers) {
     element.addEventListener('pointerup', handleUiPointerUp);
     element.addEventListener('click', handleUIRootClick);
@@ -430,11 +470,7 @@ function bindInputEvents() {
       return;
     }
     if (clickedSeal?.id) {
-      gameState.ui.selectedSealId = clickedSeal.id;
-      gameState.ui.selectedPersonRosterId = `seal:${clickedSeal.id}`;
-      gameState.ui.selectedDungeonId = null;
-      gameState.ui.selectedFacilityId = null;
-      openManagementPanel('people');
+      selectSeal(clickedSeal.id, 'canvas');
       return;
     }
     if (!isPlacementModeActive()) {
@@ -443,23 +479,25 @@ function bindInputEvents() {
         gameState.ui.selectedFacilityId = clickedObject.id;
         gameState.ui.selectedSealId = null;
         gameState.ui.selectedPersonRosterId = null;
+        closeInspector();
         gameState.ui.selectedDungeonId = null;
         if (gameState.ui) gameState.ui.activeBuildCategory = gameState.ui.buildCategory ?? 'facility';
         markUIDirty('selection');
         renderUI();
         return;
       }
-      const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId);
+      const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId || gameState.ui.inspector?.open);
       gameState.ui.selectedSealId = null;
       gameState.ui.selectedPersonRosterId = null;
       gameState.ui.selectedDungeonId = null;
       gameState.ui.selectedFacilityId = null;
+      closeInspector();
       if (hadSelection) markUIDirty('selection');
     }
     renderUI();
   });
 
-  canvas.addEventListener('contextmenu', e => { cancelCurrentAction('contextmenu'); e.preventDefault(); });
+  window.addEventListener('contextmenu', e => { if (e.target === canvas || isPointerOverUI(e)) { e.preventDefault(); e.stopPropagation(); cancelCurrentAction('rightClick'); } });
   canvas.addEventListener('wheel', e => {
     if (isPointerOverUI(e)) return;
     e.preventDefault();

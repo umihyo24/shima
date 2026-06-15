@@ -143,6 +143,7 @@ function applyLoadedGameState(data) {
   gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  gameState.ui.inspector = { type: null, id: null, open: false };
   gameState.world.tiles = data?.version < 4 ? generateInitialMap() : normalizeTiles(loaded.world?.tiles);
   protectOpenCorridors(gameState.world);
   gameState.world.roads = normalizeRoads(loaded.world?.roads);
