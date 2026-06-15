@@ -25,6 +25,7 @@ function getSerializableGameState() {
     dungeonProgress: cloneSerializable(normalizeDungeonProgress(gameState.dungeonProgress), { unlockedDungeonIds: [], clearCounts: {}, firstClearRewardsClaimed: {} }),
     relicInventory: cloneSerializable(normalizeRelicInventory(gameState.relicInventory), []),
     shopCatalog: cloneSerializable(normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory), { unlockedItemIds: [], discoveredAt: {} }),
+    facilityProgress: cloneSerializable(normalizeFacilityProgress(gameState.facilityProgress), {}),
     village: { knownness: safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0), clearCount: clampInteger(gameState.village?.clearCount, 0, Number.MAX_SAFE_INTEGER, 0) },
     time: { timeScale: clampNumber(gameState.time?.timeScale, 0, Math.max(...CONFIG.TIME.SPEED_OPTIONS), CONFIG.TIME.DEFAULT_SCALE) },
     calendar: {
@@ -143,12 +144,16 @@ function applyLoadedGameState(data) {
   gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  gameState.ui.facilityInspectorOpen = false;
   gameState.ui.inspector = { type: null, id: null, open: false };
   gameState.world.tiles = data?.version < 4 ? generateInitialMap() : normalizeTiles(loaded.world?.tiles);
   protectOpenCorridors(gameState.world);
   gameState.world.roads = normalizeRoads(loaded.world?.roads);
   gameState.world.objects = normalizeObjects([...(loaded.world?.facilities ?? []), ...(loaded.world?.decorations ?? []), ...(loaded.world?.objects ?? [])]);
   gameState.world.nextObjectId = Math.max(nextObjectNumber(gameState.world.objects), clampInteger(loaded.world?.nextObjectId, 1, Number.MAX_SAFE_INTEGER, 1));
+  gameState.facilityProgress = normalizeFacilityProgress(loaded.facilityProgress);
+  if (!loaded.facilityProgress || typeof loaded.facilityProgress !== 'object') migratePlacedFacilityProgress();
+  for (const object of gameState.world.objects ?? []) normalizeFacilityFields(object);
   gameState.seals = normalizeSeals(loaded.seals);
   for (const seal of gameState.seals ?? []) clearLegacyReturnTarget(seal);
   enforceSingleResidentSeal();

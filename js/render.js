@@ -1130,6 +1130,18 @@ function renderInspector() {
     element.innerHTML = '';
     return;
   }
+  if (inspector.type === 'facility') {
+    const facility = getFacilityById(inspector.id);
+    if (!facility) {
+      clearFacilitySelection();
+      element.hidden = true;
+      element.innerHTML = '';
+      return;
+    }
+    element.hidden = false;
+    element.innerHTML = renderFacilityInspector(facility);
+    return;
+  }
   if (inspector.type === 'seal') {
     const seal = getSealById(inspector.id);
     if (!seal) {
@@ -1144,6 +1156,57 @@ function renderInspector() {
   }
   element.hidden = false;
   element.innerHTML = `<div class="inspectorHeader"><b>インスペクタ</b><button data-action="closeInspector" class="subtle">閉じる</button></div><div class="mutedText">この対象の詳細表示は未対応です。</div>`;
+}
+
+
+function renderFacilityInspector(facility) {
+  const def = getFacilityDefinition(facility?.type) ?? {};
+  const name = def.name ?? def.label ?? facility?.type ?? '不明な施設';
+  const category = def.category ?? getTool(facility?.type)?.category ?? facility?.kind ?? 'facility';
+  const effect = def.effectText ?? getTool(facility?.type)?.effectText ?? '効果情報はありません。';
+  const progress = ensureFacilityProgress(facility?.type);
+  const size = `${Math.max(1, safeFiniteNumber(facility?.w, def.w ?? 1, 1))}x${Math.max(1, safeFiniteNumber(facility?.h, def.h ?? 1, 1))}`;
+  const status = formatFacilityStatus(facility);
+  return `<div class="inspectorHeader"><div><div class="inspectorKicker">${escapeHtml(category)}</div><h2>${escapeHtml(name)}</h2></div><button data-action="closeInspector" class="subtle">閉じる</button></div>
+    <section><h3>概要</h3><div class="inspectorInfoGrid"><span>種類</span><b>${escapeHtml(facility?.type ?? '-')}</b><span>サイズ</span><b>${escapeHtml(size)}</b><span>状態</span><b>${escapeHtml(status)}</b><span>共有利用</span><b>${Math.floor(safeFiniteNumber(progress.totalUses, 0, 0))}</b></div><p class="mutedText">${escapeHtml(effect)}</p></section>
+    ${renderFacilityProgressInspectorSection(facility)}
+    ${renderFacilityShopGoodsInspectorSection(facility)}
+    <div class="buildActions"><button data-action="moveFacility">移動</button><button data-action="deleteFacility" class="subtle">削除</button></div>`;
+}
+
+function formatFacilityStatus(facility) {
+  if (!facility) return '不明';
+  const users = (gameState.seals ?? []).filter(seal => seal?.targetId === facility.id || seal?.targetFacilityId === facility.id).length;
+  return users > 0 ? `${users}匹が利用/移動中` : '待機中';
+}
+
+function renderFacilityProgressInspectorSection(facility) {
+  const def = getFacilityDefinition(facility?.type) ?? {};
+  const progress = ensureFacilityProgress(facility?.type);
+  if (!isLevelableFacility(facility)) {
+    return `<section><h3>効果</h3><div class="inspectorInfoGrid"><span>レベル</span><b>固定効果</b><span>容量</span><b>${escapeHtml(def.capacity ?? (def.useSlots?.length ?? '-'))}</b><span>利用</span><b>${Math.floor(safeFiniteNumber(progress.totalUses, 0, 0))}</b></div><p class="mutedText">${escapeHtml(def.notes ?? 'レベルなし')}</p></section>`;
+  }
+  const threshold = getNextFacilityLevelThreshold(facility);
+  const next = Number.isFinite(threshold) ? `${Math.floor(safeFiniteNumber(progress.totalUses, 0, 0))}/${threshold}` : 'Max Level';
+  const quality = 1 + Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(CONFIG.FACILITY_LEVELS?.healingMultiplierPerLevel, 0, 0);
+  return `<section><h3>共有レベル</h3><div class="inspectorInfoGrid"><span>Lv</span><b>${getFacilityLevel(facility)}</b><span>次</span><b>${escapeHtml(next)}</b><span>料金</span><b>${Math.floor(getFacilityPrice(facility))}G</b><span>品質</span><b>x${quality.toFixed(2)}</b><span>回復</span><b>${Math.ceil(getFacilityHealAmount(facility))}</b><span>収益倍率</span><b>x${getFacilityIncomeMultiplier(facility).toFixed(2)}</b></div></section>`;
+}
+
+function renderFacilityShopGoodsInspectorSection(facility) {
+  const soldTypes = CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES?.[facility?.type] ?? [];
+  if (!soldTypes.length) return '';
+  const items = getUnlockedShopItemsForFacility(facility);
+  const rows = items.length ? items.map(item => `<li><b>${escapeHtml(item?.name ?? item?.id ?? '不明')}</b> ${Math.floor(safeFiniteNumber(item?.price, 0, 0))}G ${escapeHtml(formatItemStats(item))}</li>`).join('') : '<li>解放済み商品なし</li>';
+  return `<section><h3>販売商品</h3><div class="mutedText">商品解放型</div><ul class="facilityGoodsList">${rows}</ul></section>`;
+}
+
+function formatItemStats(item) {
+  const parts = [];
+  if (safeFiniteNumber(item?.attackBonus, 0, 0)) parts.push(`攻+${item.attackBonus}`);
+  if (safeFiniteNumber(item?.defenseBonus, 0, 0)) parts.push(`防+${item.defenseBonus}`);
+  if (safeFiniteNumber(item?.hpBonus, 0, 0)) parts.push(`HP+${item.hpBonus}`);
+  if (safeFiniteNumber(item?.favorBonus, 0, 0)) parts.push(`好感+${item.favorBonus}`);
+  return parts.join(' / ');
 }
 
 function renderSealInspector(seal) {
@@ -1201,6 +1264,7 @@ function clearContextSelectionIfInvalid() {
   const ui = gameState.ui ?? {};
   let changed = false;
   if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) { ui.selectedSealId = null; changed = true; }
+  if (ui.inspector?.open && ui.inspector?.type === 'facility' && !getFacilityById(ui.inspector?.id)) { ui.inspector = { type: null, id: null, open: false }; ui.facilityInspectorOpen = false; changed = true; }
   if (ui.inspector?.open && ui.inspector?.type === 'seal' && !getSealById(ui.inspector?.id)) { ui.inspector = { type: null, id: null, open: false }; changed = true; }
   if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) { ui.selectedDungeonId = null; changed = true; }
   if (ui.selectedFacilityId && !(gameState.world?.objects ?? []).some(object => object?.id === ui.selectedFacilityId && object?.kind === 'facility')) { ui.selectedFacilityId = null; changed = true; }
