@@ -69,6 +69,7 @@ function createDefaultVisitorProfiles() {
       id: String(profile?.id ?? ''),
       name: String(profile?.name ?? CONFIG.resident.defaultName),
       personality: String(profile?.personality ?? 'balanced'),
+      sizeClass: normalizeSealSizeClass(profile?.sizeClass),
       unlockedAtKnownness: threshold,
       baseStats: normalizeVisitorBaseStats(profile?.baseStats),
       level: clampInteger(profile?.level, 1, Number.MAX_SAFE_INTEGER, 1),
@@ -463,6 +464,7 @@ function normalizeSeal(s, index) {
     name: String(s?.name || (isVisitor ? (getVisitorProfileById(s?.profileId)?.name ?? CONFIG.resident.defaultName) : CONFIG.resident.defaultName)),
     personality: String(s?.personality || (isVisitor ? (getVisitorProfileById(s?.profileId)?.personality ?? 'balanced') : 'balanced')),
     type: isVisitor ? 'visitor' : 'resident',
+    sizeClass: normalizeSealSizeClass(s?.sizeClass ?? (isVisitor ? getVisitorProfileById(s?.profileId)?.sizeClass : null)),
     assetKey: String(s?.assetKey || (isVisitor ? assetKeyForVisitorProfile(s?.profileId) : 'seals.resident')),
     facing: s?.facing === 'right' ? 'right' : 'left',
     x: safeFiniteNumber(s?.x, entry.x),
@@ -536,6 +538,7 @@ function normalizeVisitorProfiles(profiles) {
     const loaded = saved.find(p => p?.id === defaultProfile.id) ?? {};
     return {
       ...defaultProfile,
+      sizeClass: normalizeSealSizeClass(defaultProfile.sizeClass),
       baseStats: normalizeVisitorBaseStats(defaultProfile.baseStats),
       level: clampInteger(loaded?.level, 1, Number.MAX_SAFE_INTEGER, defaultProfile.level),
       exp: safeFiniteNumber(loaded?.exp, defaultProfile.exp, 0),
@@ -560,9 +563,14 @@ function getSealById(id) {
   return (gameState.seals ?? []).find(seal => seal?.id === id) ?? null;
 }
 
+function normalizeSealSizeClass(sizeClass) {
+  return sizeClass === 'giant' ? 'giant' : 'normal';
+}
+
 function assetKeyForVisitorProfile(profileId) {
   const id = String(profileId || '');
   if (id.includes('kurakake')) return 'seals.kurakake';
+  if (id.includes('jumbo')) return 'seals.jumbo';
   if (id.includes('tategoto')) return 'seals.tategoto';
   if (id.includes('goma')) return 'seals.goma';
   return 'seals.resident';
@@ -1986,6 +1994,7 @@ function sanitizeActiveVisitorSeals() {
     if (!profile) continue;
     seal.name = String(seal.name || profile.name || CONFIG.resident.defaultName);
     seal.personality = String(seal.personality || profile.personality || 'balanced');
+    seal.sizeClass = normalizeSealSizeClass(seal.sizeClass ?? profile.sizeClass);
     seal.assetKey = String(seal.assetKey || assetKeyForVisitorProfile(profile.id));
     if (seenProfileIds.has(profile.id)) {
       writeBackVisitorProfile(seal);
