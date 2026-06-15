@@ -17,7 +17,90 @@ function render() {
   ctx.save();
   ctx.scale(devicePixelRatioClamped(), devicePixelRatioClamped());
   drawMinimap();
+  if (gameState.phase === CONFIG.phase.playing) renderNextGoalPanel(ctx);
   ctx.restore();
+}
+
+
+function fillRoundedRect(context, x, y, width, height, radius) {
+  const safeRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+  context.closePath();
+  context.fill();
+}
+
+function strokeRoundedRect(context, x, y, width, height, radius) {
+  const safeRadius = Math.max(0, Math.min(radius, width / 2, height / 2));
+  context.beginPath();
+  context.moveTo(x + safeRadius, y);
+  context.lineTo(x + width - safeRadius, y);
+  context.quadraticCurveTo(x + width, y, x + width, y + safeRadius);
+  context.lineTo(x + width, y + height - safeRadius);
+  context.quadraticCurveTo(x + width, y + height, x + width - safeRadius, y + height);
+  context.lineTo(x + safeRadius, y + height);
+  context.quadraticCurveTo(x, y + height, x, y + height - safeRadius);
+  context.lineTo(x, y + safeRadius);
+  context.quadraticCurveTo(x, y, x + safeRadius, y);
+  context.closePath();
+  context.stroke();
+}
+
+function renderNextGoalPanel(context) {
+  const panel = CONFIG.NEXT_GOAL_PANEL ?? {};
+  const x = safeFiniteNumber(panel.x, 0, 0);
+  const y = safeFiniteNumber(panel.y, 0, 0);
+  const width = safeFiniteNumber(panel.width, 1, 1);
+  const height = safeFiniteNumber(panel.height, 1, 1);
+  const padding = safeFiniteNumber(panel.padding, 0, 0);
+  const radius = safeFiniteNumber(panel.radius, 0, 0);
+  const lineHeight = safeFiniteNumber(panel.lineHeight, 1, 1);
+  const shadowOffsetX = safeFiniteNumber(panel.shadowOffsetX, 0, 0);
+  const shadowOffsetY = safeFiniteNumber(panel.shadowOffsetY, 0, 0);
+  const borderWidth = safeFiniteNumber(panel.borderWidth, 1, 0);
+  const knownness = Math.floor(safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0));
+  const nextUnlock = getNextFameUnlock();
+
+  context.save();
+  context.fillStyle = panel.shadowColor ?? 'rgba(0,0,0,.22)';
+  fillRoundedRect(context, x + shadowOffsetX, y + shadowOffsetY, width, height, radius);
+  context.fillStyle = panel.background ?? 'rgba(12,43,56,.82)';
+  fillRoundedRect(context, x, y, width, height, radius);
+  context.strokeStyle = panel.border ?? 'rgba(180,240,255,.72)';
+  context.lineWidth = borderWidth;
+  strokeRoundedRect(context, x + borderWidth / 2, y + borderWidth / 2, width - borderWidth, height - borderWidth, radius);
+
+  context.textBaseline = 'top';
+  context.font = panel.titleFont ?? '700 15px system-ui';
+  context.fillStyle = panel.titleColor ?? '#fff8ba';
+  context.fillText('次の目標', x + padding, y + padding);
+
+  context.font = panel.bodyFont ?? '13px system-ui';
+  if (!nextUnlock) {
+    context.fillStyle = panel.textColor ?? '#f5fbff';
+    context.fillText('すべての発見済み', x + padding, y + padding + lineHeight);
+    context.fillText('島をさらに発展させよう', x + padding, y + padding + lineHeight * 2);
+    context.restore();
+    return;
+  }
+
+  const required = Math.floor(safeFiniteNumber(nextUnlock.requiredKnownness, knownness, 0));
+  const remaining = Math.max(0, required - knownness);
+  const name = getUnlockDisplayName(nextUnlock);
+  const label = getUnlockTypeLabel(nextUnlock);
+  context.fillStyle = panel.textColor ?? '#f5fbff';
+  context.fillText(`知名度 ${knownness} / ${required}`, x + padding, y + padding + lineHeight);
+  context.fillStyle = panel.accentColor ?? '#aef3ff';
+  context.fillText(`あと${remaining}で「${name}」${label}`, x + padding, y + padding + lineHeight * 2);
+  context.restore();
 }
 
 function drawWorld() {

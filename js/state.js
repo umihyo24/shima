@@ -2127,12 +2127,68 @@ function getNextUnlockProfile() {
     .sort((a, b) => safeFiniteNumber(a.unlockedAtKnownness, 0, 0) - safeFiniteNumber(b.unlockedAtKnownness, 0, 0))[0] ?? null;
 }
 
+
+function getUnlockRequiredKnownness(unlock) {
+  return safeFiniteNumber(unlock?.requiredKnownness ?? unlock?.knownnessRequired ?? unlock?.unlockedAtKnownness, Number.NaN, 0);
+}
+
+function getUnlockDisplayName(unlock) {
+  const target = unlock?.target ?? unlock;
+  const name = String(target?.name ?? target?.label ?? target?.id ?? '').trim();
+  if (unlock?.type === 'dungeon') {
+    const level = clampInteger(target?.level, 1, Number.MAX_SAFE_INTEGER, 1);
+    return name ? `${name} Lv${level}` : `ダンジョン Lv${level}`;
+  }
+  return name || '新しい発見';
+}
+
+function getUnlockTypeLabel(unlock) {
+  if (unlock?.type === 'visitor') return '来訪';
+  if (unlock?.type === 'dungeon') return '解放';
+  if (unlock?.type === 'item') return '入荷';
+  if (unlock?.type === 'facility') return '解放';
+  return '解放';
+}
+
+function createFameUnlockCandidate(type, target, requiredKnownness, priority) {
+  const required = safeFiniteNumber(requiredKnownness, Number.NaN, 0);
+  if (!target || !Number.isFinite(required)) return null;
+  return { type, target, requiredKnownness: required, priority };
+}
+
+function getNextFameUnlock() {
+  const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
+  const candidates = [];
+
+  for (const profile of gameState.visitorProfiles ?? []) {
+    const required = safeFiniteNumber(profile?.unlockedAtKnownness, Number.NaN, 0);
+    if (profile && !isVisitorProfileUnlocked(profile) && required > knownness) candidates.push(createFameUnlockCandidate('visitor', profile, required, 1));
+  }
+
+  for (const dungeon of CONFIG.DUNGEONS?.definitions ?? []) {
+    const required = safeFiniteNumber(dungeon?.knownnessRequired, Number.NaN, 0);
+    if (dungeon && !isDungeonUnlocked(dungeon) && required > knownness) candidates.push(createFameUnlockCandidate('dungeon', dungeon, required, 2));
+  }
+
+  const unlockedItemIds = new Set((gameState.shopCatalog?.unlockedItemIds ?? []).map(String));
+  for (const item of Object.values(CONFIG.ITEMS ?? {})) {
+    const required = getUnlockRequiredKnownness(item);
+    if (item && !unlockedItemIds.has(String(item.id ?? '')) && required > knownness) candidates.push(createFameUnlockCandidate('item', item, required, 3));
+  }
+
+  const builtFacilityTypes = new Set((gameState.world?.objects ?? []).filter(object => object?.kind === 'facility').map(object => String(object.type ?? '')));
+  for (const tool of CONFIG.tools ?? []) {
+    const required = getUnlockRequiredKnownness(tool);
+    if (tool?.kind === 'facility' && !builtFacilityTypes.has(String(tool.id ?? '')) && required > knownness) candidates.push(createFameUnlockCandidate('facility', tool, required, 4));
+  }
+
+  return candidates.filter(Boolean).sort((a, b) => (a.requiredKnownness - b.requiredKnownness) || (a.priority - b.priority))[0] ?? null;
+}
+
 function getNextKnownnessGoal() {
   const knownness = safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0);
-  const profileGoal = getNextUnlockProfile()?.unlockedAtKnownness;
-  const thresholdGoal = (CONFIG.KNOWNNESS?.UNLOCK_THRESHOLDS ?? []).map(Number).filter(value => Number.isFinite(value) && value > knownness).sort((a, b) => a - b)[0];
-  const goals = [profileGoal, thresholdGoal].map(Number).filter(Number.isFinite);
-  return goals.length > 0 ? Math.min(...goals) : Math.max(knownness, 0);
+  const nextUnlock = getNextFameUnlock();
+  return nextUnlock ? safeFiniteNumber(nextUnlock.requiredKnownness, knownness, 0) : Math.max(knownness, 0);
 }
 
 function isVisitorProfileUnlocked(profile) {

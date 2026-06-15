@@ -111,6 +111,11 @@ const CONFIG = Object.freeze({
   } },
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   KNOWNNESS: { UNLOCK_THRESHOLDS: [100, 200, 300, 400, 500], PANEL_WIDTH: 210, PANEL_HEIGHT: 74, PANEL_MARGIN: 18 },
+  NEXT_GOAL_PANEL: {
+    x: 16, y: 80, width: 260, height: 88, padding: 10, radius: 12, shadowOffsetX: 3, shadowOffsetY: 4, borderWidth: 1,
+    titleFont: '700 15px system-ui', bodyFont: '13px system-ui', lineHeight: 20,
+    background: 'rgba(12, 43, 56, .82)', border: 'rgba(180, 240, 255, .72)', titleColor: '#fff8ba', textColor: '#f5fbff', accentColor: '#aef3ff', shadowColor: 'rgba(0, 0, 0, .22)'
+  },
   knownness: { initial: 0, huntRewardPerMonthlyHunt: 4, monthlyBaseReward: 2, satisfyingVisitReward: 3, duplicateRelicReward: 1 },
   movement: { roadCost: 1, buildableCost: 4, outsideCost: 5, waterCost: 3, maxPathNodes: 2500, pathReachDistance: 8, maxWaypointStepsPerFrame: 24, fallbackWarnCooldownMs: 60000, directFallbackReasons: ['rescue', 'carry', 'dungeon-entrance', 'dungeon-return'] },
   timing: { targetFps: 60, maxDt: 0.05, uiMs: 120 },
