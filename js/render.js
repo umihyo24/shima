@@ -530,12 +530,14 @@ function renderUI() {
     if (shouldUpdateHud) {
       renderTopHud();
       renderSpeedHud();
+      if (!shouldUpdatePanel && gameState.ui?.inspector?.open) renderInspector();
     }
     if (shouldUpdatePanel) {
       renderBuildBar();
       renderBuildDrawer();
       renderManagementButtons();
       renderManagementPanel();
+      renderInspector();
     }
     updateToolButtons();
     if (shouldUpdateHud) gameState.ui.needsHudUpdate = false;
@@ -660,7 +662,7 @@ function renderManagementButtons() {
 
 function getManagementPanelMeta(panelId) {
   const meta = {
-    people: { title: '人物', hint: 'アザラシ一覧・選択詳細' },
+    people: { title: '人物', hint: '行をクリックすると詳細インスペクタを表示します' },
     dungeons: { title: 'ダンジョン', hint: '選択中ダンジョンと攻略状況' },
     progress: { title: '発展', hint: '知名度と解放状況' }
   };
@@ -816,7 +818,7 @@ function renderPeoplePanel() {
   return `<div class="people-panel">
     <div class="people-controls"><div class="people-filter-buttons">${filters}</div><div class="people-counts">訪問中: ${activeVisitors} / 解放済み: ${unlockedVisitors} / 登録: ${(gameState.visitorProfiles ?? []).length}</div></div>
     ${renderPeopleTable(rows)}
-    ${renderSelectedPersonDetail(getSelectedPerson())}
+    <div class="people-list-hint">行をクリックすると詳細インスペクタを表示します</div>
   </div>`;
 }
 
@@ -1114,6 +1116,68 @@ function renderProgressPanel() {
     </div>`;
 }
 
+
+function getInspectorElement() { return document.getElementById('inspectorPanel'); }
+
+function renderInspector() {
+  const element = getInspectorElement();
+  if (!element) return;
+  const inspector = gameState.ui?.inspector ?? { open: false, type: null, id: null };
+  if (!inspector.open || !inspector.type || !inspector.id) {
+    element.hidden = true;
+    element.innerHTML = '';
+    return;
+  }
+  if (inspector.type === 'seal') {
+    const seal = getSealById(inspector.id);
+    if (!seal) {
+      closeInspector();
+      element.hidden = true;
+      element.innerHTML = '';
+      return;
+    }
+    element.hidden = false;
+    element.innerHTML = renderSealInspector(seal);
+    return;
+  }
+  element.hidden = false;
+  element.innerHTML = `<div class="inspectorHeader"><b>インスペクタ</b><button data-action="closeInspector" class="subtle">閉じる</button></div><div class="mutedText">この対象の詳細表示は未対応です。</div>`;
+}
+
+function renderSealInspector(seal) {
+  const stats = getSealEffectiveStats(seal);
+  const maxHp = Math.max(1, safeFiniteNumber(stats.maxHp, seal?.maxHp ?? CONFIG.seal.maxHp, 1));
+  const hp = clampNumber(safeFiniteNumber(seal?.hp, 0, 0), 0, maxHp, 0);
+  const hpRate = Math.max(0, Math.min(100, hp / maxHp * 100));
+  const typeLabel = seal?.type === 'resident' ? '住民' : '訪問者';
+  const icon = seal?.type === 'resident' ? '🦭' : '🌊🦭';
+  const stay = seal?.type === 'visitor' ? `<div class="inspectorInfoGrid"><span>滞在</span><b>${formatStayTime(seal)}</b><span>訪問狩猟</span><b>${Math.floor(safeFiniteNumber(seal?.huntsThisVisit, 0, 0))}</b><span>訪問施設</span><b>${Math.floor(safeFiniteNumber(seal?.facilitiesUsedThisVisit, 0, 0))}</b><span>帰宅希望</span><b>${seal?.wantsToLeave ? 'あり' : 'なし'}</b></div>` : '';
+  const targetText = formatSealTarget(seal) || 'なし';
+  return `<div class="inspectorHeader"><div><div class="inspectorKicker">${escapeHtml(typeLabel)}</div><h2>${escapeHtml(seal?.name ?? '不明')}</h2></div><button data-action="closeInspector" class="subtle">閉じる</button></div>
+    <div class="sealInspectorTop"><div class="sealInspectorIcon" aria-hidden="true">${icon}</div><div><div class="sealInspectorLevel">Lv ${Math.floor(safeFiniteNumber(seal?.level, 1, 1))} / ${escapeHtml(formatSealState(seal))}</div><div class="hpText">HP ${Math.ceil(hp)} / ${Math.ceil(maxHp)}</div><div class="bar"><div class="fill" style="width:${hpRate}%"></div></div></div></div>
+    <section><h3>ステータス</h3><div class="inspectorInfoGrid">
+      <span>好感度</span><b>${Math.floor(safeFiniteNumber(seal?.favor, 0, 0))}</b><span>所持G</span><b>${Math.floor(safeFiniteNumber(seal?.carriedG, 0, 0))}</b><span>装備予算</span><b>${Math.floor(safeFiniteNumber(seal?.gearBudget, 0, 0))}</b><span>戦力</span><b>${Math.floor(getSealPowerScore(seal))}</b><span>攻撃</span><b>${Math.floor(stats.attack)}</b><span>防御</span><b>${Math.floor(stats.defense)}</b><span>最大HP</span><b>${Math.ceil(stats.maxHp)}</b><span>EXP</span><b>${Math.floor(safeFiniteNumber(seal?.exp, 0, 0))}</b>
+    </div></section>
+    <section><h3>装備</h3>${renderInspectorEquipment(seal)}</section>
+    <section><h3>行動</h3><div class="inspectorInfoGrid"><span>現在</span><b>${escapeHtml(targetText)}</b></div>${stay}</section>`;
+}
+
+function renderInspectorEquipment(seal) {
+  return `<div class="inspectorInfoGrid"><span>武器</span><b>${formatEquipmentName(seal?.equipment?.weapon)}</b><span>防具</span><b>${formatEquipmentName(seal?.equipment?.armor)}</b><span>アクセ</span><b>${formatEquipmentName(seal?.equipment?.accessory)}</b></div>`;
+}
+
+function getSealPowerScore(seal) {
+  const stats = getSealEffectiveStats(seal);
+  return safeFiniteNumber(stats.attack, 0, 0) * 2 + safeFiniteNumber(stats.defense, 0, 0) * 1.5 + safeFiniteNumber(stats.maxHp, 0, 0) * 0.25 + safeFiniteNumber(seal?.level, 1, 1) * 3;
+}
+
+function formatSealState(seal) { return stateLabel(seal?.state ?? 'idle') || '不明'; }
+
+function formatEquipmentName(itemId) {
+  if (!itemId) return 'なし';
+  return escapeHtml(getItemDef(itemId)?.name ?? '不明');
+}
+
 function renderSelectedSealDetail() {
   const selected = (gameState.seals ?? []).find(seal => seal?.id === gameState.ui?.selectedSealId) ?? null;
   return selected ? renderSelectedSealPanel(selected) : '<div class="compactCard">選択中のアザラシはありません。</div>';
@@ -1135,6 +1199,7 @@ function clearContextSelectionIfInvalid() {
   const ui = gameState.ui ?? {};
   let changed = false;
   if (ui.selectedSealId && !(gameState.seals ?? []).some(seal => seal?.id === ui.selectedSealId)) { ui.selectedSealId = null; changed = true; }
+  if (ui.inspector?.open && ui.inspector?.type === 'seal' && !getSealById(ui.inspector?.id)) { ui.inspector = { type: null, id: null, open: false }; changed = true; }
   if (ui.selectedDungeonId && !getDungeonById(ui.selectedDungeonId)) { ui.selectedDungeonId = null; changed = true; }
   if (ui.selectedFacilityId && !(gameState.world?.objects ?? []).some(object => object?.id === ui.selectedFacilityId && object?.kind === 'facility')) { ui.selectedFacilityId = null; changed = true; }
   if (ui.selectedTool && !CONFIG.tools.some(tool => tool?.id === ui.selectedTool)) { ui.selectedTool = null; changed = true; }

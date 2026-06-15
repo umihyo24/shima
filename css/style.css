@@ -218,3 +218,20 @@ button.subtle { background: rgba(255,255,255,.08); }
   .managementPanel { top: 148px; }
   .bottomTabBar button, .bottom-tabs button, .bottom-tab-bar button { min-width: 0; }
 }
+.people-panel { grid-template-rows: auto minmax(0, 1fr) auto; }
+.people-list-hint { color: var(--muted); font-size: 12px; font-weight: 700; }
+.inspectorPanel { position: fixed; top: 92px; right: 12px; z-index: 44; width: min(360px, calc(100vw - 24px)); max-height: calc(100vh - var(--bottom-tab-height) - 118px); overflow: auto; padding: 12px; pointer-events: auto; overscroll-behavior: contain; }
+.inspectorPanel[hidden] { display: none; pointer-events: none; }
+.inspectorHeader { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; border-bottom: 1px solid rgba(255,255,255,.14); padding-bottom: 9px; margin-bottom: 10px; }
+.inspectorHeader h2 { margin: 1px 0 0; font-size: 19px; color: var(--accent); }
+.inspectorKicker, .sealInspectorLevel, .hpText { color: var(--muted); font-size: 12px; font-weight: 800; }
+.sealInspectorTop { display: grid; grid-template-columns: 64px minmax(0, 1fr); gap: 10px; align-items: center; margin-bottom: 10px; }
+.sealInspectorIcon { width: 64px; height: 64px; display: grid; place-items: center; border-radius: 14px; background: rgba(255,255,255,.09); border: 1px solid rgba(255,255,255,.13); font-size: 34px; }
+.inspectorPanel section { margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(255,255,255,.1); }
+.inspectorPanel h3 { margin: 0 0 7px; font-size: 13px; color: #fff7d1; }
+.inspectorInfoGrid { display: grid; grid-template-columns: minmax(78px, max-content) minmax(0, 1fr); gap: 5px 10px; font-size: 12px; line-height: 1.35; }
+.inspectorInfoGrid span { color: var(--muted); font-weight: 800; }
+.inspectorInfoGrid b { color: #fff; min-width: 0; overflow-wrap: anywhere; text-align: right; }
+@media (max-width: 900px) {
+  .inspectorPanel { top: 82px; right: 8px; width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - var(--bottom-tab-height) - 96px); }
+}
