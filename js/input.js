@@ -248,6 +248,7 @@ function handleUiAction(event, options = {}) {
   else if (action === 'closeBuild' || action === 'closeBottom') closeBuildDrawer();
   else if (action === 'closeSeal') { gameState.ui.selectedSealId = null; gameState.ui.selectedPersonRosterId = null; markUIDirty('selection'); renderUI(); }
   else if (dungeonAction === 'start') startDungeon(actionTarget.dataset?.dungeonId);
+  else if (dungeonAction === 'select') { gameState.ui.selectedDungeonId = actionTarget.dataset?.dungeonId ?? null; markUIDirty('dungeon'); renderUI(); }
   else if (dungeonAction === 'close') { gameState.ui.selectedDungeonId = null; markUIDirty('selection'); renderUI(); }
   else if (sealFilter) setSealListFilter(sealFilter);
   else if (sealSort) setSealListSort(sealSort);

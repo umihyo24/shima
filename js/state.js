@@ -13,7 +13,7 @@ function createNewGameState() {
     shopCatalog: { unlockedItemIds: [], discoveredAt: {} },
     monsters: [],
     dungeons: [],
-    dungeonProgress: { unlocked: {}, clearCounts: {}, totalClears: 0 },
+    dungeonProgress: { unlockedDungeonIds: [], clearCounts: {}, firstClearRewardsClaimed: {} },
     images: {},
     logs: [],
     timers: { spawn: 0, monsterSpawn: 0, visitorSpawn: 0, dungeonSpawnMs: 0, ui: 0 },
@@ -237,8 +237,12 @@ function unlockCatalogItem(itemId, source = '') {
   if (ids.includes(item.id)) return false;
   ids.push(item.id);
   gameState.shopCatalog.discoveredAt[item.id] = Date.now();
-  if (source) logMessage(`${item.name} を発見！商品に追加されました`);
+  logMessage(`${item.name} が商品に追加されました！`);
   return true;
+}
+
+function unlockShopItem(itemId, source = '') {
+  return unlockCatalogItem(itemId, source);
 }
 
 function addRelicItem(itemId, count = 1, source = '') {
@@ -248,7 +252,6 @@ function addRelicItem(itemId, count = 1, source = '') {
   const existing = gameState.relicInventory.find(entry => entry?.itemId === item.id);
   if (existing) existing.count = clampInteger(existing.count, 0, Number.MAX_SAFE_INTEGER, 0) + clampInteger(count, 1, Number.MAX_SAFE_INTEGER, 1);
   else gameState.relicInventory.push({ itemId: item.id, count: clampInteger(count, 1, Number.MAX_SAFE_INTEGER, 1) });
-  unlockCatalogItem(item.id, source);
   gameState.shopCatalog = normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory);
   return true;
 }
@@ -567,16 +570,65 @@ function assetKeyForVisitorProfile(profileId) {
 
 
 function normalizeDungeonProgress(progress) {
-  const clearCounts = {};
-  for (const [key, value] of Object.entries(progress?.clearCounts ?? {})) clearCounts[String(key)] = clampInteger(value, 0, Number.MAX_SAFE_INTEGER, 0);
-  const unlocked = {};
-  for (const type of Object.values(CONFIG.DUNGEONS?.types ?? {})) {
-    for (const levelDef of type?.levels ?? []) {
-      const key = getDungeonLevelKey(type.id, levelDef.level);
-      unlocked[key] = progress?.unlocked?.[key] === true;
-    }
+  const legacyUnlocked = progress?.unlocked ?? {};
+  const unlockedIds = new Set(Array.isArray(progress?.unlockedDungeonIds) ? progress.unlockedDungeonIds.map(String) : []);
+  for (const def of CONFIG.DUNGEONS?.definitions ?? []) {
+    const legacyKey = getDungeonLevelKey(def?.typeId, def?.level);
+    if (legacyUnlocked?.[legacyKey] === true || legacyUnlocked?.[def?.id] === true) unlockedIds.add(String(def.id));
   }
-  return { unlocked, clearCounts, totalClears: clampInteger(progress?.totalClears, 0, Number.MAX_SAFE_INTEGER, 0) };
+  const clearCounts = {};
+  for (const [key, value] of Object.entries(progress?.clearCounts ?? {})) {
+    const def = getDungeonDefById(key) ?? getDungeonDefByLegacyKey(key);
+    const normalizedKey = def?.id ?? String(key);
+    clearCounts[normalizedKey] = clampInteger(value, 0, Number.MAX_SAFE_INTEGER, 0);
+  }
+  const firstClearRewardsClaimed = {};
+  for (const [key, value] of Object.entries(progress?.firstClearRewardsClaimed ?? {})) {
+    const def = getDungeonDefById(key) ?? getDungeonDefByLegacyKey(key);
+    if (def) firstClearRewardsClaimed[def.id] = value === true;
+  }
+  return { unlockedDungeonIds: [...unlockedIds].filter(id => !!getDungeonDefById(id)), clearCounts, firstClearRewardsClaimed };
+}
+
+function getDungeonDefById(id) {
+  const target = String(id ?? '');
+  return (CONFIG.DUNGEONS?.definitions ?? []).find(def => def?.id === target) ?? null;
+}
+
+function getDungeonDefByLegacyKey(key) {
+  const text = String(key ?? '');
+  const [typeId, levelText] = text.split(':');
+  const level = clampInteger(levelText, 1, Number.MAX_SAFE_INTEGER, 0);
+  return (CONFIG.DUNGEONS?.definitions ?? []).find(def => def?.typeId === typeId && clampInteger(def?.level, 1, Number.MAX_SAFE_INTEGER, 1) === level) ?? null;
+}
+
+function isDungeonUnlocked(def) {
+  const dungeonDef = typeof def === 'string' ? getDungeonDefById(def) : def;
+  if (!dungeonDef) return false;
+  const knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0);
+  const knownOk = knownness >= safeFiniteNumber(dungeonDef?.knownnessRequired, 0, 0);
+  const previousId = dungeonDef?.previousDungeonId ?? null;
+  const previousOk = !previousId || getDungeonClearCount(previousId) >= clampInteger(dungeonDef?.previousClearCountRequired, 0, Number.MAX_SAFE_INTEGER, 0);
+  return knownOk && previousOk;
+}
+
+function getDungeonClearCount(dungeonId) {
+  const progress = normalizeDungeonProgress(gameState.dungeonProgress);
+  return clampInteger(progress?.clearCounts?.[String(dungeonId ?? '')], 0, Number.MAX_SAFE_INTEGER, 0);
+}
+
+function incrementDungeonClearCount(dungeonId) {
+  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
+  const id = String(dungeonId ?? '');
+  if (!getDungeonDefById(id)) return 0;
+  const current = clampInteger(gameState.dungeonProgress.clearCounts?.[id], 0, Number.MAX_SAFE_INTEGER, 0);
+  gameState.dungeonProgress.clearCounts[id] = current + 1;
+  return gameState.dungeonProgress.clearCounts[id];
+}
+
+function getUnlockedDungeonDefs() {
+  const progress = normalizeDungeonProgress(gameState.dungeonProgress);
+  return (CONFIG.DUNGEONS?.definitions ?? []).filter(def => progress.unlockedDungeonIds.includes(def.id));
 }
 
 function getDungeonLevelKey(typeId, level) { return `${String(typeId ?? '')}:${clampInteger(level, 1, Number.MAX_SAFE_INTEGER, 1)}`; }
@@ -585,59 +637,73 @@ function getDungeonTypeDef(typeId) { return CONFIG.DUNGEONS?.types?.[String(type
 function getDungeonAreaDef(areaId) { return CONFIG.DUNGEONS?.spawnAreas?.[String(areaId ?? '')] ?? null; }
 
 function getDungeonLevelDef(typeId, level) {
-  const type = getDungeonTypeDef(typeId);
   const targetLevel = clampInteger(level, 1, Number.MAX_SAFE_INTEGER, 1);
+  const permanentDef = (CONFIG.DUNGEONS?.definitions ?? []).find(def => def?.typeId === String(typeId ?? '') && clampInteger(def?.level, 1, Number.MAX_SAFE_INTEGER, 1) === targetLevel) ?? null;
+  if (permanentDef) return { ...permanentDef, typeName: permanentDef.name, areaId: 'coast' };
+  const type = getDungeonTypeDef(typeId);
   const levelDef = (type?.levels ?? []).find(item => clampInteger(item?.level, 1, Number.MAX_SAFE_INTEGER, 1) === targetLevel) ?? null;
   return levelDef ? { ...levelDef, typeId: type.id, typeName: type.name, areaId: type.areaId } : null;
 }
 
 function isDungeonLevelUnlocked(typeId, level) {
-  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
-  return gameState.dungeonProgress.unlocked?.[getDungeonLevelKey(typeId, level)] === true;
+  const def = (CONFIG.DUNGEONS?.definitions ?? []).find(item => item?.typeId === String(typeId ?? '') && clampInteger(item?.level, 1, Number.MAX_SAFE_INTEGER, 1) === clampInteger(level, 1, Number.MAX_SAFE_INTEGER, 1));
+  return !!def && getUnlockedDungeonDefs().some(item => item?.id === def.id);
+}
+
+function createDungeonInstanceFromDef(def, source = {}) {
+  const dungeonDef = typeof def === 'string' ? getDungeonDefById(def) : def;
+  if (!dungeonDef) return null;
+  const area = getDungeonAreaDef(source?.areaId ?? 'coast');
+  const mapPosition = dungeonDef?.mapPosition ?? {};
+  const pointFromConfig = Number.isFinite(mapPosition?.x) && Number.isFinite(mapPosition?.y) ? gridToWorld(mapPosition.x, mapPosition.y) : null;
+  const point = isValidDungeonWorldPoint(source?.x, source?.y, area?.id ?? 'coast')
+    ? { x: safeFiniteNumber(source.x, 0), y: safeFiniteNumber(source.y, 0) }
+    : (pointFromConfig ?? findDungeonSpawnPoint(area?.id ?? 'coast') ?? gridToWorld(CONFIG.world.coastX + 2, CONFIG.world.coastY + 2));
+  const states = Object.values(CONFIG.dungeon?.states ?? { available: 'available', assembling: 'assembling', running: 'running', returning: 'returning', completed: 'completed' });
+  const state = states.includes(source?.state) && source?.state !== 'expired' ? source.state : 'available';
+  const nodes = normalizeDungeonNodes(source?.nodes, dungeonDef);
+  return {
+    id: String(source?.id || dungeonDef.id),
+    runId: String(source?.runId || ''),
+    dungeonDefId: dungeonDef.id,
+    typeId: dungeonDef.typeId,
+    type: dungeonDef.typeId,
+    level: clampInteger(dungeonDef.level, 1, Number.MAX_SAFE_INTEGER, 1),
+    name: String(source?.name || `${dungeonDef.name} Lv${dungeonDef.level}`),
+    areaId: area?.id ?? 'coast',
+    x: safeFiniteNumber(point.x, 0),
+    y: safeFiniteNumber(point.y, 0),
+    state,
+    expiresInMs: Number.POSITIVE_INFINITY,
+    progressMs: safeFiniteNumber(source?.progressMs, 0, 0),
+    durationMs: getDungeonDurationMs(dungeonDef),
+    recruitCost: safeFiniteNumber(source?.recruitCost, dungeonDef.recruitCost, 0),
+    participantIds: normalizeDungeonParticipantIds(source?.participantIds),
+    nodes,
+    currentNodeIndex: clampInteger(source?.currentNodeIndex, 0, ['returning', 'completed'].includes(state) ? nodes.length : Math.max(0, nodes.length - 1), 0),
+    nodeTimerMs: safeFiniteNumber(source?.nodeTimerMs, 0, 0),
+    expeditionLog: normalizeDungeonLog(source?.expeditionLog),
+    reward: normalizeDungeonReward(source?.reward),
+    startedAt: safeFiniteNumber(source?.startedAt, null, 0) || null,
+    completedAt: safeFiniteNumber(source?.completedAt, null, 0) || null,
+    rewardPreview: getDungeonRewardPreview({ dungeonDefId: dungeonDef.id, typeId: dungeonDef.typeId, level: dungeonDef.level }),
+    enemyRefs: Array.isArray(source?.enemyRefs) ? source.enemyRefs.map(String) : [],
+    enemyTypes: ['crab'],
+    dropTableId: '',
+    completedDisplayMs: safeFiniteNumber(source?.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0)
+  };
 }
 
 function normalizeDungeons(dungeons) {
   if (!Array.isArray(dungeons)) return [];
-  const states = Object.values(CONFIG.dungeon?.states ?? { available: 'available', assembling: 'assembling', running: 'running', returning: 'returning', completed: 'completed', expired: 'expired' });
   return dungeons.map((dungeon, index) => {
+    const def = getDungeonDefById(dungeon?.dungeonDefId ?? dungeon?.id) ?? getDungeonDefByLegacyKey(getDungeonLevelKey(dungeon?.typeId ?? dungeon?.type, dungeon?.level));
+    if (def) return createDungeonInstanceFromDef(def, dungeon);
     const typeId = String(dungeon?.typeId ?? dungeon?.type ?? '');
     const level = clampInteger(dungeon?.level, 1, Number.MAX_SAFE_INTEGER, 1);
     const levelDef = getDungeonLevelDef(typeId, level);
-    const type = getDungeonTypeDef(typeId);
-    const area = getDungeonAreaDef(dungeon?.areaId ?? levelDef?.areaId ?? type?.areaId ?? 'coast');
-    if (!type || !levelDef || !area) return null;
-    const point = isValidDungeonWorldPoint(dungeon?.x, dungeon?.y, area.id) ? { x: safeFiniteNumber(dungeon.x, 0), y: safeFiniteNumber(dungeon.y, 0) } : findDungeonSpawnPoint(area.id);
-    if (!point) return null;
-    const state = states.includes(dungeon?.state) ? dungeon.state : 'available';
-    const nodes = normalizeDungeonNodes(dungeon?.nodes, levelDef);
-    return {
-      id: String(dungeon?.id || `dungeon-${Date.now()}-${index}`),
-      typeId: type.id,
-      type: type.id,
-      level: levelDef.level,
-      name: String(dungeon?.name || `${levelDef.name || type.name} Lv${levelDef.level}`),
-      areaId: area.id,
-      x: safeFiniteNumber(point.x, 0),
-      y: safeFiniteNumber(point.y, 0),
-      state,
-      expiresInMs: safeFiniteNumber(dungeon?.expiresInMs, CONFIG.DUNGEONS?.expiresInMs, 0),
-      progressMs: safeFiniteNumber(dungeon?.progressMs, 0, 0),
-      durationMs: getDungeonDurationMs(levelDef),
-      recruitCost: safeFiniteNumber(dungeon?.recruitCost, levelDef.recruitCost, 0),
-      participantIds: normalizeDungeonParticipantIds(dungeon?.participantIds),
-      nodes,
-      currentNodeIndex: clampInteger(dungeon?.currentNodeIndex, 0, ['returning', 'completed'].includes(state) ? nodes.length : Math.max(0, nodes.length - 1), 0),
-      nodeTimerMs: safeFiniteNumber(dungeon?.nodeTimerMs, 0, 0),
-      expeditionLog: normalizeDungeonLog(dungeon?.expeditionLog),
-      reward: normalizeDungeonReward(dungeon?.reward),
-      startedAt: safeFiniteNumber(dungeon?.startedAt, null, 0) || null,
-      completedAt: safeFiniteNumber(dungeon?.completedAt, null, 0) || null,
-      rewardPreview: getDungeonRewardPreview({ typeId: type.id, level: levelDef.level }),
-      enemyRefs: Array.isArray(dungeon?.enemyRefs) ? dungeon.enemyRefs.map(String) : [],
-      enemyTypes: ['crab'],
-      dropTableId: '',
-      completedDisplayMs: safeFiniteNumber(dungeon?.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0)
-    };
+    if (!levelDef) return null;
+    return createDungeonInstanceFromDef(levelDef?.id ? levelDef : { ...levelDef, id: String(dungeon?.id || `legacy-${index}`), previousDungeonId: null, previousClearCountRequired: 0, firstClearUnlockItems: [] }, dungeon);
   }).filter(Boolean);
 }
 

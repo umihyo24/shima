@@ -1019,6 +1019,34 @@ function renderDungeonParticipantStatusText(dungeon) {
   }).join('、');
 }
 
+function getDungeonRequirementText(def) {
+  if (!def) return '';
+  const parts = [];
+  const knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0);
+  const requiredKnownness = safeFiniteNumber(def?.knownnessRequired, 0, 0);
+  if (knownness < requiredKnownness) parts.push(`知名度 ${Math.floor(knownness)}/${Math.floor(requiredKnownness)}`);
+  if (def?.previousDungeonId) {
+    const previous = getDungeonDefById(def.previousDungeonId);
+    parts.push(`${previous?.name ?? def.previousDungeonId} Lv${previous?.level ?? ''} ${getDungeonClearCount(def.previousDungeonId)}/${Math.floor(safeFiniteNumber(def.previousClearCountRequired, 0, 0))}回クリア`);
+  }
+  return parts.join(' / ') || '条件達成待ち';
+}
+
+function renderPermanentDungeonList() {
+  const unlockedIds = new Set(getUnlockedDungeonDefs().map(def => def.id));
+  return (CONFIG.DUNGEONS?.definitions ?? []).map(def => {
+    const dungeon = (gameState.dungeons ?? []).find(item => item?.dungeonDefId === def.id) ?? null;
+    const unlocked = unlockedIds.has(def.id);
+    const clearCount = getDungeonClearCount(def.id);
+    const claimed = gameState.dungeonProgress?.firstClearRewardsClaimed?.[def.id] === true;
+    const itemNames = (def.firstClearUnlockItems ?? []).map(id => getItemDef(id)?.name ?? id).join(' / ') || 'なし';
+    const status = unlocked ? `${escapeHtml(dungeonStateLabel(dungeon?.state ?? 'available'))}` : `未解放: ${escapeHtml(getDungeonRequirementText(def))}`;
+    const button = unlocked && dungeon?.state === 'available' ? `<button data-dungeon-action="start" data-dungeon-id="${escapeHtml(dungeon.id)}"${getDungeonStartError(dungeon) ? ' disabled' : ''}>攻略開始</button>` : '';
+    const select = unlocked && dungeon ? `<button data-dungeon-action="select" data-dungeon-id="${escapeHtml(dungeon.id)}">詳細</button>` : '';
+    return `<div class="compactCard dungeon-list-card ${unlocked ? 'unlocked' : 'locked'}"><b>${escapeHtml(def.name)} Lv${Math.floor(safeFiniteNumber(def.level, 1, 1))}</b><br>${status}<br>クリア: ${clearCount}回 / 初回商品: ${escapeHtml(itemNames)}（${claimed ? '受取済み' : '未受取'}）<div class="dungeonButtons">${button}${select}</div></div>`;
+  }).join('');
+}
+
 function renderDungeonsPanel() {
   const active = (gameState.dungeons ?? []).filter(dungeon => ['available', 'assembling', 'running', 'returning'].includes(dungeon?.state));
   const running = active.filter(dungeon => ['assembling', 'running', 'returning'].includes(dungeon?.state));
@@ -1031,12 +1059,12 @@ function renderDungeonsPanel() {
   return `<div class="dungeon-panel-grid">
       ${renderSelectedDungeonDetail()}
       <div class="dungeon-running-list">
-        <div class="compactCard"><b>概要</b><br>活動中: ${active.length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
+        <div class="compactCard"><b>常設ダンジョン</b><br>攻略可能: ${getUnlockedDungeonDefs().length} / 全${(CONFIG.DUNGEONS?.definitions ?? []).length}<br>選択中: ${escapeHtml(getDungeonById(gameState.ui?.selectedDungeonId)?.name ?? 'なし')}</div>
+        ${renderPermanentDungeonList()}
         ${runningHtml}
       </div>
     </div>`;
 }
-
 
 function renderFacilityProgressList() {
   const facilities = (gameState.world?.objects ?? []).filter(o => o?.kind === 'facility');
@@ -1073,12 +1101,14 @@ function renderProgressPanel() {
   const thresholds = (CONFIG.KNOWNNESS?.UNLOCK_THRESHOLDS ?? [100, 200, 300, 400, 500]).map(value => `<span class="thresholdPill ${knownness >= value ? 'done' : ''}">${value}</span>`).join('');
   const unlocked = (gameState.visitorProfiles ?? []).filter(isVisitorProfileUnlocked).map(profile => escapeHtml(profile.name)).join('、') || 'なし';
   const monthly = `狩猟${gameState.stats?.monthlyHunts ?? 0}回 / 前月知名度+${Math.floor(safeFiniteNumber(gameState.stats?.monthlyKnownnessGained, 0, 0))} / 今月収入${Math.floor(safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0))}G`;
+  const catalog = (gameState.shopCatalog?.unlockedItemIds ?? []).map(id => getItemDef(id)?.name ?? id).join('、') || 'なし';
   return `<div class="progress-panel-grid">
       <div class="compactCard"><b>知名度</b><br>${Math.floor(knownness)} / ${Math.floor(nextGoal)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(1, ratio)) * 100}%"></div></div>次の目標: ${Math.floor(nextGoal)}</div>
       <div class="compactCard"><b>次の訪問者</b><br>${nextUnlock ? `${escapeHtml(nextUnlock.name)}（${Math.floor(safeFiniteNumber(nextUnlock.unlockedAtKnownness, 0, 0))}）` : 'すべて解放済み'}</div>
       <div class="compactCard"><b>しきい値</b><div class="thresholdList">${thresholds}</div></div>
       <div class="compactCard progress-wide-card"><b>解放済み訪問者</b><br>${unlocked}</div>
       <div class="compactCard"><b>月次サマリー</b><br>${escapeHtml(monthly)}</div>
+      <div class="compactCard progress-wide-card"><b>解放済み商品</b><br>${escapeHtml(catalog)}</div>
       <div class="compactCard progress-wide-card"><b>施設レベル</b><br>${renderFacilityProgressList()}</div>
       <div class="compactCard"><b>最近の出来事</b><div class="log compact-recent-log">${(gameState.logs ?? []).slice(0, 4).map(l => `・${escapeHtml(l)}`).join('<br>') || 'なし'}</div></div>
     </div>`;
@@ -1239,24 +1269,22 @@ function renderDungeonSummary(dungeon) {
   const area = getDungeonAreaDef(dungeon?.areaId);
   const levelDef = getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
   const preview = dungeon?.rewardPreview ?? getDungeonRewardPreview(dungeon);
-  const remaining = Math.max(0, safeFiniteNumber(dungeon?.expiresInMs, 0, 0));
   const participants = renderDungeonParticipantStatusText(dungeon) || '未編成（開始時に自動選出）';
   const itemNames = (preview?.itemIds ?? []).map(id => getItemDef(id)?.name ?? id).join(' / ') || 'なし';
   const current = dungeon?.nodes?.[dungeon?.currentNodeIndex];
   const currentText = current ? `${CONFIG.dungeon?.nodeLabels?.[current.type] ?? current.type}` : dungeonStateLabel(dungeon?.state);
-  const clearKey = getDungeonLevelKey(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
-  const clearCount = clampInteger(gameState.dungeonProgress?.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0);
+  const clearCount = getDungeonClearCount(dungeon?.dungeonDefId ?? getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level)?.id);
   const partyPower = getPartyPower(dungeon?.participantIds);
   const powerText = partyPower > 0 ? `${Math.floor(partyPower)} / 推奨${Math.floor(getDungeonRecommendedPower(dungeon))}` : `推奨${Math.floor(getDungeonRecommendedPower(dungeon))}`;
   const rewardText = `${Math.floor(preview?.g ?? 0)}G / EXP${Math.floor(preview?.exp ?? 0)} / 知名度+${Math.floor(preview?.knownness ?? 0)}`;
-  const remainingText = dungeon?.state === 'available' ? `${Math.ceil(remaining / 1000)}秒` : '—';
+  const remainingText = dungeon?.state === 'available' ? '期限なし' : '—';
   return `<div class="dungeonSummary">
     <div class="dungeonSummaryLeft">
       <div class="dungeonTitle">🕳️ ${escapeHtml(dungeon?.name ?? 'ダンジョン')} Lv${Math.floor(safeFiniteNumber(dungeon?.level, levelDef?.level ?? 1, 1))}</div>
       <div class="dungeonSummaryGrid">
         <span>エリア</span><b>${escapeHtml(area?.label ?? dungeon?.areaId ?? '不明')}</b>
         <span>状態</span><b>${escapeHtml(dungeonStateLabel(dungeon?.state))}</b>
-        <span>残り時間</span><b>${escapeHtml(remainingText)}</b>
+        <span>常設</span><b>${escapeHtml(remainingText)}</b>
         <span>現在</span><b>${escapeHtml(currentText)}</b>
         <span>戦力</span><b>${escapeHtml(powerText)}</b>
         <span>クリア</span><b>${clearCount}回</b>
@@ -1266,7 +1294,7 @@ function renderDungeonSummary(dungeon) {
       <div class="dungeonSummaryGrid">
         <span>参加費</span><b>${Math.floor(safeFiniteNumber(dungeon?.recruitCost, 0, 0))}G</b>
         <span>報酬</span><b>${escapeHtml(rewardText)}</b>
-        <span>ドロップ</span><b>${escapeHtml(itemNames)}</b>
+        <span>初回商品</span><b>${escapeHtml(itemNames)}</b>
         <span>参加者</span><b>${participants}</b>
       </div>
       ${renderDungeonActionButtons(dungeon)}
@@ -1306,16 +1334,14 @@ function renderDungeonLog(dungeon) {
 
 function renderDungeonExtraDetails(dungeon) {
   const area = getDungeonAreaDef(dungeon?.areaId);
-  const clearKey = getDungeonLevelKey(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
-  const clearCount = clampInteger(gameState.dungeonProgress?.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0);
+  const clearCount = getDungeonClearCount(dungeon?.dungeonDefId ?? getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level)?.id);
   return `<div class="dungeonExtraDetails"><b>詳細</b><br>エリア説明: ${escapeHtml(area?.label ?? dungeon?.areaId ?? '不明')} / クリア回数: ${clearCount}</div>`;
 }
 
 function renderDungeonRewardSummary(dungeon) {
   if (!['returning', 'completed'].includes(dungeon?.state)) return '';
   const reward = normalizeDungeonReward(dungeon?.reward);
-  const items = (reward.items ?? []).map(item => `${getItemDef(item.itemId)?.name ?? item.itemId}x${item.count}`).join('、') || 'なし';
-  return `<div class="dungeonReward"><b>${escapeHtml(CONFIG.dungeon?.labels?.completedReward ?? '獲得報酬')}</b>: ${Math.floor(reward.g)}G / EXP${Math.floor(reward.exp)} / 知名度+${Math.floor(reward.knownness)} / ${escapeHtml(items)}</div>`;
+  return `<div class="dungeonReward"><b>${escapeHtml(CONFIG.dungeon?.labels?.completedReward ?? '獲得報酬')}</b>: ${Math.floor(reward.g)}G / EXP${Math.floor(reward.exp)} / 知名度+${Math.floor(reward.knownness)}</div>`;
 }
 
 function dungeonStateLabel(state) { return (CONFIG.dungeon?.stateLabels ?? {})[state] ?? String(state ?? ''); }
