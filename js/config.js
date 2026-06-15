@@ -122,6 +122,7 @@ const CONFIG = Object.freeze({
     { id: 'decor', label: '装飾', icon: '🌲', toolIds: ['flower', 'tree', 'rock'] },
     { id: 'manage', label: '管理', icon: '🛠', toolIds: ['clear', 'move', 'delete', 'rotate'] }
   ],
+  inspector: { buttonLabels: { move: '移動', rotate: '回転', delete: '削除' }, rotationFeedbackSeconds: 0.75 },
   UI: { entranceConnectedColor: '#34e86b', entranceDisconnectedColor: '#ff4d4d', entrancePreviewColor: '#ffe66b', entranceAccessConnected: 'rgba(52,232,107,.42)', entranceAccessDisconnected: 'rgba(255,77,77,.42)' },
   placement: { roadSize: 1, decorationSize: 1, facilitySize: 2, feedbackSeconds: 0.75, roadRoute: { maxTiles: 32, allowExistingRoads: true, blockObjects: true, requireBuildableLand: true, scoreInvalidWeight: 1000, scoreBlockedWeight: 100, scoreTurnWeight: 10, scoreExistingRoadBonus: 2 } },
   directions: [ { name: 'N', dx: 0, dy: -1 }, { name: 'E', dx: 1, dy: 0 }, { name: 'S', dx: 0, dy: 1 }, { name: 'W', dx: -1, dy: 0 } ],

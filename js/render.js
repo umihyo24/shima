@@ -108,6 +108,7 @@ function drawObjects() {
 function drawFacility(o) {
   const x = o.x * CONFIG.world.tile, y = o.y * CONFIG.world.tile, w = o.w * CONFIG.world.tile, h = o.h * CONFIG.world.tile;
   const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[o?.type] ?? {};
+  const rotation = getFacilityRotation(o);
   ctx.fillStyle = CONFIG.render.shadow; ctx.fillRect(x + 5, y + 7, w, h);
   drawImageOrFallback(ctx, cfg.assetKey ?? `cards.facility_neutral_${o.type}_idle`, x, y, w, h, () => {
     ctx.fillStyle = cfg.color ?? '#777'; ctx.fillRect(x + 5, y + 12, Math.max(8, w - 10), Math.max(8, h - 17));
@@ -139,7 +140,18 @@ function drawFacility(o) {
     } else {
       ctx.fillStyle = '#fff4c0'; ctx.fillText(cfg.label ?? o.type, x + 12, y + 30);
     }
-  });
+    ctx.fillStyle = '#fff8ba';
+    ctx.save();
+    ctx.translate(x + w / 2, y + h / 2);
+    ctx.rotate(rotation * Math.PI / 2);
+    ctx.beginPath();
+    ctx.moveTo(0, -h * 0.42);
+    ctx.lineTo(w * 0.12, -h * 0.22);
+    ctx.lineTo(-w * 0.12, -h * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }, { rotation: rotation * Math.PI / 2 });
   const usable = isFacilityUsable(o);
   ctx.strokeStyle = usable ? '#5cff7d' : '#ff5a50'; ctx.lineWidth = 3 / gameState.camera.zoom; ctx.strokeRect(x + 2, y + 2, w - 4, h - 4);
   drawEntranceMarker(o, { connected: isEntranceConnectedToRoad(o), subtle: true });
@@ -1167,11 +1179,12 @@ function renderFacilityInspector(facility) {
   const progress = ensureFacilityProgress(facility?.type);
   const size = `${Math.max(1, safeFiniteNumber(facility?.w, def.w ?? 1, 1))}x${Math.max(1, safeFiniteNumber(facility?.h, def.h ?? 1, 1))}`;
   const status = formatFacilityStatus(facility);
+  const labels = CONFIG.inspector?.buttonLabels ?? { move: '移動', rotate: '回転', delete: '削除' };
   return `<div class="inspectorHeader"><div><div class="inspectorKicker">${escapeHtml(category)}</div><h2>${escapeHtml(name)}</h2></div><button data-action="closeInspector" class="subtle">閉じる</button></div>
     <section><h3>概要</h3><div class="inspectorInfoGrid"><span>種類</span><b>${escapeHtml(facility?.type ?? '-')}</b><span>サイズ</span><b>${escapeHtml(size)}</b><span>状態</span><b>${escapeHtml(status)}</b><span>共有利用</span><b>${Math.floor(safeFiniteNumber(progress.totalUses, 0, 0))}</b></div><p class="mutedText">${escapeHtml(effect)}</p></section>
     ${renderFacilityProgressInspectorSection(facility)}
     ${renderFacilityShopGoodsInspectorSection(facility)}
-    <div class="buildActions"><button data-action="moveFacility">移動</button><button data-action="deleteFacility" class="subtle">削除</button></div>`;
+    <div class="buildActions"><button data-action="moveFacility">${escapeHtml(labels.move)}</button><button data-action="rotateFacility">${escapeHtml(labels.rotate)}</button><button data-action="deleteFacility" class="subtle">${escapeHtml(labels.delete)}</button></div>`;
 }
 
 function formatFacilityStatus(facility) {

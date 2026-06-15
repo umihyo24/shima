@@ -294,6 +294,7 @@ function handleUiAction(event, options = {}) {
   else if (action === 'manualSave') saveGame('manual');
   else if (action === 'clearTool') clearSelectedTool();
   else if (action === 'moveFacility') startMoveSelectedFacility();
+  else if (action === 'rotateFacility') rotateSelectedFacility();
   else if (action === 'deleteFacility') deleteSelectedFacility();
   else if (action === 'zoomIn') setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
