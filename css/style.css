@@ -47,7 +47,7 @@ button.subtle { background: rgba(255,255,255,.08); }
 .build-panel-layout { height: 100%; min-height: 0; display: grid; grid-template-columns: minmax(260px, 1fr) minmax(300px, .9fr); gap: 12px; }
 .build-panel-left, .build-panel-right { min-height: 0; display: flex; flex-direction: column; gap: 10px; }
 .build-panel-right { overflow: hidden; }
-.build-category-tabs { flex: 0 0 auto; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; }
+.build-category-tabs { flex: 0 0 auto; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 7px; }
 .build-category-tabs button { min-width: 0; }
 .build-item-list { flex: 1 1 auto; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); align-content: start; gap: 8px; padding-right: 4px; }
 .toolButton { min-width: 96px; text-align: left; }
