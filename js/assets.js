@@ -69,7 +69,17 @@ function safeDrawImage(context, asset, x, y, w, h) {
 
 function drawImageOrFallback(context, key, x, y, w, h, fallbackFn, options = {}) {
   const asset = getAsset(key);
-  const drawn = safeDrawImage(context, asset, x, y, w, h);
+  const rotation = Number.isFinite(options?.rotation) ? options.rotation : 0;
+  let drawn = false;
+  if (rotation) {
+    context.save();
+    context.translate(x + w / 2, y + h / 2);
+    context.rotate(rotation);
+    drawn = safeDrawImage(context, asset, -w / 2, -h / 2, w, h);
+    context.restore();
+  } else {
+    drawn = safeDrawImage(context, asset, x, y, w, h);
+  }
   if (drawn) return true;
   if (typeof fallbackFn === 'function') fallbackFn(context, x, y, w, h, options);
   return false;

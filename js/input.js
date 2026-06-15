@@ -294,6 +294,7 @@ function handleUiAction(event, options = {}) {
   else if (action === 'manualSave') saveGame('manual');
   else if (action === 'clearTool') clearSelectedTool();
   else if (action === 'moveFacility') startMoveSelectedFacility();
+  else if (action === 'rotateFacility') rotateSelectedFacility();
   else if (action === 'deleteFacility') deleteSelectedFacility();
   else if (action === 'zoomIn') setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
@@ -388,10 +389,10 @@ function sealAtWorldPoint(point) {
 }
 
 function placementClickHasPriority(tool, tile) {
-  if (!tool || !tile) return false;
+  if (!tile) return false;
   const terrain = getTile(tile.x, tile.y)?.terrain;
   if (terrain === CONFIG.tileState.terrainOutside) return false;
-  return isPlacementModeActive();
+  return isFacilityMoveActive() || Boolean(tool && isPlacementModeActive());
 }
 
 function isPlacementModeActive() {
@@ -402,16 +403,17 @@ function isPlacementModeActive() {
 
 function handlePlacementClick(tool, tile) {
   const normalized = normalizeRoadTile(tile);
-  if (!tool || !normalized || !getTile(normalized.x, normalized.y)) return false;
-  if (gameState.ui?.roadEdit?.active) {
-    confirmRoadEdit();
+  if (!normalized || !getTile(normalized.x, normalized.y)) return false;
+  if (isFacilityMoveActive()) {
+    updateMovePreview(normalized.x, normalized.y);
+    confirmMoveFacility();
     markUIDirty('all');
     renderUI();
     return true;
   }
-  if (isFacilityMoveActive()) {
-    updateMovePreview(normalized.x, normalized.y);
-    confirmMoveFacility();
+  if (!tool) return false;
+  if (gameState.ui?.roadEdit?.active) {
+    confirmRoadEdit();
     markUIDirty('all');
     renderUI();
     return true;

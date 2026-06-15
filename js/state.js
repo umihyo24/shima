@@ -318,7 +318,8 @@ function normalizeObjects(objects) {
       y: clampInteger(o?.y, 0, CONFIG.world.rows - 1, 0),
       w: Math.max(1, clampInteger(o?.w, 1, CONFIG.world.cols, tool.w)),
       h: Math.max(1, clampInteger(o?.h, 1, CONFIG.world.rows, tool.h)),
-      directionIndex: clampInteger(o?.directionIndex, 0, CONFIG.directions.length - 1, 0),
+      directionIndex: clampInteger(o?.directionIndex ?? o?.rotation, 0, CONFIG.directions.length - 1, 0),
+      rotation: clampInteger(o?.rotation ?? o?.directionIndex, 0, CONFIG.directions.length - 1, 0),
       level: o?.level,
       useCount: o?.useCount,
       facilityExp: o?.facilityExp ?? o?.useProgress,
@@ -390,6 +391,8 @@ function migratePlacedFacilityProgress() {
 
 function normalizeFacilityFields(facility) {
   if (!facility || typeof facility !== 'object') return facility;
+  facility.rotation = getFacilityRotation(facility);
+  facility.directionIndex = facility.rotation;
   if (!isLevelableFacility(facility)) {
     if (isLifeFacility(facility)) facility.slotReservations = normalizeFacilitySlotReservations(facility);
     return facility;
@@ -1106,7 +1109,7 @@ function getTilesInRadius(tileX, tileY, radius) {
   return tiles;
 }
 
-function canPlaceAt(tileX, tileY, objectDef, directionIndex = gameState.ui?.directionIndex ?? 0) {
+function canPlaceAt(tileX, tileY, objectDef, directionIndex = gameState.ui?.directionIndex ?? 0, options = {}) {
   const tool = objectDef ?? getTool(gameState.ui?.selectedTool);
   if (tool?.kind === 'delete') return { ok: true, reason: '' };
   if (tool?.kind === 'clear') return { ok: false, reason: '開拓ツールでは配置できません。' };
@@ -1121,7 +1124,7 @@ function canPlaceAt(tileX, tileY, objectDef, directionIndex = gameState.ui?.dire
       if (tile?.terrain === CONFIG.tileState.terrainOutside) return { ok: false, reason: '外の冒険エリアには配置できません。' };
       if (!isInExpansionRegion(x, y)) return { ok: false, reason: '村の開拓範囲外です。' };
       if (!isBuildableTile(x, y)) return { ok: false, reason: '未開拓または障害物がある土地です。' };
-      if (objectAt(x, y)) return { ok: false, reason: '他の物があります。' };
+      if (objectAt(x, y, { excludeId: options?.ignoreFacilityId ?? options?.excludeId ?? null })) return { ok: false, reason: '他の物があります。' };
       if (tool?.kind !== 'road' && roadAt(x, y)) return { ok: false, reason: '道路の上には置けません。' };
     }
   }
@@ -1529,6 +1532,10 @@ function rotateSelectedPlacement() {
 }
 
 function rotateSelectedFacilityIfAny() {
+  return rotateSelectedFacility();
+}
+
+function rotateSelectedFacilityIfAnyLegacy() {
   const id = gameState.ui?.selectedFacilityId ?? null;
   const facility = id ? (gameState.world?.objects ?? []).find(object => object?.id === id && object?.kind === 'facility') ?? null : null;
   if (!facility) return false;
@@ -1548,6 +1555,73 @@ function rotateSelectedFacilityIfAny() {
   facility.w = footprint.w;
   facility.h = footprint.h;
   normalizeFacilityFields(facility);
+  return true;
+}
+
+
+function getFacilityRotation(facility) {
+  return clampInteger(facility?.rotation ?? facility?.directionIndex, 0, CONFIG.directions.length - 1, 0);
+}
+
+function getRotatedFacilitySize(facilityOrType, rotation = 0) {
+  const def = typeof facilityOrType === 'string' ? getTool(facilityOrType) : (getTool(facilityOrType?.type) ?? facilityOrType);
+  return getRotatedFootprintSize(def, rotation);
+}
+
+function hasRoadAccessForFootprint(x, y, width, height) {
+  const w = Math.max(1, clampInteger(width, 1, CONFIG.world.cols, CONFIG.placement.facilitySize));
+  const h = Math.max(1, clampInteger(height, 1, CONFIG.world.rows, CONFIG.placement.facilitySize));
+  for (let px = x; px < x + w; px += 1) {
+    if (roadAt(px, y - 1) || roadAt(px, y + h)) return true;
+  }
+  for (let py = y; py < y + h; py += 1) {
+    if (roadAt(x - 1, py) || roadAt(x + w, py)) return true;
+  }
+  return false;
+}
+
+function isFacilityPlacementValid(type, x, y, rotation = 0, ignoreFacilityId = null) {
+  return canPlaceAt(x, y, getTool(type), rotation, { ignoreFacilityId });
+}
+
+function canRotateFacility(facility, nextRotation) {
+  if (!facility?.id || facility?.kind !== 'facility') return { ok: false, reason: '回転できる施設がありません。' };
+  const tool = getTool(facility.type);
+  if (!tool || tool.kind !== 'facility') return { ok: false, reason: '施設定義が見つかりません。' };
+  const footprint = getRotatedFacilitySize(facility, nextRotation);
+  const result = isFacilityPlacementValid(facility.type, facility.x, facility.y, nextRotation, facility.id);
+  if (!result.ok) return result;
+  const rotated = { ...facility, w: footprint.w, h: footprint.h, rotation: nextRotation, directionIndex: nextRotation };
+  if (facilityRequiresRoadConnection(rotated) && !hasRoadAccessForFootprint(rotated.x, rotated.y, rotated.w, rotated.h)) {
+    return { ok: false, reason: '道路接続が切れるため回転できません。' };
+  }
+  return { ok: true, reason: '', footprint };
+}
+
+function rotateSelectedFacility() {
+  const id = gameState.ui?.selectedFacilityId ?? gameState.ui?.inspector?.id ?? null;
+  const facility = getFacilityById(id);
+  if (!gameState.ui || !facility) return false;
+  const nextRotation = (getFacilityRotation(facility) + 1) % Math.max(1, CONFIG.directions?.length ?? 4);
+  const result = canRotateFacility(facility, nextRotation);
+  const seconds = safeFiniteNumber(CONFIG.inspector?.rotationFeedbackSeconds, CONFIG.placement.feedbackSeconds, 0);
+  if (!result.ok) {
+    gameState.ui.placementFeedback = { x: facility.x, y: facility.y, ok: false, text: result.reason || 'この場所では回転できません。', timer: seconds };
+    markUIDirty('selection');
+    renderUI();
+    return false;
+  }
+  facility.rotation = nextRotation;
+  facility.directionIndex = nextRotation;
+  facility.w = result.footprint?.w ?? facility.w;
+  facility.h = result.footprint?.h ?? facility.h;
+  normalizeFacilityFields(facility);
+  gameState.ui.selectedFacilityId = facility.id;
+  gameState.ui.facilityInspectorOpen = true;
+  gameState.ui.inspector = { type: 'facility', id: facility.id, open: true };
+  gameState.ui.placementFeedback = { x: facility.x, y: facility.y, ok: true, text: '回転しました。', timer: seconds };
+  markUIDirty('selection');
+  renderUI();
   return true;
 }
 
