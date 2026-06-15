@@ -5,12 +5,13 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { activeBuildCategory: null, selectedTool: null, activeManagementPanel: null, inspector: { type: null, id: null, open: false }, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, selectedFacilityId: null, buildCategory: 'roads', placementCategory: 'facility', message: '', directionIndex: 2, placementFeedback: null, roadEdit: createRoadEditState(), moveEdit: createMoveEditState(), lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
+    ui: { activeBuildCategory: null, selectedTool: null, activeManagementPanel: null, inspector: { type: null, id: null, open: false }, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, selectedFacilityId: null, facilityInspectorOpen: false, buildCategory: 'roads', placementCategory: 'facility', message: '', directionIndex: 2, placementFeedback: null, roadEdit: createRoadEditState(), moveEdit: createMoveEditState(), lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
     relicInventory: [],
     shopCatalog: { unlockedItemIds: [], discoveredAt: {} },
+    facilityProgress: {},
     monsters: [],
     dungeons: [],
     dungeonProgress: { unlockedDungeonIds: [], clearCounts: {}, firstClearRewardsClaimed: {} },
@@ -335,8 +336,56 @@ function isLevelableFacility(facility) {
   return facility?.kind === 'facility' && LEVELABLE_FACILITY_TYPES.includes(String(facility?.type ?? ''));
 }
 
+function getFacilityDefinition(type) {
+  const id = String(type ?? '');
+  return (CONFIG.facilities ?? CONFIG.FACILITIES)?.[id] ?? (CONFIG.tools ?? []).find(tool => tool?.id === id) ?? null;
+}
+
+function getFacilityById(id) {
+  const targetId = id == null ? '' : String(id);
+  return (gameState.world?.objects ?? []).find(object => object?.id === targetId) ?? null;
+}
+
 function getFacilityLevelConfig() {
   return CONFIG.FACILITY_LEVELS ?? { maxLevel: 1, thresholds: [0], priceMultiplierPerLevel: 0, healingMultiplierPerLevel: 0, incomeMultiplierPerLevel: 0 };
+}
+
+function normalizeFacilityProgressEntry(entry) {
+  const cfg = getFacilityLevelConfig();
+  return {
+    level: clampInteger(entry?.level, 1, safeFiniteNumber(cfg.maxLevel, 1, 1), 1),
+    xp: clampInteger(entry?.xp ?? entry?.facilityExp ?? entry?.useProgress ?? entry?.useCount, 0, Number.MAX_SAFE_INTEGER, 0),
+    totalUses: clampInteger(entry?.totalUses ?? entry?.useCount ?? entry?.uses, 0, Number.MAX_SAFE_INTEGER, 0),
+    totalIncome: safeFiniteNumber(entry?.totalIncome, 0, 0)
+  };
+}
+
+function normalizeFacilityProgress(progress) {
+  const result = {};
+  if (progress && typeof progress === 'object') {
+    for (const [type, entry] of Object.entries(progress)) result[String(type)] = normalizeFacilityProgressEntry(entry);
+  }
+  return result;
+}
+
+function ensureFacilityProgress(type) {
+  const facilityType = String(type ?? '');
+  gameState.facilityProgress = normalizeFacilityProgress(gameState.facilityProgress);
+  if (!facilityType) return normalizeFacilityProgressEntry(null);
+  gameState.facilityProgress[facilityType] = normalizeFacilityProgressEntry(gameState.facilityProgress[facilityType]);
+  return gameState.facilityProgress[facilityType];
+}
+
+function migratePlacedFacilityProgress() {
+  gameState.facilityProgress = normalizeFacilityProgress(gameState.facilityProgress);
+  for (const facility of gameState.world?.objects ?? []) {
+    if (!facility?.type || !isLevelableFacility(facility)) continue;
+    const progress = ensureFacilityProgress(facility.type);
+    progress.level = Math.max(progress.level, clampInteger(facility.level, 1, safeFiniteNumber(getFacilityLevelConfig().maxLevel, 1, 1), 1));
+    progress.xp += clampInteger(facility.facilityExp ?? facility.useProgress, 0, Number.MAX_SAFE_INTEGER, 0);
+    progress.totalUses += clampInteger(facility.useCount ?? facility.uses, 0, Number.MAX_SAFE_INTEGER, 0);
+    progress.totalIncome += safeFiniteNumber(facility.totalIncome, 0, 0);
+  }
 }
 
 function normalizeFacilityFields(facility) {
@@ -345,29 +394,32 @@ function normalizeFacilityFields(facility) {
     if (isLifeFacility(facility)) facility.slotReservations = normalizeFacilitySlotReservations(facility);
     return facility;
   }
-  const cfg = getFacilityLevelConfig();
-  facility.level = clampInteger(facility.level, 1, safeFiniteNumber(cfg.maxLevel, 1, 1), 1);
-  facility.useCount = clampInteger(facility.useCount, 0, Number.MAX_SAFE_INTEGER, 0);
-  facility.facilityExp = clampInteger(facility.facilityExp ?? facility.useProgress, 0, Number.MAX_SAFE_INTEGER, facility.useCount);
-  facility.useProgress = facility.facilityExp;
+  const progress = ensureFacilityProgress(facility.type);
+  facility.level = progress.level;
+  facility.useCount = progress.totalUses;
+  facility.facilityExp = progress.xp;
+  facility.useProgress = progress.xp;
   facility.totalIncome = safeFiniteNumber(facility.totalIncome, 0, 0);
   if (isLifeFacility(facility)) facility.slotReservations = normalizeFacilitySlotReservations(facility);
   return facility;
 }
 
-function getFacilityLevel(facility) {
+function getFacilityLevel(facilityOrType) {
+  const type = typeof facilityOrType === 'string' ? facilityOrType : facilityOrType?.type;
   const maxLevel = safeFiniteNumber(getFacilityLevelConfig().maxLevel, 1, 1);
-  return clampInteger(facility?.level, 1, maxLevel, 1);
+  return clampInteger(ensureFacilityProgress(type).level, 1, maxLevel, 1);
 }
 
-function getFacilityUseCount(facility) {
-  return clampInteger(facility?.useCount, 0, Number.MAX_SAFE_INTEGER, 0);
+function getFacilityUseCount(facilityOrType) {
+  const type = typeof facilityOrType === 'string' ? facilityOrType : facilityOrType?.type;
+  return clampInteger(ensureFacilityProgress(type).totalUses, 0, Number.MAX_SAFE_INTEGER, 0);
 }
 
-function getNextFacilityLevelThreshold(facility) {
-  if (!isLevelableFacility(facility)) return null;
+function getNextFacilityLevelThreshold(facilityOrType) {
+  const type = typeof facilityOrType === 'string' ? facilityOrType : facilityOrType?.type;
+  if (!isLevelableFacility({ type, kind: 'facility' })) return null;
   const cfg = getFacilityLevelConfig();
-  const nextLevel = getFacilityLevel(facility) + 1;
+  const nextLevel = getFacilityLevel(type) + 1;
   if (nextLevel > safeFiniteNumber(cfg.maxLevel, 1, 1)) return null;
   const thresholds = Array.isArray(cfg.thresholds) ? cfg.thresholds : [0];
   const threshold = thresholds[nextLevel - 1];
@@ -375,14 +427,14 @@ function getNextFacilityLevelThreshold(facility) {
 }
 
 function getFacilityPrice(facility) {
-  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  const cfg = getFacilityDefinition(facility?.type) ?? {};
   const base = safeFiniteNumber(cfg.basePrice ?? cfg.fee ?? cfg.spendPerVisit, 0, 0);
   const levelBonus = Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(getFacilityLevelConfig().priceMultiplierPerLevel, 0, 0);
   return Math.max(0, Math.round(base * (1 + levelBonus) * (1 + facilityBonus(facility))));
 }
 
 function getFacilityHealAmount(facility) {
-  const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
+  const cfg = getFacilityDefinition(facility?.type) ?? {};
   const base = safeFiniteNumber(cfg.baseHeal ?? cfg.healPerSecond, 0, 0);
   const levelBonus = Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(getFacilityLevelConfig().healingMultiplierPerLevel, 0, 0);
   return Math.max(0, base * (1 + levelBonus) * (1 + facilityBonus(facility)));
@@ -398,35 +450,80 @@ function getFacilityIncomeAmount(facility, paidAmount) {
   return Math.max(0, Math.round(safeFiniteNumber(paidAmount, 0, 0) * getFacilityIncomeMultiplier(facility)));
 }
 
-function levelUpFacilityIfNeeded(facility) {
-  if (!isLevelableFacility(facility) || !(gameState.world?.objects ?? []).includes(facility)) return;
-  normalizeFacilityFields(facility);
+function levelUpFacilityIfNeeded(facilityOrType) {
+  const type = typeof facilityOrType === 'string' ? facilityOrType : facilityOrType?.type;
+  if (!isLevelableFacility({ type, kind: 'facility' })) return;
+  const progress = ensureFacilityProgress(type);
   const cfg = getFacilityLevelConfig();
-  while (facility.level < safeFiniteNumber(cfg.maxLevel, 1, 1)) {
-    const threshold = getNextFacilityLevelThreshold(facility);
-    if (!Number.isFinite(threshold) || facility.useCount < threshold) break;
-    facility.level += 1;
-    const facilityName = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type]?.name ?? (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility.type]?.label ?? '施設';
-    logMessage(`${facilityName} がLv${facility.level}になりました！`);
+  while (progress.level < safeFiniteNumber(cfg.maxLevel, 1, 1)) {
+    const threshold = getNextFacilityLevelThreshold(type);
+    if (!Number.isFinite(threshold) || progress.totalUses < threshold) break;
+    progress.level += 1;
+    const facilityName = getFacilityDefinition(type)?.name ?? getFacilityDefinition(type)?.label ?? '施設';
+    logMessage(`${facilityName} がLv${progress.level}になりました！`);
   }
+  for (const object of gameState.world?.objects ?? []) if (object?.type === type) normalizeFacilityFields(object);
 }
 
 function registerFacilityUse(facility, seal, paidAmount) {
   if (!isLevelableFacility(facility) || !(gameState.world?.objects ?? []).includes(facility)) return 0;
-  normalizeFacilityFields(facility);
   const income = getFacilityIncomeAmount(facility, paidAmount);
-  facility.useCount += 1;
-  facility.facilityExp = facility.useCount;
-  facility.useProgress = facility.facilityExp;
-  facility.totalIncome = safeFiniteNumber(facility.totalIncome, 0, 0) + income;
+  const progress = ensureFacilityProgress(facility.type);
+  progress.totalUses += 1;
+  progress.xp += 1;
+  progress.totalIncome = safeFiniteNumber(progress.totalIncome, 0, 0) + income;
+  normalizeFacilityFields(facility);
   if (seal) {
     seal.facilityUseCounts = normalizeFacilityUseCounts(seal.facilityUseCounts);
     seal.facilityUseCounts[facility.type] = (seal.facilityUseCounts?.[facility.type] ?? 0) + 1;
     seal.lastFacilityId = facility.id;
     if (seal.type === 'visitor') seal.facilitiesUsedThisVisit = clampInteger(seal.facilitiesUsedThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
   }
-  levelUpFacilityIfNeeded(facility);
+  levelUpFacilityIfNeeded(facility.type);
   return income;
+}
+
+function selectFacilityById(id) {
+  const facility = getFacilityById(id);
+  if (!gameState.ui || !facility?.id) return false;
+  ensureFacilityProgress(facility.type);
+  gameState.ui.selectedFacilityId = facility.id;
+  gameState.ui.facilityInspectorOpen = true;
+  gameState.ui.selectedSealId = null;
+  gameState.ui.selectedPersonRosterId = null;
+  gameState.ui.selectedDungeonId = null;
+  openInspector('facility', facility.id);
+  markUIDirty('selection');
+  renderUI();
+  return true;
+}
+
+function clearFacilitySelection() {
+  if (!gameState.ui) return;
+  gameState.ui.selectedFacilityId = null;
+  gameState.ui.facilityInspectorOpen = false;
+  if (gameState.ui.inspector?.type === 'facility') closeInspector();
+}
+
+function startMoveSelectedFacility() {
+  const id = gameState.ui?.selectedFacilityId ?? gameState.ui?.inspector?.id;
+  const facility = getFacilityById(id);
+  if (!facility?.id) return false;
+  clearFacilitySelection();
+  return startMoveFacility(facility.id);
+}
+
+function deleteSelectedFacility() {
+  const id = gameState.ui?.selectedFacilityId ?? gameState.ui?.inspector?.id;
+  const facility = getFacilityById(id);
+  if (!facility) { clearFacilitySelection(); return false; }
+  for (const seal of gameState.seals ?? []) if (seal?.targetId === facility.id) releaseFacilitySlot(facility, seal);
+  gameState.world.objects = (gameState.world?.objects ?? []).filter(object => object?.id !== facility.id);
+  gameState.ui.placementFeedback = { x: facility.x, y: facility.y, ok: true, text: '削除しました。', timer: CONFIG.placement.feedbackSeconds };
+  clearFacilitySelection();
+  markUIDirty('all');
+  renderUI();
+  return true;
 }
 
 function getFacilityLevelProgressText(facility) {
@@ -834,12 +931,14 @@ function initGame(residentName) {
   gameState.relicInventory = [];
   gameState.dungeons = [];
   gameState.dungeonProgress = normalizeDungeonProgress(null);
+  gameState.facilityProgress = {};
   updateDungeonUnlocks();
   gameState.shopCatalog = { unlockedItemIds: [], discoveredAt: {} };
   gameState.ui.selectedSealId = null;
   gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  gameState.ui.facilityInspectorOpen = false;
   gameState.ui.inspector = { type: null, id: null, open: false };
   clearRoadEdit();
   gameState.logs = [];

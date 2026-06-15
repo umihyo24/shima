@@ -144,7 +144,8 @@ const CONFIG = Object.freeze({
     { id: 'move', label: '↔️ 移動', name: '移動', category: 'manage', kind: 'move', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '既存施設を選択して移動します。Rで向きを変更できます。右クリック/Escapeでキャンセル。', requiresRoadEntrance: false, levelText: '', notes: '移動は無料です。施設レベル・利用回数・収益を保持します。' },
     { id: 'delete', label: '❌ 削除', name: '削除', category: 'manage', kind: 'delete', w: 1, h: 1, width: 1, height: 1, cost: 0, effectText: '配置済みの道路・施設・装飾を撤去します。', requiresRoadEntrance: false, levelText: '', notes: '道路はドラッグでまとめて削除できます。' }
   ],
-  FACILITY_LEVELS: { maxLevel: 10, thresholds: [0, 5, 12, 25, 45, 70, 100, 140, 190, 250], priceMultiplierPerLevel: 0.08, healingMultiplierPerLevel: 0.08, incomeMultiplierPerLevel: 0.05 },
+  FACILITY_LEVELS: { maxLevel: 10, defaultMaxLevel: 10, thresholds: [0, 5, 12, 25, 45, 70, 100, 140, 190, 250], xpRequiredByLevel: [0, 5, 12, 25, 45, 70, 100, 140, 190, 250], qualityPerLevel: 1, priceMultiplierPerLevel: 0.08, healingMultiplierPerLevel: 0.08, incomeMultiplierPerLevel: 0.05, effectMultiplierPerLevel: 1.2 },
+  FACILITY_INSPECTOR: { width: 300, padding: 12, buttonHeight: 32, clickPriority: 30, fallbackName: '不明な施設', noGoodsText: '解放済み商品なし', fixedEffectText: '固定効果' },
   FACILITIES: {
     inn: { name: '宿屋', label: '宿屋', w: 2, h: 2, basePrice: 36, fee: 36, baseHeal: 20, healPerSecond: 20, color: '#2f7eb5', bonusDecoration: 'tree', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'relax', tags: ['heal', 'lodging'] },
     restaurant: { name: '食堂', label: '食堂', w: 2, h: 2, basePrice: 45, baseHeal: 24, favorGain: 1, spendPerVisit: 45, color: '#d66b2b', bonusDecoration: 'flower', bonusRate: 0.05, entranceRequired: true, entranceSide: 'north', category: 'food', tags: ['food', 'meal'] },

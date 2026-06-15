@@ -80,6 +80,7 @@ function selectSeal(sealId, source = 'unknown') {
   gameState.ui.selectedPersonRosterId = `seal:${seal.id}`;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  gameState.ui.facilityInspectorOpen = false;
   if (gameState.ui.selectedTool) gameState.ui.selectedTool = null;
   openInspector('seal', seal.id);
   markUIDirty('selection');
@@ -96,6 +97,7 @@ function selectPersonByRosterId(rosterId) {
   gameState.ui.selectedSealId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  gameState.ui.facilityInspectorOpen = false;
   closeInspector();
   markUIDirty('selection');
   renderUI();
@@ -291,6 +293,8 @@ function handleUiAction(event, options = {}) {
   else if (action === 'rotate') rotateTool();
   else if (action === 'manualSave') saveGame('manual');
   else if (action === 'clearTool') clearSelectedTool();
+  else if (action === 'moveFacility') startMoveSelectedFacility();
+  else if (action === 'deleteFacility') deleteSelectedFacility();
   else if (action === 'zoomIn') setZoom(gameState.camera.zoom + CONFIG.camera.buttonStep);
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
   else if (action === 'close-panel' || action === 'closeManagement') closeManagementPanel();
@@ -330,6 +334,7 @@ function clearContextSelection() {
   gameState.ui.selectedPersonRosterId = null;
   gameState.ui.selectedDungeonId = null;
   gameState.ui.selectedFacilityId = null;
+  gameState.ui.facilityInspectorOpen = false;
   closeInspector();
   if (hadSelection) markUIDirty('selection');
   return hadSelection;
@@ -340,6 +345,7 @@ function cancelCurrentAction(reason = 'cancel') {
   if (gameState.ui.roadEdit?.active) { clearRoadEdit(); markUIDirty('tool'); renderUI(); return true; }
   if (gameState.ui.moveEdit?.active) { cancelMoveFacility(); markUIDirty('tool'); renderUI(); return true; }
   if (gameState.ui.selectedTool) { clearSelectedTool(); return true; }
+  if (gameState.ui.inspector?.open && gameState.ui.inspector?.type === 'facility') { clearFacilitySelection(); renderUI(); return true; }
   if (gameState.ui.inspector?.open) { closeInspector(); clearContextSelection(); renderUI(); return true; }
   if (gameState.ui.activeManagementPanel) { closeManagementPanel(); return true; }
   if (gameState.ui.activeBuildCategory) { closeBuildDrawer(); return true; }
@@ -487,14 +493,7 @@ function bindInputEvents() {
     if (!isPlacementModeActive()) {
       const clickedObject = objectAt(gameState.input.mouseTile?.x, gameState.input.mouseTile?.y);
       if (clickedObject?.kind === 'facility' && clickedObject?.id) {
-        gameState.ui.selectedFacilityId = clickedObject.id;
-        gameState.ui.selectedSealId = null;
-        gameState.ui.selectedPersonRosterId = null;
-        closeInspector();
-        gameState.ui.selectedDungeonId = null;
-        if (gameState.ui) gameState.ui.activeBuildCategory = normalizeBuildCategory(gameState.ui.buildCategory, 'relax');
-        markUIDirty('selection');
-        renderUI();
+        selectFacilityById(clickedObject.id);
         return;
       }
       const hadSelection = Boolean(gameState.ui.selectedSealId || gameState.ui.selectedPersonRosterId || gameState.ui.selectedDungeonId || gameState.ui.selectedFacilityId || gameState.ui.inspector?.open);
@@ -502,6 +501,7 @@ function bindInputEvents() {
       gameState.ui.selectedPersonRosterId = null;
       gameState.ui.selectedDungeonId = null;
       gameState.ui.selectedFacilityId = null;
+      gameState.ui.facilityInspectorOpen = false;
       closeInspector();
       if (hadSelection) markUIDirty('selection');
     }
