@@ -234,9 +234,11 @@ function getEntityScreenPosition(entity) {
   return { x: safeFiniteNumber(entity?.x, 0, 0), y: safeFiniteNumber(entity?.y, 0, 0) };
 }
 
-function getSealRenderSize() {
+function getSealRenderSize(seal) {
   const settings = getEntityRenderConfig();
-  return CONFIG.world.tile * safeFiniteNumber(settings.sealSpriteScale, 1.5, 0.1);
+  const sizeClass = normalizeSealSizeClass(seal?.sizeClass);
+  const classScale = safeFiniteNumber(settings.sealSizeClassScale?.[sizeClass], settings.sealSizeClassScale?.normal ?? 1, 0.1);
+  return CONFIG.world.tile * safeFiniteNumber(settings.sealSpriteScale, 1.5, 0.1) * classScale;
 }
 
 function getMonsterRenderSize() {
@@ -313,7 +315,7 @@ function drawMonsterHp(context, monster, x, y, spriteSize) {
 
 function drawSeal(context, seal) {
   const { x, y } = getEntityScreenPosition(seal);
-  const spriteSize = getSealRenderSize();
+  const spriteSize = getSealRenderSize(seal);
   const drawX = x - spriteSize / 2;
   const drawY = y - spriteSize / 2;
   drawEntityShadow(context, x, y, spriteSize, spriteSize, 'seal');

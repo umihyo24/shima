@@ -168,6 +168,7 @@ function spawnVisitorFromProfile(profile) {
     name: profile.name,
     personality: profile.personality,
     type: 'visitor',
+    sizeClass: normalizeSealSizeClass(profile.sizeClass),
     assetKey: assetKeyForVisitorProfile(profile.id),
     facing: 'left',
     x: start.x,
