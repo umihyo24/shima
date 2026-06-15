@@ -51,7 +51,6 @@ function runMonthlyResults() {
     gameState.calendar.year = previousYear + 1;
   }
   unlockKnownVisitors();
-  maybeAddMonthlyRelicDrop(hunts);
   logMessage(`${previousYear}年${previousMonth}月の月末結果: 狩猟${hunts}回 / 知名度+${reward} / 収入${income}G。`);
   gameState.stats.monthlyHunts = 0;
   gameState.stats.monthlyPlayerIncome = 0;
@@ -1065,97 +1064,65 @@ function removeDefeatedMonsters() {
 
 
 function getUnlockedDungeonLevelDefs() {
-  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
-  updateDungeonUnlocks(false);
-  const defs = [];
-  for (const type of Object.values(CONFIG.DUNGEONS?.types ?? {})) {
-    for (const levelDef of type?.levels ?? []) if (isDungeonLevelUnlocked(type.id, levelDef.level)) defs.push({ ...levelDef, typeId: type.id, typeName: type.name, areaId: type.areaId });
-  }
-  return defs;
+  updatePermanentDungeonUnlocks(false);
+  return getUnlockedDungeonDefs();
 }
 
-function updateDungeonUnlocks(announce = true) {
+function updatePermanentDungeonUnlocks(announce = true) {
   gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
-  const knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0);
-  const neededClears = clampInteger(CONFIG.DUNGEONS?.clearCountToUnlockNextLevel, 1, Number.MAX_SAFE_INTEGER, 3);
-  for (const type of Object.values(CONFIG.DUNGEONS?.types ?? {})) {
-    for (const levelDef of type?.levels ?? []) {
-      const level = clampInteger(levelDef?.level, 1, Number.MAX_SAFE_INTEGER, 1);
-      const key = getDungeonLevelKey(type.id, level);
-      const knownOk = knownness >= safeFiniteNumber(levelDef?.knownnessRequired, 0, 0);
-      const previousOk = level <= 1 || clampInteger(gameState.dungeonProgress.clearCounts?.[getDungeonLevelKey(type.id, level - 1)], 0, Number.MAX_SAFE_INTEGER, 0) >= neededClears;
-      if (knownOk && previousOk && gameState.dungeonProgress.unlocked?.[key] !== true) {
-        gameState.dungeonProgress.unlocked[key] = true;
-        if (announce) logMessage(`${type.name} Lv${level} が発見されるようになりました`);
-      }
+  for (const def of CONFIG.DUNGEONS?.definitions ?? []) {
+    if (!gameState.dungeonProgress.unlockedDungeonIds.includes(def.id) && isDungeonUnlocked(def)) {
+      gameState.dungeonProgress.unlockedDungeonIds.push(def.id);
+      if (announce) logMessage(`${def.name} Lv${def.level} が攻略可能になりました！`);
     }
   }
+  ensurePermanentDungeonInstances();
+}
+
+function updateDungeonUnlocks(announce = true) { updatePermanentDungeonUnlocks(announce); }
+
+function ensurePermanentDungeonInstances() {
+  gameState.dungeons = normalizeDungeons(gameState.dungeons);
+  const activeByDef = new Set((gameState.dungeons ?? []).filter(dungeon => ['available', 'assembling', 'running', 'returning', 'completed'].includes(dungeon?.state)).map(dungeon => dungeon?.dungeonDefId).filter(Boolean));
+  for (const def of getUnlockedDungeonDefs()) {
+    if (!activeByDef.has(def.id)) gameState.dungeons.push(createDungeonInstanceFromDef(def));
+  }
+}
+
+function claimFirstClearUnlocks(dungeonDef) {
+  const def = typeof dungeonDef === 'string' ? getDungeonDefById(dungeonDef) : dungeonDef;
+  if (!def) return false;
+  gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
+  if (gameState.dungeonProgress.firstClearRewardsClaimed?.[def.id] === true) return false;
+  for (const itemId of def.firstClearUnlockItems ?? []) unlockShopItem(itemId, def.id);
+  gameState.dungeonProgress.firstClearRewardsClaimed[def.id] = true;
+  return true;
 }
 
 function spawnDungeon() {
-  const defs = getUnlockedDungeonLevelDefs();
-  if (defs.length <= 0) return null;
-  const levelDef = defs[Math.floor(Math.random() * defs.length)];
-  const type = getDungeonTypeDef(levelDef.typeId);
-  const area = getDungeonAreaDef(levelDef.areaId ?? type?.areaId ?? 'coast');
-  const point = area ? findDungeonSpawnPoint(area.id) : null;
-  if (!type || !area || !point) return null;
-  const dungeon = {
-    id: `dungeon-${Date.now()}-${Math.random().toString(16).slice(2)}`,
-    typeId: type.id,
-    type: type.id,
-    level: levelDef.level,
-    name: `${levelDef.name || type.name} Lv${levelDef.level}`,
-    areaId: area.id,
-    x: point.x,
-    y: point.y,
-    state: 'available',
-    expiresInMs: safeFiniteNumber(CONFIG.DUNGEONS?.expiresInMs, 180000, 0),
-    progressMs: 0,
-    durationMs: getDungeonDurationMs(levelDef),
-    recruitCost: safeFiniteNumber(levelDef.recruitCost, 0, 0),
-    participantIds: [],
-    nodes: createDungeonNodes(type.id, levelDef.level),
-    currentNodeIndex: 0,
-    nodeTimerMs: 0,
-    expeditionLog: [],
-    reward: normalizeDungeonReward(null),
-    startedAt: null,
-    completedAt: null,
-    rewardPreview: getDungeonRewardPreview({ typeId: type.id, level: levelDef.level }),
-    enemyRefs: [],
-    enemyTypes: ['crab'],
-    dropTableId: '',
-    completedDisplayMs: 0
-  };
-  gameState.dungeons = Array.isArray(gameState.dungeons) ? gameState.dungeons : [];
-  gameState.dungeons.push(dungeon);
-  logMessage(`${dungeon.name}が${area.label ?? area.id}に現れました。地図上の入口をクリックできます。`);
-  return dungeon;
+  updatePermanentDungeonUnlocks(true);
+  return null;
 }
 
 function updateDungeons(deltaMs) {
   gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
-  updateDungeonUnlocks(false);
+  updatePermanentDungeonUnlocks(false);
   gameState.dungeons = normalizeDungeons(gameState.dungeons);
-  gameState.timers.dungeonSpawnMs = safeFiniteNumber(gameState.timers?.dungeonSpawnMs, 0, 0) + safeFiniteNumber(deltaMs, 0, 0);
   for (const dungeon of [...(gameState.dungeons ?? [])]) {
-    if (dungeon?.state === 'available') {
-      dungeon.expiresInMs -= safeFiniteNumber(deltaMs, 0, 0);
-      if (dungeon.expiresInMs <= 0) expireDungeon(dungeon);
-    } else if (dungeon?.state === 'assembling') updateAssemblingDungeon(dungeon, deltaMs);
+    if (dungeon?.state === 'assembling') updateAssemblingDungeon(dungeon, deltaMs);
     else if (dungeon?.state === 'running') updateRunningDungeon(dungeon, deltaMs);
     else if (dungeon?.state === 'returning') updateReturningDungeon(dungeon, deltaMs);
-    else if (dungeon?.state === 'completed' || dungeon?.state === 'expired') dungeon.completedDisplayMs = safeFiniteNumber(dungeon.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0) - safeFiniteNumber(deltaMs, 0, 0);
+    else if (dungeon?.state === 'completed') dungeon.completedDisplayMs = safeFiniteNumber(dungeon.completedDisplayMs, CONFIG.dungeon?.completedDisplayMs ?? 0, 0) - safeFiniteNumber(deltaMs, 0, 0);
   }
-  gameState.dungeons = (gameState.dungeons ?? []).filter(dungeon => !['completed', 'expired'].includes(dungeon?.state) || safeFiniteNumber(dungeon?.completedDisplayMs, 0, 0) > 0);
+  for (const dungeon of gameState.dungeons ?? []) {
+    if (dungeon?.state === 'completed' && safeFiniteNumber(dungeon?.completedDisplayMs, 0, 0) <= 0) {
+      const def = getDungeonDefById(dungeon?.dungeonDefId) ?? getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
+      const fresh = createDungeonInstanceFromDef(def, dungeon);
+      if (fresh) Object.assign(dungeon, fresh, { state: 'available', participantIds: [], expeditionLog: [], reward: normalizeDungeonReward(null), runId: '' });
+    }
+  }
   cleanupOrphanedExpeditions();
-  const activeCount = (gameState.dungeons ?? []).filter(dungeon => ['available', 'assembling', 'running', 'returning'].includes(dungeon?.state)).length;
-  const interval = (gameState.dungeons ?? []).length <= 0 ? CONFIG.DUNGEONS?.initialSpawnDelayMs : CONFIG.DUNGEONS?.spawnIntervalMs;
-  if (activeCount < clampInteger(CONFIG.DUNGEONS?.maxActiveDungeons, 1, Number.MAX_SAFE_INTEGER, 2) && gameState.timers.dungeonSpawnMs >= safeFiniteNumber(interval, 90000, 1)) {
-    gameState.timers.dungeonSpawnMs = 0;
-    spawnDungeon();
-  }
+  ensurePermanentDungeonInstances();
   clearSelectedDungeonIfInvalid();
 }
 
@@ -1207,6 +1174,7 @@ function startDungeon(dungeonId) {
   const participants = chooseDungeonParticipants(dungeon);
   const entrance = getDungeonEntrancePoint(dungeon);
   gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) - safeFiniteNumber(dungeon.recruitCost, 0, 0);
+  dungeon.runId = `run-${Date.now()}-${Math.random().toString(16).slice(2)}`;
   dungeon.participantIds = participants;
   dungeon.state = 'assembling';
   dungeon.progressMs = 0;
@@ -1384,8 +1352,8 @@ function resolveDungeonNode(dungeon, node, participants) {
 
 function completeDungeon(dungeon) {
   if (!dungeon || dungeon.state !== 'running') return;
-  const levelDef = getDungeonLevelDef(dungeon.typeId ?? dungeon.type, dungeon.level);
-  const baseReward = { g: safeFiniteNumber(levelDef?.rewardG, 0, 0), exp: safeFiniteNumber(levelDef?.rewardExp, 0, 0), knownness: safeFiniteNumber(levelDef?.rewardKnownness, 0, 0), items: rollDungeonDrop(dungeon) };
+  const levelDef = getDungeonDefById(dungeon.dungeonDefId) ?? getDungeonLevelDef(dungeon.typeId ?? dungeon.type, dungeon.level);
+  const baseReward = { g: safeFiniteNumber(levelDef?.rewardG, 0, 0), exp: safeFiniteNumber(levelDef?.rewardExp, 0, 0), knownness: safeFiniteNumber(levelDef?.rewardKnownness, 0, 0), items: [] };
   dungeon.reward = mergeDungeonReward(baseReward, dungeon.reward);
   const power = getPartyPower(dungeon.participantIds);
   const recommended = getDungeonRecommendedPower(dungeon);
@@ -1397,21 +1365,12 @@ function completeDungeon(dungeon) {
     addDungeonLog(dungeon, `推奨戦力不足のため報酬が少し減りました（戦力${Math.floor(power)}/${Math.floor(recommended)}）。`);
   }
   dungeon.completedAt = Date.now();
-  for (const drop of dungeon.reward.items ?? []) {
-    const unlocked = unlockCatalogItem(drop.itemId, dungeon.name);
-    if (!unlocked) {
-      gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + CONFIG.knownness.duplicateRelicReward;
-      const item = getItemDef(drop.itemId);
-      logMessage(`${item?.name ?? drop.itemId}を再発見しました（知名度+${CONFIG.knownness.duplicateRelicReward}）。`);
-    }
-  }
+  claimFirstClearUnlocks(levelDef);
   gameState.player.g = safeFiniteNumber(gameState.player?.g, 0, 0) + safeFiniteNumber(dungeon.reward.g, 0, 0);
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0) + safeFiniteNumber(dungeon.reward.g, 0, 0);
   gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + safeFiniteNumber(dungeon.reward.knownness, 0, 0);
   gameState.dungeonProgress = normalizeDungeonProgress(gameState.dungeonProgress);
-  const clearKey = getDungeonLevelKey(dungeon.typeId ?? dungeon.type, dungeon.level);
-  gameState.dungeonProgress.clearCounts[clearKey] = clampInteger(gameState.dungeonProgress.clearCounts?.[clearKey], 0, Number.MAX_SAFE_INTEGER, 0) + 1;
-  gameState.dungeonProgress.totalClears = clampInteger(gameState.dungeonProgress.totalClears, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  incrementDungeonClearCount(levelDef?.id ?? dungeon.dungeonDefId);
   const participants = normalizeDungeonParticipantIds(dungeon.participantIds).map(p => getSealById(p.sealId)).filter(Boolean);
   for (const seal of participants) {
     seal.exp = safeFiniteNumber(seal.exp, 0, 0) + safeFiniteNumber(dungeon.reward.exp, 0, 0);
@@ -1430,7 +1389,7 @@ function completeDungeon(dungeon) {
   addDungeonLog(dungeon, `攻略完了！ ${Math.floor(dungeon.reward.g)}G / EXP${Math.floor(dungeon.reward.exp)} / 知名度+${Math.floor(dungeon.reward.knownness)}を獲得。`);
   unlockKnownVisitors();
   updateDungeonUnlocks(true);
-  logMessage(`${dungeon.name}を攻略完了！ ${Math.floor(dungeon.reward.g)}G / EXP${Math.floor(dungeon.reward.exp)} / 知名度+${Math.floor(dungeon.reward.knownness)} / ${(dungeon.reward.items ?? []).map(drop => `${getItemDef(drop.itemId)?.name ?? drop.itemId}x${drop.count}`).join('、') || 'ドロップなし'}`);
+  logMessage(`${dungeon.name}を攻略完了！ ${Math.floor(dungeon.reward.g)}G / EXP${Math.floor(dungeon.reward.exp)} / 知名度+${Math.floor(dungeon.reward.knownness)}`);
   updateHud();
 }
 
@@ -1490,7 +1449,8 @@ function addDungeonRewardToProfile(profile, rewardExp, rewardFavor) {
 }
 
 function createDungeonNodes(typeId, level) {
-  return normalizeDungeonNodes(null, getDungeonLevelDef(typeId, level));
+  const def = (CONFIG.DUNGEONS?.definitions ?? []).find(item => item?.typeId === String(typeId ?? '') && clampInteger(item?.level, 1, Number.MAX_SAFE_INTEGER, 1) === clampInteger(level, 1, Number.MAX_SAFE_INTEGER, 1));
+  return normalizeDungeonNodes(null, def ?? getDungeonLevelDef(typeId, level));
 }
 
 function rollDungeonDrop(dungeon) {
@@ -1631,8 +1591,8 @@ function expireDungeon(dungeon) {
 }
 
 function getDungeonRewardPreview(dungeon) {
-  const levelDef = getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
-  return { g: safeFiniteNumber(levelDef?.rewardG, 0, 0), exp: safeFiniteNumber(levelDef?.rewardExp, 0, 0), knownness: safeFiniteNumber(levelDef?.rewardKnownness, 0, 0), itemIds: (levelDef?.dropTable ?? []).map(entry => String(entry?.itemId ?? '')).filter(Boolean) };
+  const levelDef = getDungeonDefById(dungeon?.dungeonDefId) ?? getDungeonLevelDef(dungeon?.typeId ?? dungeon?.type, dungeon?.level);
+  return { g: safeFiniteNumber(levelDef?.rewardG, 0, 0), exp: safeFiniteNumber(levelDef?.rewardExp, 0, 0), knownness: safeFiniteNumber(levelDef?.rewardKnownness, 0, 0), itemIds: (levelDef?.firstClearUnlockItems ?? []).map(String).filter(id => getItemDef(id)) };
 }
 
 function clearSelectedDungeonIfInvalid() {

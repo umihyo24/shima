@@ -22,7 +22,7 @@ function getSerializableGameState() {
     seals: cloneSerializable((gameState.seals ?? []).map(seal => { const copy = { ...seal }; delete copy.path; delete copy.pathTargetKey; delete copy.targetFacility; return copy; }), []),
     visitorProfiles: cloneSerializable(gameState.visitorProfiles, []),
     dungeons: cloneSerializable(normalizeDungeons(gameState.dungeons), []),
-    dungeonProgress: cloneSerializable(normalizeDungeonProgress(gameState.dungeonProgress), { unlocked: {}, clearCounts: {}, totalClears: 0 }),
+    dungeonProgress: cloneSerializable(normalizeDungeonProgress(gameState.dungeonProgress), { unlockedDungeonIds: [], clearCounts: {}, firstClearRewardsClaimed: {} }),
     relicInventory: cloneSerializable(normalizeRelicInventory(gameState.relicInventory), []),
     shopCatalog: cloneSerializable(normalizeShopCatalog(gameState.shopCatalog, gameState.relicInventory), { unlockedItemIds: [], discoveredAt: {} }),
     village: { knownness: safeFiniteNumber(gameState.village?.knownness, CONFIG.knownness.initial, 0), clearCount: clampInteger(gameState.village?.clearCount, 0, Number.MAX_SAFE_INTEGER, 0) },
