@@ -251,6 +251,70 @@ function chooseNextHuntTarget(seal) {
   return claimNearestMonster(seal, seal?.selectedHuntAreaId ?? 'coast');
 }
 
+function isGiantEnemy(enemy) {
+  return enemy?.isGiant === true;
+}
+
+function isSealBossHuntParticipant(seal, boss) {
+  if (!seal || !boss) return false;
+  return (boss?.huntParticipantSealIds ?? []).map(String).includes(String(seal.id ?? ''));
+}
+
+function canSealIntentionallyAttackBoss(seal, boss) {
+  return isGiantEnemy(boss) && boss?.state === 'huntActive' && isSealBossHuntParticipant(seal, boss);
+}
+
+function canSealAutoTargetEnemy(seal, enemy) {
+  if (!seal || !enemy || safeFiniteNumber(enemy?.hp, 0, 0) <= 0) return false;
+  if (!isGiantEnemy(enemy)) return true;
+  return canSealIntentionallyAttackBoss(seal, enemy);
+}
+
+function getBossSafetyTiles(key, fallback) {
+  return safeFiniteNumber(CONFIG.GIANT_ENEMY_SAFETY?.[key], fallback, 0) * CONFIG.world.tile;
+}
+
+function getIslandEntrancePoint() {
+  const point = CONFIG.visitor?.entrySpawn ?? CONFIG.ROUTES?.entryCorridor?.waypoints?.[0] ?? CONFIG.VISITORS?.ARRIVAL?.shoreLandingPoints?.[0];
+  return point ? gridToWorld(safeFiniteNumber(point.x, 0, 0), safeFiniteNumber(point.y, 0, 0)) : gridToWorld(14, 24);
+}
+
+function isInsideBossSafeZone(x, y, radiusKey = 'entranceSafeRadius') {
+  const entrance = getIslandEntrancePoint();
+  return distance(x, y, entrance.x, entrance.y) < getBossSafetyTiles(radiusKey, 8);
+}
+
+function isValidGiantBossSpawn(x, y) {
+  const g = worldToGrid(x, y);
+  return isSafeGiantEnemySpawnTile(g.x, g.y) && !isInsideBossSafeZone(x, y, 'minSpawnDistanceFromEntrance');
+}
+
+function updateBossLeashAndSafeZone(boss) {
+  if (!isGiantEnemy(boss) || safeFiniteNumber(boss?.hp, 0, 0) <= 0 || boss.skirmishId) return;
+  const home = { x: safeFiniteNumber(boss.homeX, boss.x, 0), y: safeFiniteNumber(boss.homeY, boss.y, 0) };
+  const leashRadius = getBossSafetyTiles('leashRadius', 10);
+  const avoidEntrance = isInsideBossSafeZone(boss.x, boss.y, 'avoidEntranceRadius');
+  const tooFar = distance(boss.x, boss.y, home.x, home.y) > leashRadius;
+  if (!avoidEntrance && !tooFar) return;
+  const target = tooFar ? home : { x: (home.x * 2 + boss.x) / 3, y: (home.y * 2 + boss.y) / 3 };
+  const d = Math.max(1, distance(boss.x, boss.y, target.x, target.y));
+  const step = Math.min(d, CONFIG.world.tile * safeFiniteNumber(CONFIG.GIANT_ENEMY_SAFETY?.returnStepRatio, 0.08, 0));
+  boss.x += (target.x - boss.x) / d * step;
+  boss.y += (target.y - boss.y) / d * step;
+  boss.target = null;
+  boss.assignedSealId = null;
+  if (boss.state !== 'huntActive') boss.state = 'roaming';
+}
+
+function applySealLevelUpHpRule(seal, oldMaxHp, newMaxHp) {
+  if (!seal) return;
+  const currentHp = safeFiniteNumber(seal.hp, 0, 0);
+  const increase = Math.max(0, safeFiniteNumber(newMaxHp, oldMaxHp, 1) - safeFiniteNumber(oldMaxHp, newMaxHp, 1));
+  if (CONFIG.LEVEL_UP?.healToFull === true) seal.hp = safeFiniteNumber(newMaxHp, oldMaxHp, 1);
+  else if (CONFIG.LEVEL_UP?.addMaxHpIncreaseToCurrentHp === true) seal.hp = Math.min(safeFiniteNumber(newMaxHp, oldMaxHp, 1), currentHp + increase);
+  else seal.hp = Math.min(safeFiniteNumber(newMaxHp, oldMaxHp, 1), currentHp);
+}
+
 
 
 function getDistance(a, b) {
@@ -273,7 +337,13 @@ function isSealEnemyContact(seal, monster) {
 function canForceStartCombat(seal, monster) {
   if (!seal || !monster) return false;
   if (safeFiniteNumber(seal.hp, 0, 0) <= 0 || safeFiniteNumber(monster.hp, 0, 0) <= 0) return false;
-  if (!monster?.isGiant && (!isPointInsideMonsterTerritory(monster, seal) || !isPointInsideMonsterTerritory(monster, monster))) return false;
+  if (isGiantEnemy(monster)) {
+    const aggro = getBossSafetyTiles('aggroRadius', 5);
+    const chase = getBossSafetyTiles('chaseRadius', 7);
+    const fromHome = distance(safeFiniteNumber(monster.x, 0, 0), safeFiniteNumber(monster.y, 0, 0), safeFiniteNumber(monster.homeX, monster.x, 0), safeFiniteNumber(monster.homeY, monster.y, 0));
+    if (!canSealIntentionallyAttackBoss(seal, monster) && getDistance(seal, monster) > aggro) return false;
+    if (getDistance(seal, monster) > chase || fromHome > getBossSafetyTiles('leashRadius', 10) || isInsideBossSafeZone(seal.x, seal.y, 'entranceSafeRadius')) return false;
+  } else if (!isPointInsideMonsterTerritory(monster, seal) || !isPointInsideMonsterTerritory(monster, monster)) return false;
   return isSealAvailableForSkirmish(seal) && isEnemyAvailableForSkirmish(monster);
 }
 
@@ -443,6 +513,8 @@ function tryJoinNearbySeals(skirmish) {
   const enemies = (skirmish.enemyIds ?? []).map(id => (gameState.monsters ?? []).find(m => m?.id === id)).filter(Boolean);
   for (const seal of gameState.seals ?? []) {
     if ((skirmish.sealIds ?? []).length >= (skirmish?.isGiantHunt ? clampInteger(CONFIG.GIANT_ENEMY?.maxParticipants, 1, 12, 5) : clampInteger(CONFIG.SKIRMISH?.maxSealParticipants, 1, 8, 3))) break;
+    const bossEnemies = enemies.filter(isGiantEnemy);
+    if (bossEnemies.length > 0 && !bossEnemies.some(enemy => isSealBossHuntParticipant(seal, enemy))) continue;
     if (isSealAvailableForSkirmish(seal) && nearSkirmishJoinPoint(seal, skirmish, enemies)) addSealToSkirmish(skirmish, seal);
   }
 }
@@ -451,6 +523,7 @@ function tryJoinNearbyEnemies(skirmish) {
   const seals = (skirmish.sealIds ?? []).map(getSealById).filter(Boolean);
   for (const enemy of gameState.monsters ?? []) {
     if ((skirmish.enemyIds ?? []).length >= clampInteger(CONFIG.SKIRMISH?.maxEnemyParticipants, 1, 8, 3)) break;
+    if (isGiantEnemy(enemy) && !skirmish?.isGiantHunt) continue;
     if (isEnemyAvailableForSkirmish(enemy) && nearSkirmishJoinPoint(enemy, skirmish, seals)) addEnemyToSkirmish(skirmish, enemy);
   }
 }
@@ -506,6 +579,12 @@ function updateSkirmishes() {
     else if (presentEnemies.length <= 0 || liveEnemies.length <= 0) resolveSkirmish(skirmish, true);
     else if (skirmish.timer >= clampInteger(CONFIG.SKIRMISH?.staleCombatTimeoutFrames, 1, Number.MAX_SAFE_INTEGER, 600)) resolveSkirmish(skirmish, false);
     if (skirmish.state !== 'fighting') { cleanupSkirmish(skirmish); done.push(skirmish); continue; }
+    const bossEnemy = liveEnemies.find(isGiantEnemy);
+    if (bossEnemy) {
+      const homeDistance = distance(safeFiniteNumber(bossEnemy.x, 0, 0), safeFiniteNumber(bossEnemy.y, 0, 0), safeFiniteNumber(bossEnemy.homeX, bossEnemy.x, 0), safeFiniteNumber(bossEnemy.homeY, bossEnemy.y, 0));
+      const sealInEntrance = liveSeals.some(seal => isInsideBossSafeZone(seal.x, seal.y, 'entranceSafeRadius'));
+      if (homeDistance > getBossSafetyTiles('leashRadius', 10) || sealInEntrance) { resolveSkirmish(skirmish, false); cleanupSkirmish(skirmish); done.push(skirmish); continue; }
+    }
     if (skirmish.joinTimer >= clampInteger(CONFIG.SKIRMISH?.joinCheckIntervalFrames, 1, Number.MAX_SAFE_INTEGER, 20)) { skirmish.joinTimer = 0; tryJoinNearbySeals(skirmish); tryJoinNearbyEnemies(skirmish); assignSkirmishSlots(skirmish); }
     assignSkirmishSlots(skirmish);
     const seals = skirmish.sealIds.map(getSealById).filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0 && seal.state === 'fighting');
@@ -849,7 +928,7 @@ function sendSealBackThroughHuntCorridor(seal) {
 }
 
 function claimNearestMonster(seal, areaId = null) {
-  const available = (gameState.monsters ?? []).filter(m => m?.hp > 0 && (!areaId || (m?.areaId ?? 'coast') === areaId) && (!m.assignedSealId || m.assignedSealId === seal.id));
+  const available = (gameState.monsters ?? []).filter(m => m?.hp > 0 && canSealAutoTargetEnemy(seal, m) && (!areaId || (m?.areaId ?? 'coast') === areaId) && (!m.assignedSealId || m.assignedSealId === seal.id));
   const monster = available.reduce((best, m) => !best || distance(seal.x, seal.y, m.x, m.y) < distance(seal.x, seal.y, best.x, best.y) ? m : best, null);
   if (monster) monster.assignedSealId = seal.id;
   return monster;
@@ -857,7 +936,7 @@ function claimNearestMonster(seal, areaId = null) {
 
 function updateMovingToMonster(seal, dt) {
   const monster = (gameState.monsters ?? []).find(m => m?.id === seal.targetId);
-  if (!monster || monster.hp <= 0) { seal.targetId = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
+  if (!monster || monster.hp <= 0 || !canSealAutoTargetEnemy(seal, monster)) { seal.targetId = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
   if (shouldReturnFromHunt(seal)) { monster.assignedSealId = null; seal.targetId = null; sendSealBackThroughHuntCorridor(seal); return; }
   if (!seal.target || seal.pathTargetKey !== `${worldToGrid(monster.x, monster.y).x},${worldToGrid(monster.x, monster.y).y}:monster`) {
     if (!setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster')) { monster.assignedSealId = null; seal.targetId = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
@@ -1214,9 +1293,10 @@ function addFavor(seal, amount) {
 function applyLevelUps(seal) {
   while (seal.exp >= seal.level * CONFIG.seal.levelExp) {
     seal.level += 1;
-    seal.maxHp += CONFIG.seal.levelHpGain;
+    const oldMaxHp = safeFiniteNumber(seal.maxHp, CONFIG.seal.maxHp, 1);
+    seal.maxHp = oldMaxHp + CONFIG.seal.levelHpGain;
     seal.attack += CONFIG.seal.levelAttackGain;
-    seal.hp = seal.maxHp;
+    applySealLevelUpHpRule(seal, oldMaxHp, seal.maxHp);
     addFavor(seal, CONFIG.seal.favorLevelUp);
     logMessage(`${seal.name}がLv.${seal.level}になりました！`);
   }
@@ -2044,9 +2124,9 @@ function getGiantEnemyById(id) { return (gameState.giantEnemies ?? []).find(enem
 function getActiveGiantEnemies() { return (gameState.giantEnemies ?? []).filter(enemy => enemy && !enemy.defeated && safeFiniteNumber(enemy.hp, 0, 0) > 0); }
 function ensureGiantEnemyState() { gameState.giantEnemies = Array.isArray(gameState.giantEnemies) ? gameState.giantEnemies : []; gameState.giantEnemyFirstClears = gameState.giantEnemyFirstClears && typeof gameState.giantEnemyFirstClears === 'object' ? gameState.giantEnemyFirstClears : {}; gameState.timers.giantEnemySpawnFrames = clampInteger(gameState.timers?.giantEnemySpawnFrames, 0, Number.MAX_SAFE_INTEGER, 0); gameState.ui.giantHuntOpen = gameState.ui.giantHuntOpen === true; gameState.ui.giantHuntEnemyId = gameState.ui.giantHuntEnemyId ? String(gameState.ui.giantHuntEnemyId) : null; }
 function isSafeGiantEnemySpawnTile(gx, gy) { const margin = clampInteger(CONFIG.GIANT_ENEMY?.fallbackSpawnMarginTiles, 0, 20, 3); if (gx < margin || gy < margin || gx >= CONFIG.world.cols - margin || gy >= CONFIG.world.rows - margin) return false; const tile = getTile(gx, gy); if (!tile || tile.terrain !== CONFIG.tileState.terrainLand || tile.buildState !== CONFIG.tileState.buildable || tile.obstacle) return false; if ((gameState.world?.roads ?? []).some(r => r?.x === gx && r?.y === gy)) return false; if (objectAt(gx, gy)) return false; return true; }
-function findGiantEnemySpawnPoint() { for (let i = 0; i < 120; i++) { const gx = CONFIG.expansion.regionX + Math.floor(Math.random() * CONFIG.expansion.regionW); const gy = CONFIG.expansion.regionY + Math.floor(Math.random() * CONFIG.expansion.regionH); if (isSafeGiantEnemySpawnTile(gx, gy)) return gridToWorld(gx, gy); } return null; }
+function findGiantEnemySpawnPoint() { for (let i = 0; i < 120; i++) { const gx = CONFIG.expansion.regionX + Math.floor(Math.random() * CONFIG.expansion.regionW); const gy = CONFIG.expansion.regionY + Math.floor(Math.random() * CONFIG.expansion.regionH); const p = gridToWorld(gx, gy); if (isValidGiantBossSpawn(p.x, p.y)) return p; } return null; }
 function spawnGiantEnemy() { const def = getGiantEnemyDefs()[0]; const p = def ? findGiantEnemySpawnPoint() : null; if (!def || !p) return false; const enemy = normalizeMonster({ id: `giant-${def.id}-${Date.now()}`, type: def.id, name: def.name, isGiant: true, giantEnemyId: def.id, areaId: 'coast', x: p.x, y: p.y, homeX: p.x, homeY: p.y, hp: def.hp, maxHp: def.hp, attack: def.power, power: def.power, defense: def.defense, rewardGold: def.rewardGold, rewardFame: def.rewardFame ?? CONFIG.GIANT_ENEMY.rewardFame, firstClearUnlocks: def.firstClearUnlocks, assetKey: def.imageKey, level: def.level, state: 'roaming', spawnedAt: performance.now() }); gameState.monsters.push(enemy); gameState.giantEnemies.push(enemy); logMessage(`${def.name}が出現しました！`); markUIDirty('message'); return true; }
-function updateGiantEnemies() { ensureGiantEnemyState(); gameState.giantEnemies = (gameState.giantEnemies ?? []).map(g => (gameState.monsters ?? []).find(m => m?.id === g?.id) ?? g).filter(Boolean); gameState.timers.giantEnemySpawnFrames += 1; if (gameState.timers.giantEnemySpawnFrames >= clampInteger(CONFIG.GIANT_ENEMY?.spawnCheckFrames, 1, Number.MAX_SAFE_INTEGER, 3600)) { gameState.timers.giantEnemySpawnFrames = 0; if (getActiveGiantEnemies().length < clampInteger(CONFIG.GIANT_ENEMY?.maxActive, 0, 10, 1)) spawnGiantEnemy(); } for (const g of gameState.giantEnemies) { if (safeFiniteNumber(g.hp, 0, 0) <= 0 && !g.defeated) { g.defeated = true; g.state = 'defeated'; } } }
+function updateGiantEnemies() { ensureGiantEnemyState(); gameState.giantEnemies = (gameState.giantEnemies ?? []).map(g => (gameState.monsters ?? []).find(m => m?.id === g?.id) ?? g).filter(Boolean); gameState.timers.giantEnemySpawnFrames += 1; if (gameState.timers.giantEnemySpawnFrames >= clampInteger(CONFIG.GIANT_ENEMY?.spawnCheckFrames, 1, Number.MAX_SAFE_INTEGER, 3600)) { gameState.timers.giantEnemySpawnFrames = 0; if (getActiveGiantEnemies().length < clampInteger(CONFIG.GIANT_ENEMY?.maxActive, 0, 10, 1)) spawnGiantEnemy(); } for (const g of gameState.giantEnemies) { updateBossLeashAndSafeZone(g); if (safeFiniteNumber(g.hp, 0, 0) <= 0 && !g.defeated) { g.defeated = true; g.state = 'defeated'; } } }
 function getSealCombatPower(seal) { const stats = getSealEffectiveStats(seal); return safeFiniteNumber(stats.attack, 0, 0) * 10 + safeFiniteNumber(stats.defense, 0, 0) * 6 + safeFiniteNumber(stats.maxHp, 0, 0) * 0.5 + clampInteger(seal?.level, 1, Number.MAX_SAFE_INTEGER, 1) * 4; }
 function getGiantHuntParticipants(enemy) { const minRatio = safeFiniteNumber(CONFIG.GIANT_ENEMY?.minHpRatioToJoin, 0.5, 0); return (gameState.seals ?? []).filter(seal => { const ratio = safeFiniteNumber(seal?.hp, 0, 0) / Math.max(1, safeFiniteNumber(seal?.maxHp, 1, 1)); return seal && isSealAvailableForSkirmish(seal) && ratio >= minRatio; }).sort((a,b) => (getSealCombatPower(b)-getSealCombatPower(a)) || (clampInteger(b?.level,1,999,1)-clampInteger(a?.level,1,999,1)) || ((safeFiniteNumber(b?.hp,0,0)/Math.max(1,safeFiniteNumber(b?.maxHp,1,1)))-(safeFiniteNumber(a?.hp,0,0)/Math.max(1,safeFiniteNumber(a?.maxHp,1,1))))).slice(0, clampInteger(CONFIG.GIANT_ENEMY?.maxParticipants, 1, 12, 5)); }
 function openGiantHunt(enemyId) { const enemy = getGiantEnemyById(enemyId); if (!enemy || enemy.defeated) return false; closeInspector(); clearContextSelection(); gameState.ui.giantHuntOpen = true; gameState.ui.giantHuntEnemyId = enemy.id; markUIDirty('selection'); renderUI(); return true; }

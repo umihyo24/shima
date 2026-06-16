@@ -1656,6 +1656,7 @@ function renderGiantHuntPanel() {
   element.hidden = false;
   element.innerHTML = `<div class="inspectorHeader"><div><div class="inspectorKicker">Giant Hunt</div><h2>${escapeHtml(enemy?.name ?? '巨大敵')}</h2></div><button data-action="closeGiantHunt" class="subtle">閉じる</button></div>
     <section><h3>敵情報</h3><div class="inspectorInfoGrid"><span>Lv</span><b>${clampInteger(enemy?.level, 1, 999, 1)}</b><span>HP</span><b>${Math.ceil(safeFiniteNumber(enemy?.hp, 0, 0))}/${Math.ceil(safeFiniteNumber(enemy?.maxHp, 1, 1))}</b><span>戦力</span><b>${Math.floor(enemyPower)}</b><span>推奨</span><b>${Math.floor(enemyPower)}</b><span>報酬</span><b>${Math.floor(safeFiniteNumber(enemy?.rewardGold, 0, 0))}G / 知名度+${Math.floor(safeFiniteNumber(enemy?.rewardFame, CONFIG.GIANT_ENEMY?.rewardFame, 0))}</b></div></section>
+    <section><p class="compactNote">通常時、アザラシはボスへ自分から向かいません。討伐開始で選抜メンバーだけが向かいます。</p></section>
     <section><h3>選抜メンバー</h3><ul class="compactList">${rows}</ul><div class="inspectorInfoGrid"><span>合計戦力</span><b>${Math.floor(totalPower)}</b><span>見込み</span><b>${escapeHtml(successText)}</b></div></section>
     <div class="inspectorActions"><button data-action="startGiantHunt" data-giant-enemy-id="${escapeHtml(enemy.id)}" ${participants.length <= 0 ? 'disabled' : ''}>討伐開始</button><button data-action="closeGiantHunt" class="subtle">閉じる</button></div>`;
 }
