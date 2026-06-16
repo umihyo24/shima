@@ -1869,6 +1869,15 @@ function findFreeFacilitySlot(facility, seal = null) {
   return slots.find(slot => !used.has(slot.index)) ?? null;
 }
 
+
+function getReservedFacilitySlot(facility, seal = null) {
+  if (!isLifeFacility(facility) || !seal?.id) return null;
+  facility.slotReservations = normalizeFacilitySlotReservations(facility);
+  const reservation = facility.slotReservations.find(item => item?.sealId === seal.id);
+  if (!reservation) return null;
+  return getFacilityUseSlots(facility).find(slot => slot.index === reservation.slotIndex) ?? null;
+}
+
 function reserveFacilitySlot(facility, seal) {
   if (!isLifeFacility(facility) || !seal?.id) return null;
   const slot = findFreeFacilitySlot(facility, seal);

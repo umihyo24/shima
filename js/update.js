@@ -839,7 +839,8 @@ function updateMovingToFacility(seal, dt) {
   if (!facility || !isFacilityUsable(facility)) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const validPurpose = getFacilityPurposeForSeal(seal, facility);
   if (!isFacilityStillValidTarget(seal, seal.targetId, validPurpose)) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
-  const slot = validPurpose === 'lifeVisit' ? findFreeFacilitySlot(facility, seal) : null;
+  const slot = validPurpose === 'lifeVisit' ? getReservedFacilitySlot(facility, seal) : null;
+  if (validPurpose === 'lifeVisit' && !slot) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const target = validPurpose === 'lifeVisit' ? facilitySlotWorldPoint(facility, slot) : facilityInteractionPoint(facility);
   if (!setSealDestination(seal, target, validPurpose === 'lifeVisit' ? 'lifeVisit' : 'facility')) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   updateSealMovement(seal, dt * 1000);
@@ -1086,7 +1087,7 @@ function updateUsingLifeFacility(seal, facility, dt) {
     if (seal) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; }
     return;
   }
-  const slot = findFreeFacilitySlot(facility, seal);
+  const slot = getReservedFacilitySlot(facility, seal);
   if (!slot) { clearSealFacilityReservation(seal); seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   const target = facilitySlotWorldPoint(facility, slot);
   seal.x = target.x;
@@ -1352,6 +1353,9 @@ function getTileMovementCost(tile, entity, fallbackTier = 0, options = {}) {
   if (cell.terrain === CONFIG.tileState.terrainWater) return options.allowWater === true ? CONFIG.movement.waterCost : Infinity;
   if (roadAt(x, y) && !isFacilityObstacle({ x, y })) return CONFIG.movement.roadCost;
   if (isFacilityObstacle({ x, y })) {
+    const facility = objectAt(x, y);
+    const isLifeVisitSlot = String(options?.reason ?? '') === 'lifeVisit' && isLifeFacility(facility);
+    if (isLifeVisitSlot) return CONFIG.movement.buildableCost;
     const isSeal = entity && (entity.type === 'resident' || entity.type === 'visitor');
     return isSeal && fallbackTier >= 2 ? CONFIG.movement.buildableCost * 80 : Infinity;
   }
