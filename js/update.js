@@ -272,7 +272,7 @@ function canForceStartCombat(seal, monster) {
   if (!seal || !monster) return false;
   if (safeFiniteNumber(seal.hp, 0, 0) <= 0 || safeFiniteNumber(monster.hp, 0, 0) <= 0) return false;
   if (!isPointInsideMonsterTerritory(monster, seal) || !isPointInsideMonsterTerritory(monster, monster)) return false;
-  if (['fallen', 'rescuing', 'carryingFallenSeal', 'leaving', 'leavingToSea', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing', 'usingFacility'].includes(seal.state)) return false;
+  if (['fallen', 'downed', 'beingCarried', 'rescuing', 'carryingFallenSeal', 'leaving', 'leavingToSea', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing', 'usingFacility'].includes(seal.state)) return false;
   if (seal.state === 'fighting' && seal.targetId && seal.targetId !== monster.id) return false;
   return true;
 }
@@ -521,9 +521,11 @@ function updateSeals(dt) {
     updateToiletNeed(seal, dt * 1000);
     if (seal.expeditionId && ['movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing'].includes(seal.state)) { updateExpeditionSeal(seal, dt); continue; }
     if (seal.state === 'questing') continue;
-    if (seal.state === 'fallen') { updateFallen(seal, dt); continue; }
+    if (seal.state === 'fallen') seal.state = 'downed';
+    if (seal.state === 'downed') { updateDowned(seal, dt); continue; }
+    if (seal.state === 'beingCarried') { updateDowned(seal, dt); continue; }
     const fallen = findFallenForRescue(seal);
-    if (fallen && !seal.rescueTargetId && seal.hp > getSealEffectiveStats(seal).maxHp * CONFIG.seal.lowHpRatio) {
+    if (fallen && !seal.rescueTargetId && seal.hp > getSealEffectiveStats(seal).maxHp * safeFiniteNumber(CONFIG.SEAL_RECOVERY?.seekRestHpRatio, 0.6, 0)) {
       seal.state = 'rescuing'; seal.rescueTargetId = fallen.id; seal.target = { x: fallen.x, y: fallen.y }; logMessage(`${seal.name}が${fallen.name}を救助に向かいました。`);
     }
     switch (seal.state) {
@@ -544,6 +546,7 @@ function updateSeals(dt) {
       case 'leaving': seal.state = 'leavingToSea'; updateLeavingToSea(seal, dt); break;
       case 'leavingToSea': updateLeavingToSea(seal, dt); break;
       case 'idle': updateIdle(seal, dt); break;
+      case 'resting': updateFallbackResting(seal, dt); break;
       case 'movingToDungeon': updateExpeditionSeal(seal, dt); break;
       case 'waitingAtDungeon': break;
       case 'expeditionRunning': break;
@@ -591,13 +594,17 @@ function clearSealExpeditionState(seal) {
   seal.currentAction = '遠征状態を整理しました';
 }
 
-function updateFallen(seal, dt) {
-  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, seal.hp + CONFIG.seal.fallenRecoveryPerSecond * dt);
-  if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.standHpRatio && !isBeingCarried(seal.id)) {
-    seal.currentAction = '帰還後の行き先を選んでいます'; seal.state = 'returningFromHunt'; choosePostHuntAction(seal);
+function updateDowned(seal, dt) {
+  if (!seal) return;
+  if (seal.state === 'beingCarried') return;
+  seal.recoverySource = 'downed';
+  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + safeFiniteNumber(CONFIG.SEAL_RECOVERY?.downedRecoveryPerSecond, 1, 0) * dt);
+  if (seal.hp >= getSealEffectiveStats(seal).maxHp * safeFiniteNumber(CONFIG.SEAL_RECOVERY?.downedRecoveryThresholdRatio, 0.35, 0) && !isBeingCarried(seal.id)) {
+    seal.currentAction = 'ゆっくり起き上がりました'; seal.state = 'choosingFacility'; seal.recoverySource = '';
     logMessage(`${seal.name}が自力で起き上がりました。`);
   }
 }
+function updateFallen(seal, dt) { if (seal) seal.state = 'downed'; updateDowned(seal, dt); }
 
 function logVisitorIssue(seal, key, message) {
   gameState.warnings = gameState.warnings ?? {};
@@ -637,8 +644,8 @@ function chooseArrivalActionForVisitor(seal) {
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal.hp, 0, 0) / effectiveMaxHp : 0;
   const typeConfig = arrival.facilityTypes ?? {};
   if (hpRatio <= safeFiniteNumber(arrival.lowHpFacilityHpRatio, 0.58, 0)) {
-    const inn = getBestFacilityForSeal(seal, typeConfig.lowHp ?? ['inn']);
-    if (inn) return { type: 'facility', facility: inn, action: '宿屋で回復します' };
+    const restFacility = chooseFoodFacilityForSeal(seal) ?? chooseRelaxFacilityForSeal(seal);
+    if (restFacility) return { type: 'facility', facility: restFacility, action: '回復できる施設へ向かいます' };
   }
   const arrivalToilet = choosePublicToilet(seal);
   if (arrivalToilet && Math.random() < getToiletSelectionChance(seal)) return { type: 'facility', facility: arrivalToilet, action: '公衆トイレへ立ち寄ります' };
@@ -778,7 +785,7 @@ function updateFighting(seal, dt) {
   if (seal.monsterTimer >= CONFIG.combat.monsterAttackSeconds) {
     seal.monsterTimer = 0;
     seal.hp -= Math.max(CONFIG.combat.minDamage, monster.attack - getSealEffectiveStats(seal).defense);
-    if (seal.hp <= 0) { seal.hp = 0; monster.assignedSealId = null; seal.state = 'fallen'; seal.targetId = null; seal.rescueTargetId = null; seal.stuckFrames = 0; logMessage(`${seal.name}が倒れました。`); }
+    if (seal.hp <= 0) { seal.hp = 0; monster.assignedSealId = null; seal.state = 'downed'; seal.recoverySource = 'downed'; seal.targetId = null; seal.rescueTargetId = null; seal.stuckFrames = 0; logMessage(`${seal.name}が倒れました。`); }
   }
 }
 
@@ -826,7 +833,7 @@ function updateUsingFacility(seal, dt) {
   const facility = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (isLifeFacility(facility)) { updateUsingLifeFacility(seal, facility, dt); return; }
   if (isPublicToiletFacility(facility)) { updateUsingPublicToilet(seal, facility, dt); return; }
-  if (facility?.type === 'inn') { updateResting(seal, dt); return; }
+  if (facility?.type === 'inn') { updateInnUse(seal, facility, dt); return; }
   const purpose = getFacilityPurposeForSeal(seal, facility);
   if (!facility || !isFacilityStillValidTarget(seal, seal.targetId, purpose)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
   seal.actionTimer -= dt;
@@ -847,7 +854,8 @@ function updateUsingFacility(seal, dt) {
   addPlayerIncome(income);
   if (['restaurant', 'manjuShop'].includes(facility.type)) {
     addToiletNeed(seal, facility.type === 'restaurant' ? CONFIG.TOILET?.foodNeedIncrease : CONFIG.TOILET?.manjuNeedIncrease);
-    seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getFacilityHealAmount(facility));
+    seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getFacilityHealAmount(facility) * safeFiniteNumber(CONFIG.SEAL_RECOVERY?.foodRecoveryMultiplier, 1, 0));
+    seal.recoverySource = facility.type;
     seal.mealCountSinceInn = clampInteger(seal.mealCountSinceInn, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
   }
   if (facility.type === 'blacksmith') {
@@ -862,25 +870,44 @@ function updateUsingFacility(seal, dt) {
   afterVillageActivity(seal);
 }
 
+function updateInnUse(seal, inn, dt) {
+  if (!seal || !inn || !isFacilityUsable(inn)) { if (seal) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; } return; }
+  seal.recoverySource = 'inn-prep';
+  seal.actionTimer -= dt;
+  if (seal.actionTimer > 0) return;
+  const fee = Math.min(safeFiniteNumber(seal.carriedG, 0, 0), getFacilityPrice(inn));
+  seal.carriedG -= fee;
+  addPlayerIncome(registerFacilityUse(inn, seal, fee));
+  seal.mealCountSinceInn = 0;
+  seal.gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0) + safeFiniteNumber(CONFIG.facilities?.inn?.gearBudgetBonus, 0, 0);
+  if (seal.type === 'visitor') seal.maxStayMs = safeFiniteNumber(seal.maxStayMs, CONFIG.visitor.maxStayMs, 0) + safeFiniteNumber(CONFIG.facilities?.inn?.stayBonusMs, 0, 0);
+  addFavor(seal, CONFIG.facilities?.inn?.favorGain ?? CONFIG.seal.favorFacilityUse);
+  logMessage(`${seal.name}が宿屋で旅支度を整え、${fee}G支払いました。`);
+  afterVillageActivity(seal);
+}
+
 function updateResting(seal, dt) {
   const inn = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
   if (!inn || !isFacilityUsable(inn)) { seal.targetId = null; seal.state = seal.type === 'visitor' ? 'choosingPostHuntFacility' : 'choosingFacility'; return; }
-  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getFacilityHealAmount(inn) * dt);
+  seal.recoverySource = 'inn-prep';
   seal.actionTimer -= dt;
-  if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.restTargetRatio && seal.actionTimer <= 0) {
+  if (seal.actionTimer <= 0) {
     const fee = Math.min(safeFiniteNumber(seal.carriedG, 0, 0), getFacilityPrice(inn));
     seal.carriedG -= fee;
     const income = registerFacilityUse(inn, seal, fee);
     addPlayerIncome(income);
     seal.mealCountSinceInn = 0;
     addFavor(seal, CONFIG.seal.favorFacilityUse);
-    logMessage(`${seal.name}が宿屋で回復し、${fee}G支払いました。`);
+    logMessage(`${seal.name}が宿屋で旅支度を整え、${fee}G支払いました。`);
     afterVillageActivity(seal);
   }
 }
 
 function handleNoUsableFacility(seal) {
   if (seal?.type === 'visitor') {
+    const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
+    const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal.hp, 0, 0) / effectiveMaxHp : 0;
+    if (hpRatio <= safeFiniteNumber(CONFIG.SEAL_RECOVERY?.seekRestHpRatio, 0.6, 0)) { startFallbackRest(seal); return; }
     logVisitorIssue(seal, 'no-usable-facility', `${seal.name}は使える施設がないため狩りへ向かいます。`);
     if (visitorShouldLeave(seal)) { seal.currentAction = '海へ帰っています'; seal.state = 'leavingToSea'; buildRouteToVillage(seal); return; }
     updateChoosingHuntArea(seal);
@@ -888,13 +915,46 @@ function handleNoUsableFacility(seal) {
   }
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? seal.hp / effectiveMaxHp : 0;
-  if (hpRatio <= CONFIG.seal.lowHpRatio) {
-    seal.wanderTimer = CONFIG.seal.wanderSeconds;
-    setSealDestination(seal, villageWanderPoint(), 'village-wander');
-    seal.state = 'choosingFacility';
-    return;
-  }
+  if (hpRatio <= safeFiniteNumber(CONFIG.SEAL_RECOVERY?.seekRestHpRatio, 0.6, 0)) { startFallbackRest(seal); return; }
   seal.state = 'choosingHuntArea';
+}
+
+
+function findFallbackRestPoint(seal) {
+  const start = worldToGrid(seal?.x ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x, seal?.y ?? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y);
+  const candidates = [];
+  const maxRadius = 8;
+  for (let radius = 0; radius <= maxRadius; radius += 1) {
+    for (let y = start.y - radius; y <= start.y + radius; y += 1) {
+      for (let x = start.x - radius; x <= start.x + radius; x += 1) {
+        if (Math.max(Math.abs(x - start.x), Math.abs(y - start.y)) !== radius || !isPassableTile(x, y)) continue;
+        const tile = gameState.world?.tiles?.[y]?.[x];
+        const priority = roadAt(x, y) ? CONFIG.REST_PRIORITY?.road : (tile?.terrain === CONFIG.tileState.terrainLand && tile?.buildState === CONFIG.tileState.buildable && tile?.obstacle === null ? CONFIG.REST_PRIORITY?.emptyLand : Infinity);
+        if (!Number.isFinite(priority)) continue;
+        candidates.push({ x, y, priority, d: distance(start.x, start.y, x, y) });
+      }
+    }
+    if (candidates.length > 0) break;
+  }
+  candidates.sort((a, b) => (a.priority - b.priority) || (a.d - b.d));
+  return candidates[0] ? gridToWorld(candidates[0].x, candidates[0].y) : villageWanderPoint();
+}
+
+function startFallbackRest(seal) {
+  if (!seal) return false;
+  const point = findFallbackRestPoint(seal);
+  seal.recoverySource = 'fallback-rest';
+  seal.currentAction = '空き地で休んでいます';
+  if (setSealDestination(seal, point, 'rest')) { seal.state = 'resting'; return true; }
+  seal.target = { x: safeFiniteNumber(seal.x, point.x, 0), y: safeFiniteNumber(seal.y, point.y, 0), reason: 'rest' }; seal.path = []; seal.state = 'resting'; return true;
+}
+
+function updateFallbackResting(seal, dt) {
+  if (!seal) return;
+  if (seal.target && distance(seal.x, seal.y, seal.target.x, seal.target.y) > CONFIG.seal.contactDistance) { updateSealMovement(seal, dt * 1000); return; }
+  seal.recoverySource = 'fallback-rest';
+  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + safeFiniteNumber(CONFIG.SEAL_RECOVERY?.fallbackRecoveryPerSecond, 1.5, 0) * dt);
+  if (seal.hp >= getSealEffectiveStats(seal).maxHp * CONFIG.seal.restTargetRatio) { seal.recoverySource = ''; afterVillageActivity(seal); }
 }
 
 function visitorShouldLeave(seal) {
@@ -913,6 +973,7 @@ function visitorShouldLeave(seal) {
 function afterVillageActivity(seal) {
   clearSealFacilityReservation(seal);
   seal.targetId = null;
+  seal.recoverySource = '';
   seal.target = null;
   seal.path = [];
   if (seal?.type === 'visitor') {
@@ -977,7 +1038,7 @@ function finishLifeFacilityUse(seal, facility) {
 
 function useBench(seal, facility) {
   if (!seal || !isLifeFacility(facility)) return;
-  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getBenchHealAmount(facility));
+  seal.recoverySource = facility.type;
   addFavor(seal, getLifeFacilityFavorGain(facility));
   registerFacilityUse(facility, seal, 0);
   logMessage(`${seal.name} がベンチで休憩しました。`);
@@ -1008,6 +1069,8 @@ function updateUsingLifeFacility(seal, facility, dt) {
   const target = facilitySlotWorldPoint(facility, slot);
   seal.x = target.x;
   seal.y = target.y;
+  seal.recoverySource = facility.type;
+  seal.hp = Math.min(getSealEffectiveStats(seal).maxHp, safeFiniteNumber(seal.hp, 0, 0) + getFacilityRecoveryPerSecond(facility) * dt);
   seal.actionTimer -= dt;
   if (seal.actionTimer > 0) return;
   finishLifeFacilityUse(seal, facility);
@@ -1044,45 +1107,35 @@ function applyLevelUps(seal) {
 }
 
 function findFallenForRescue(seal) {
-  return (gameState.seals ?? []).find(other => other?.id !== seal.id && other?.state === 'fallen' && !isBeingCarried(other.id) && distance(seal.x, seal.y, other.x, other.y) <= CONFIG.seal.rescueScanDistance);
+  const radius = safeFiniteNumber(CONFIG.SEAL_RECOVERY?.carrySearchRadius, 5, 0) * CONFIG.world.tile;
+  return (gameState.seals ?? []).find(other => other?.id !== seal.id && other?.state === 'downed' && !isBeingCarried(other.id) && distance(seal.x, seal.y, other.x, other.y) <= radius);
 }
 
 function isBeingCarried(sealId) { return (gameState.seals ?? []).some(s => s?.rescueTargetId === sealId && s?.state === 'carryingFallenSeal'); }
 
 function updateRescuing(seal, dt) {
   const fallen = (gameState.seals ?? []).find(s => s?.id === seal.rescueTargetId);
-  if (!fallen || fallen.state !== 'fallen') { seal.rescueTargetId = null; seal.state = 'choosingHuntArea'; return; }
-  setSealDestination(seal, { x: fallen.x, y: fallen.y }, 'rescue'); updateSealMovement(seal, dt * 1000);
+  if (!fallen || fallen.state !== 'downed') { seal.rescueTargetId = null; seal.state = 'choosingHuntArea'; return; }
+  if (!setSealDestination(seal, { x: fallen.x, y: fallen.y }, 'rescue')) { seal.rescueTargetId = null; seal.state = 'choosingFacility'; return; } updateSealMovement(seal, dt * 1000);
   if (distance(seal.x, seal.y, fallen.x, fallen.y) <= CONFIG.seal.contactDistance) {
     seal.state = 'carryingFallenSeal';
-    const inn = chooseInnForSeal(seal);
-    seal.targetId = inn?.id ?? null;
-    setSealDestination(seal, inn ? facilityInteractionPoint(inn) : getVillageEntryPoint(), 'carry');
+    fallen.state = 'beingCarried'; fallen.carriedBySealId = seal.id; fallen.recoverySource = 'carried';
+    seal.targetId = null;
+    if (!setSealDestination(seal, getVillageEntryPoint(), 'carry')) { fallen.state = 'downed'; fallen.carriedBySealId = null; seal.rescueTargetId = null; seal.state = 'choosingFacility'; }
   }
 }
 
 function updateCarrying(seal, dt) {
   const fallen = (gameState.seals ?? []).find(s => s?.id === seal.rescueTargetId);
   if (!fallen) { seal.rescueTargetId = null; seal.state = 'choosingHuntArea'; return; }
-  updateSealMovement(seal, dt * 1000);
-  fallen.x = seal.x - CONFIG.seal.spread * 0.5; fallen.y = seal.y;
+  updateSealMovement(seal, dt * 1000 * safeFiniteNumber(CONFIG.SEAL_RECOVERY?.carryMoveSpeedMultiplier, 0.75, 0));
+  fallen.x = seal.x - CONFIG.seal.spread * 0.5; fallen.y = seal.y; fallen.recoverySource = 'carried';
   if (distance(seal.x, seal.y, seal.target?.x, seal.target?.y) > CONFIG.seal.contactDistance) return;
-  const inn = (gameState.world.objects ?? []).find(o => o?.id === seal.targetId);
-  if (inn && isFacilityUsable(inn)) {
-    const fee = getFacilityPrice(inn);
-    const paidByFallen = Math.min(safeFiniteNumber(fallen.carriedG, 0, 0), fee);
-    fallen.carriedG -= paidByFallen;
-    const paidByRescuer = Math.min(safeFiniteNumber(seal.carriedG, 0, 0), fee - paidByFallen);
-    seal.carriedG -= paidByRescuer;
-    addPlayerIncome(registerFacilityUse(inn, fallen, paidByFallen + paidByRescuer));
-    fallen.hp = Math.min(getSealEffectiveStats(fallen).maxHp, getSealEffectiveStats(fallen).maxHp * CONFIG.seal.restTargetRatio);
-    addFavor(fallen, CONFIG.seal.favorRescued);
-    logMessage(`宿代${paidByFallen + paidByRescuer}G支払い、${fallen.name}を救助しました。`);
-  } else {
-    fallen.hp = Math.max(fallen.hp, getSealEffectiveStats(fallen).maxHp * CONFIG.seal.standHpRatio);
-    addFavor(fallen, CONFIG.seal.favorRescued);
-    logMessage(`${fallen.name}を安全地点へ運びました。`);
-  }
+  fallen.hp = Math.max(safeFiniteNumber(fallen.hp, 0, 0), getSealEffectiveStats(fallen).maxHp * safeFiniteNumber(CONFIG.SEAL_RECOVERY?.downedRecoveryThresholdRatio, 0.35, 0));
+  fallen.carriedBySealId = null;
+  fallen.recoverySource = 'carried';
+  addFavor(fallen, CONFIG.seal.favorRescued);
+  logMessage(`${fallen.name}を安全地点へ運びました。`);
   fallen.state = 'choosingFacility';
   fallen.target = null;
   seal.rescueTargetId = null;
@@ -1493,7 +1546,7 @@ function isSealEligibleForDungeon(seal, dungeon) {
   if (!seal) return { ok: false, reason: 'missing' };
   if (!dungeon) return { ok: false, reason: 'noDungeon' };
   if (!['resident', 'visitor'].includes(seal.type)) return { ok: false, reason: 'notRecruitable' };
-  if (safeFiniteNumber(seal.hp, 0, 0) <= 0 || seal.state === 'fallen') return { ok: false, reason: 'fallen' };
+  if (safeFiniteNumber(seal.hp, 0, 0) <= 0 || ['fallen', 'downed', 'beingCarried'].includes(seal.state)) return { ok: false, reason: 'fallen' };
   const maxHp = Math.max(1, safeFiniteNumber(getSealEffectiveStats(seal)?.maxHp, seal.maxHp, 1));
   const minHpRatio = safeFiniteNumber(CONFIG.dungeon?.participant?.minHpRatio, CONFIG.seal?.lowHpRatio ?? 0.4, 0);
   if (safeFiniteNumber(seal.hp, 0, 0) / maxHp < minHpRatio) return { ok: false, reason: 'hpLow' };

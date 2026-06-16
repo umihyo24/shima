@@ -540,7 +540,7 @@ function normalizeSeals(seals) {
   if (!Array.isArray(seals)) return [];
   const states = Object.values(CONFIG.sealStates ?? {});
   return seals.map((s, index) => normalizeSeal(s, index)).filter(Boolean).map(seal => {
-    if (seal.state === 'resting') seal.state = 'usingFacility';
+    if (seal.state === 'fallen') seal.state = 'downed';
     if (!states.includes(seal.state)) seal.state = seal.type === 'visitor' ? 'arrivingFromSea' : 'choosingHuntArea';
     return seal;
   });
@@ -548,8 +548,9 @@ function normalizeSeals(seals) {
 
 
 function normalizeSealState(state, isVisitor) {
-  const legacyVisitorStates = { arriving: 'arrivingFromSea', arrived: 'choosingArrivalAction', staying: 'choosingArrivalAction', choosing: 'choosingArrivalAction', choosingFacility: 'choosingPostHuntFacility', leaving: 'leavingToSea', movingToHuntExit: 'movingToHuntArea' };
-  const next = isVisitor ? (legacyVisitorStates[state] ?? state) : (state === 'movingToHuntArea' ? 'movingToHuntExit' : state);
+  const legacyVisitorStates = { fallen: 'downed', carryingFallenSeal: 'rescuing', arriving: 'arrivingFromSea', arrived: 'choosingArrivalAction', staying: 'choosingArrivalAction', choosing: 'choosingArrivalAction', choosingFacility: 'choosingPostHuntFacility', leaving: 'leavingToSea', movingToHuntExit: 'movingToHuntArea' };
+  const legacyState = state === 'fallen' ? 'downed' : state;
+  const next = isVisitor ? (legacyVisitorStates[legacyState] ?? legacyState) : (legacyState === 'movingToHuntArea' ? 'movingToHuntExit' : legacyState);
   const valid = Object.values(CONFIG.sealStates ?? {});
   return valid.includes(next) ? next : (isVisitor ? 'arrivingFromSea' : 'choosingHuntArea');
 }
@@ -570,6 +571,8 @@ function normalizeSeal(s, index) {
     x: safeFiniteNumber(s?.x, entry.x),
     y: safeFiniteNumber(s?.y, entry.y),
     hp: safeFiniteNumber(s?.hp, CONFIG.seal.maxHp, 0),
+    recoverySource: s?.recoverySource ? String(s.recoverySource) : '',
+    carriedBySealId: s?.carriedBySealId ? String(s.carriedBySealId) : null,
     maxHp: safeFiniteNumber(s?.maxHp, CONFIG.seal.maxHp, 1),
     attack: safeFiniteNumber(s?.attack, CONFIG.seal.attack, 0),
     defense: safeFiniteNumber(s?.defense, CONFIG.seal.defense, 0),
@@ -1810,6 +1813,14 @@ function isLifeFacility(facility) {
   return facility?.kind === 'facility' && (cfg.tags ?? []).includes('life') && ['bench', 'observationDeck', 'sealPlaza'].includes(String(facility?.type ?? ''));
 }
 
+function isRelaxRecoveryFacility(facility) { return isLifeFacility(facility); }
+
+function getFacilityRecoveryPerSecond(facility) {
+  const base = safeFiniteNumber(CONFIG.SEAL_RECOVERY?.facilityRecoveryPerSecond, 0, 0);
+  const levelBonus = Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(getFacilityLevelConfig().healingMultiplierPerLevel, 0, 0);
+  return Math.max(0, base * (1 + levelBonus) * (1 + facilityBonus(facility)));
+}
+
 function getFacilityUseSlots(facility) {
   const cfg = (CONFIG.facilities ?? CONFIG.FACILITIES)?.[facility?.type] ?? {};
   const configured = Array.isArray(cfg.useSlots) ? cfg.useSlots : [];
@@ -1895,11 +1906,11 @@ function getBenchHealAmount(facility) {
 }
 
 function isLifeVisitCandidate(seal) {
-  if (!seal || seal.state === 'fallen' || seal.expeditionId || seal.questingDungeonId) return false;
+  if (!seal || ['fallen', 'downed', 'beingCarried'].includes(seal.state) || seal.expeditionId || seal.questingDungeonId) return false;
   if (['fighting', 'movingToMonster', 'hunting', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing', 'leavingToSea', 'leaving'].includes(String(seal.state ?? ''))) return false;
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
-  return hpRatio > safeFiniteNumber(CONFIG.LIFE_FACILITIES?.idleHpEmergencyRatio, CONFIG.personalities?.balanced?.emergencyHpRatio ?? 0, 0);
+  return hpRatio < safeFiniteNumber(CONFIG.SEAL_RECOVERY?.seekRestHpRatio, 0.6, 0) || hpRatio > safeFiniteNumber(CONFIG.LIFE_FACILITIES?.idleHpEmergencyRatio, CONFIG.personalities?.balanced?.emergencyHpRatio ?? 0, 0);
 }
 
 function scoreLifeFacilityForSeal(seal, facility) {
@@ -1928,14 +1939,14 @@ function chooseLifeFacility(seal) {
 function scoreFacilityForSeal(seal, facility, purpose = 'spend') {
   if (!seal || !facility || !isFacilityUsable(facility)) return -Infinity;
   const allowed = {
-    heal: ['inn'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith'], equipment: Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}), toilet: ['publicToilet'], lifeVisit: ['bench', 'observationDeck', 'sealPlaza']
+    heal: ['bench', 'observationDeck', 'sealPlaza'], food: ['restaurant', 'manjuShop'], spend: ['restaurant', 'manjuShop', 'blacksmith', 'inn'], equipment: Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}), toilet: ['publicToilet'], lifeVisit: ['bench', 'observationDeck', 'sealPlaza']
   }[purpose] ?? Object.keys(CONFIG.facilities ?? {});
   if (!allowed.includes(facility.type)) return -Infinity;
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal.hp, 0, 0) / effectiveMaxHp : 0;
   const carriedG = safeFiniteNumber(seal.carriedG, 0, 0);
   const gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0);
-  if (purpose === 'heal' && facility.type === 'inn' && carriedG < getFacilityPrice(facility) && hpRatio > CONFIG.seal.innHpThreshold) return -Infinity;
+  if (purpose === 'heal' && isRelaxRecoveryFacility(facility) && carriedG < getFacilityPrice(facility) && hpRatio > CONFIG.seal.innHpThreshold) return -Infinity;
   if (purpose === 'food' && ['restaurant', 'manjuShop'].includes(facility.type) && carriedG < Math.min(getFacilityPrice(facility), 1)) return -Infinity;
   if (purpose === 'spend' && carriedG <= 0 && !chooseCheapestAffordableUpgrade(seal, facility)) return -Infinity;
   if (purpose === 'equipment' && (gearBudget <= 0 || !chooseCheapestAffordableUpgrade(seal, facility))) return -Infinity;
@@ -1986,38 +1997,39 @@ function getBestFacilityForSeal(seal, preferredTypes) {
   const types = Array.isArray(preferredTypes) && preferredTypes.length > 0 ? preferredTypes : Object.keys(CONFIG.facilities ?? {});
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
-  const purpose = types.length === 1 && types[0] === 'inn' ? 'heal'
+  const purpose = types.length === 1 && types[0] === 'inn' ? 'spend'
     : (types.length === 1 && ['restaurant', 'manjuShop'].includes(types[0]) ? 'food'
       : (types.some(type => Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}).includes(type)) && safeFiniteNumber(seal?.gearBudget, 0, 0) > 0 && hpRatio > CONFIG.seal.innHpThreshold ? 'equipment' : 'spend'));
   return chooseBestFacility(seal, purpose, types) ?? chooseBestFacility(seal, 'spend', types);
 }
 
-function chooseInnForSeal(seal) { return chooseBestFacility(seal, 'heal', ['inn']); }
+function chooseInnForSeal(seal) { return chooseBestFacility(seal, 'spend', ['inn']); }
+function chooseRelaxFacilityForSeal(seal) { return chooseBestFacility(seal, 'heal', ['bench', 'observationDeck', 'sealPlaza']); }
 function chooseFoodFacilityForSeal(seal) { return chooseBestFacility(seal, 'food', ['manjuShop', 'restaurant']); }
 function chooseSpendingFacilityForSeal(seal) { return chooseBestFacility(seal, 'spend', ['manjuShop', 'restaurant', 'blacksmith']); }
 function chooseFacilityAfterHunt(seal) {
   const effectiveMaxHp = getSealEffectiveStats(seal).maxHp;
   const hpRatio = effectiveMaxHp > 0 ? safeFiniteNumber(seal?.hp, 0, 0) / effectiveMaxHp : 0;
-  if (hpRatio <= CONFIG.seal.innHpThreshold) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
+  if (hpRatio <= safeFiniteNumber(CONFIG.SEAL_RECOVERY?.seekRestHpRatio, 0.6, 0)) return chooseFoodFacilityForSeal(seal) ?? chooseRelaxFacilityForSeal(seal);
   const toilet = choosePublicToilet(seal);
   if (toilet && Math.random() < getToiletSelectionChance(seal)) return toilet;
   const equipmentShop = chooseBestFacility(seal, 'equipment', Object.keys(CONFIG.EQUIPMENT?.SHOP_ITEM_TYPES ?? {}));
   if (equipmentShop) return equipmentShop;
   const lifeFacility = chooseLifeFacility(seal);
   if (lifeFacility) return lifeFacility;
-  if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
-  if (seal?.carriedG >= (CONFIG.facilities.inn?.basePrice ?? CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) return chooseBestFacility(seal, 'heal', ['inn']) ?? chooseFoodFacilityForSeal(seal);
+  if (hpRatio <= CONFIG.seal.mediumHpRatio && Math.random() < CONFIG.seal.mediumInnChance) return chooseFoodFacilityForSeal(seal) ?? chooseRelaxFacilityForSeal(seal) ?? chooseBestFacility(seal, 'spend', ['blacksmith']);
+  if (seal?.carriedG >= (CONFIG.facilities.inn?.basePrice ?? CONFIG.facilities.inn?.fee ?? 0) && (seal?.mealCountSinceInn ?? 0) >= CONFIG.seal.mealsBeforeInnSoftLimit) return chooseInnForSeal(seal) ?? chooseFoodFacilityForSeal(seal);
   const personality = getPersonalityConfig(seal);
   const preferred = personality?.maxHuntsPerTrip > CONFIG.personalities.balanced.maxHuntsPerTrip
     ? ['blacksmith', 'restaurant', 'manjuShop', 'inn']
-    : (personality?.maxHuntsPerTrip < CONFIG.personalities.balanced.maxHuntsPerTrip ? ['inn', 'manjuShop', 'restaurant', 'blacksmith'] : ['manjuShop', 'restaurant', 'blacksmith', 'inn']);
-  return chooseBestFacility(seal, 'spend', preferred) ?? chooseBestFacility(seal, 'heal', preferred) ?? chooseBestFacility(seal, 'food', preferred);
+    : (personality?.maxHuntsPerTrip < CONFIG.personalities.balanced.maxHuntsPerTrip ? ['manjuShop', 'restaurant', 'inn', 'blacksmith'] : ['manjuShop', 'restaurant', 'blacksmith', 'inn']);
+  return chooseBestFacility(seal, 'spend', preferred) ?? chooseBestFacility(seal, 'food', preferred) ?? chooseRelaxFacilityForSeal(seal);
 }
 
 
 function getFacilityPurposeForSeal(seal, facility) {
   if (isLifeFacility(facility)) return 'lifeVisit';
-  if (facility?.type === 'inn') return 'heal';
+  if (facility?.type === 'inn') return 'spend';
   if (['restaurant', 'manjuShop'].includes(String(facility?.type ?? ''))) return 'food';
   if (isPublicToiletFacility(facility)) return 'toilet';
   return chooseCheapestAffordableUpgrade(seal, facility) ? 'equipment' : 'spend';
