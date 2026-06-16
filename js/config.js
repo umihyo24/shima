@@ -97,6 +97,7 @@ const CONFIG = Object.freeze({
     'seals.jumbo': 'assets/seals/seal_giant_jumbo_idle.png',
     'seals.resident': 'assets/seals/seal_white_resident_idle.png',
     'monsters.crab': 'assets/monsters/monster_water_coast_crab.png',
+    'monsters.giant_crab': 'assets/monsters/monster_water_coast_giant_crab.png',
     'cards.facility_neutral_inn_idle': 'assets/cards/facility_neutral_inn_idle.png',
     'cards.facility_neutral_restaurant_idle': 'assets/cards/facility_neutral_restaurant_idle.png',
     'cards.facility_neutral_blacksmith_idle': 'assets/cards/facility_neutral_blacksmith_idle.png',
@@ -215,11 +216,13 @@ const CONFIG = Object.freeze({
     shell_armor: { id: 'shell_armor', name: '貝殻のよろい', type: 'armor', price: 60, attackBonus: 0, defenseBonus: 2, hpBonus: 8, favorBonus: 0, shopType: 'armorShop', tier: 1 },
     crab_claw_spear: { id: 'crab_claw_spear', name: 'カニ爪の槍', type: 'weapon', price: 80, attackBonus: 5, defenseBonus: 0, hpBonus: 0, favorBonus: 0, shopType: 'weaponShop', tier: 2 },
     sailor_coat: { id: 'sailor_coat', name: '船乗りのコート', type: 'armor', price: 120, attackBonus: 0, defenseBonus: 4, hpBonus: 15, favorBonus: 0, shopType: 'armorShop', tier: 2 },
-    lucky_pearl: { id: 'lucky_pearl', name: '幸運の真珠', type: 'accessory', price: 150, attackBonus: 1, defenseBonus: 1, hpBonus: 8, favorBonus: 2, shopType: 'restaurant', tier: 1 }
+    lucky_pearl: { id: 'lucky_pearl', name: '幸運の真珠', type: 'accessory', price: 150, attackBonus: 1, defenseBonus: 1, hpBonus: 8, favorBonus: 2, shopType: 'restaurant', tier: 1 },
+    crab_king_spear: { id: 'crab_king_spear', name: 'カニ王の槍', type: 'weapon', price: 260, attackBonus: 12, defenseBonus: 1, hpBonus: 0, favorBonus: 1, shopType: 'weaponShop', tier: 3 }
   },
   SEAL_RECOVERY: { downedRecoveryPerSecond: 1, downedRecoveryThresholdRatio: 0.35, facilityRecoveryPerSecond: 3, foodRecoveryMultiplier: 1, carrySearchRadius: 5, carryMoveSpeedMultiplier: 0.75, seekRestHpRatio: 0.6, fallbackRecoveryPerSecond: 1.5 },
   REST_PRIORITY: { emptyLand: 1, road: 2 },
   seal: { maxHp: 130, attack: 18, defense: 5, baseSpeed: 50, roadSpeedMultiplier: 1.55, lowHpRatio: 0.4, innHpThreshold: 0.45, mediumHpRatio: 0.72, mediumInnChance: 0.35, mealsBeforeInnSoftLimit: 2, mealsInnChanceBoost: 0.35, fallenRecoveryPerSecond: 3, standHpRatio: 0.36, restTargetRatio: 0.88, contactDistance: 15, rescueScanDistance: 380, spendSeconds: 1.4, restSeconds: 1, startG: 0, spread: 24, huntDurationLimit: 42, noMonsterExploreSeconds: 8, favorHuntDurationBonus: 0.35, maxFavorHuntDurationBonus: 8, carriedGReturnThreshold: 56, carriedGReturnChance: 0.35, wanderSeconds: 2.5, levelExp: 48, levelHpGain: 10, levelAttackGain: 2, favorDefeat: 2, favorLevelUp: 4, favorFacilityUse: 1, favorRescued: 3, facilityChoiceWeights: { inn: 1.2, restaurant: 1.0, manjuShop: 1.05, blacksmith: 0.8 }, blacksmithAttackChance: 0.45, blacksmithAttackGain: 1 },
+  GIANT_ENEMY: { spawnCheckFrames: 3600, maxActive: 1, clickRadius: 64, scale: 2.2, recommendedPartySize: 5, maxParticipants: 5, minHpRatioToJoin: 0.5, eventDurationFrames: 18000, huntStartDelayFrames: 30, rewardFame: 80, fallbackSpawnMarginTiles: 3, defeatFadeFrames: 180, definitions: [{ id: 'giant_crab', name: '巨大カニ', level: 20, hp: 500, power: 300, defense: 8, rewardGold: 500, rewardFame: 80, firstClearUnlocks: ['crab_king_spear'], imageKey: 'monsters.giant_crab' }] },
   monster: { cap: 7, spawnInterval: 2.4, hp: 64, attack: 13, defense: 3, rewardG: 28, rewardExp: 16, contactDistance: 18, states: { idle: 'idle', patrol: 'patrol', engaged: 'engaged' }, territory: { reactionRadius: 145, leashRadius: 170, groupRadius: 120 }, movement: { idleSecondsMin: 0.8, idleSecondsMax: 1.8, patrolSecondsMin: 1.2, patrolSecondsMax: 2.8, patrolSpeed: 18, engagedSpeed: 10, wanderRadius: 85, edgePadding: 12, retargetDistance: 10 }, visuals: { territoryAlpha: 0.1, engagedLineAlpha: 0.36, groupRingAlpha: 0.18, stateDotRadius: 3 } },
   combat: { sealAttackSeconds: 0.75, monsterAttackSeconds: 1.0, minDamage: 1 },
   SKIRMISH: { triggerRadius: 145, joinRadius: 160, leashRadius: 240, maxSealParticipants: 3, maxEnemyParticipants: 3, battleTickFrames: 30, slotRadius: 34, giantSlotRadius: 52, joinCheckIntervalFrames: 20, staleCombatTimeoutFrames: 600, slotMoveStepRatio: 0.5, localSnapRadius: 72 },

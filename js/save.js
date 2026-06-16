@@ -40,10 +40,13 @@ function getSerializableGameState() {
       monthlyPlayerIncome: safeFiniteNumber(gameState.stats?.monthlyPlayerIncome, 0, 0)
     },
     monsters: cloneSerializable(gameState.monsters, []),
+    giantEnemies: cloneSerializable(gameState.giantEnemies, []),
+    giantEnemyFirstClears: cloneSerializable(gameState.giantEnemyFirstClears, {}),
     logs: cloneSerializable(gameState.logs, []).slice(0, CONFIG.MAX_LOGS),
     timers: {
       spawn: safeFiniteNumber(gameState.timers?.spawn, 0, 0),
       monsterSpawn: safeFiniteNumber(gameState.timers?.monsterSpawn, gameState.timers?.spawn ?? 0, 0),
+      giantEnemySpawnFrames: clampInteger(gameState.timers?.giantEnemySpawnFrames, 0, Number.MAX_SAFE_INTEGER, 0),
       visitorSpawn: safeFiniteNumber(gameState.timers?.visitorSpawn, 0, 0),
       dungeonSpawnMs: safeFiniteNumber(gameState.timers?.dungeonSpawnMs, 0, 0)
     },
@@ -173,7 +176,9 @@ function applyLoadedGameState(data) {
   gameState.stats.monthlyHunts = clampInteger(loaded.stats?.monthlyHunts, 0, Number.MAX_SAFE_INTEGER, 0);
   gameState.stats.monthlyKnownnessGained = safeFiniteNumber(loaded.stats?.monthlyKnownnessGained, 0, 0);
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(loaded.stats?.monthlyPlayerIncome, 0, 0);
-  gameState.monsters = normalizeMonsters(loaded.monsters);
+  gameState.monsters = normalizeMonsters([...(loaded.monsters ?? []), ...(loaded.giantEnemies ?? []).filter(g => !(loaded.monsters ?? []).some(m => m?.id === g?.id))]);
+  gameState.giantEnemies = gameState.monsters.filter(m => m?.isGiant);
+  gameState.giantEnemyFirstClears = loaded.giantEnemyFirstClears && typeof loaded.giantEnemyFirstClears === 'object' ? { ...loaded.giantEnemyFirstClears } : {};
   gameState.skirmishes = [];
   gameState.nextSkirmishId = clampInteger(loaded.nextSkirmishId, 1, Number.MAX_SAFE_INTEGER, 1);
   gameState.dungeonProgress = normalizeDungeonProgress(loaded.dungeonProgress);
@@ -185,6 +190,7 @@ function applyLoadedGameState(data) {
   gameState.logs = Array.isArray(loaded.logs) ? loaded.logs.map(text => String(text)).slice(0, CONFIG.MAX_LOGS) : [];
   gameState.timers.spawn = safeFiniteNumber(loaded.timers?.spawn, 0, 0);
   gameState.timers.monsterSpawn = safeFiniteNumber(loaded.timers?.monsterSpawn, loaded.timers?.spawn ?? 0, 0);
+  gameState.timers.giantEnemySpawnFrames = clampInteger(loaded.timers?.giantEnemySpawnFrames, 0, Number.MAX_SAFE_INTEGER, 0);
   gameState.timers.visitorSpawn = safeFiniteNumber(loaded.timers?.visitorSpawn, 0, 0);
   gameState.timers.dungeonSpawnMs = safeFiniteNumber(loaded.timers?.dungeonSpawnMs, 0, 0);
   initializeAssetRegistry();

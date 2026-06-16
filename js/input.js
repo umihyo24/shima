@@ -300,6 +300,8 @@ function handleUiAction(event, options = {}) {
   else if (action === 'zoomOut') setZoom(gameState.camera.zoom - CONFIG.camera.buttonStep);
   else if (action === 'close-panel' || action === 'closeManagement') closeManagementPanel();
   else if (action === 'closeBuild' || action === 'closeBottom') closeBuildDrawer();
+  else if (action === 'closeGiantHunt') closeGiantHunt();
+  else if (action === 'startGiantHunt') startGiantHunt(actionTarget.dataset?.giantEnemyId);
   else if (action === 'closeInspector' || action === 'closeSeal') { closeInspector(); clearContextSelection(); renderUI(); }
   else if (dungeonAction === 'start') startDungeon(actionTarget.dataset?.dungeonId);
   else if (dungeonAction === 'select') { gameState.ui.selectedDungeonId = actionTarget.dataset?.dungeonId ?? null; markUIDirty('dungeon'); renderUI(); }
@@ -343,6 +345,7 @@ function clearContextSelection() {
 
 function cancelCurrentAction(reason = 'cancel') {
   if (!gameState.ui) return false;
+  if (gameState.ui.giantHuntOpen) return closeGiantHunt();
   if (gameState.ui.roadEdit?.active) { clearRoadEdit(); markUIDirty('tool'); renderUI(); return true; }
   if (gameState.ui.moveEdit?.active) { cancelMoveFacility(); markUIDirty('tool'); renderUI(); return true; }
   if (gameState.ui.selectedTool) { clearSelectedTool(); return true; }
@@ -488,6 +491,8 @@ function bindInputEvents() {
       openManagementPanel('dungeons');
       return;
     }
+    const clickedGiant = !isPlacementModeActive() ? giantEnemyAtWorldPoint(gameState.input.mouseWorld) : null;
+    if (clickedGiant?.id) { openGiantHunt(clickedGiant.id); return; }
     if (clickedSeal?.id) {
       selectSeal(clickedSeal.id, 'canvas');
       return;

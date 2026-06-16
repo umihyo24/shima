@@ -5,7 +5,7 @@ function createNewGameState() {
     residentName: CONFIG.resident.defaultName,
     camera: { x: CONFIG.camera.x, y: CONFIG.camera.y, zoom: CONFIG.camera.zoom, dragging: false, dragMoved: false, dragStartX: 0, dragStartY: 0, lastMouseX: 0, lastMouseY: 0 },
     input: { keys: {}, mouseWorld: { x: 0, y: 0 }, mouseTile: { x: -1, y: -1 } },
-    ui: { activeBuildCategory: null, selectedTool: null, activeManagementPanel: null, inspector: { type: null, id: null, open: false }, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, selectedFacilityId: null, facilityInspectorOpen: false, buildCategory: 'roads', placementCategory: 'facility', message: '', directionIndex: 2, placementFeedback: null, roadEdit: createRoadEditState(), moveEdit: createMoveEditState(), lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
+    ui: { giantHuntOpen: false, giantHuntEnemyId: null, activeBuildCategory: null, selectedTool: null, activeManagementPanel: null, inspector: { type: null, id: null, open: false }, selectedSealId: null, selectedPersonRosterId: null, selectedDungeonId: null, selectedFacilityId: null, facilityInspectorOpen: false, buildCategory: 'roads', placementCategory: 'facility', message: '', directionIndex: 2, placementFeedback: null, roadEdit: createRoadEditState(), moveEdit: createMoveEditState(), lastUiUpdate: 0, needsHudUpdate: true, needsPanelUpdate: true, suppressUiClickUntil: 0, panelScrollTopByTab: {}, renderedBottomPanelTab: null, sealList: { filter: 'all', sortKey: 'name', sortDir: 'asc' } },
     world: { tiles: [], roads: [], objects: [], nextObjectId: 1 },
     seals: [],
     visitorProfiles: createDefaultVisitorProfiles(),
@@ -13,13 +13,15 @@ function createNewGameState() {
     shopCatalog: { unlockedItemIds: [], discoveredAt: {} },
     facilityProgress: {},
     monsters: [],
+    giantEnemies: [],
+    giantEnemyFirstClears: {},
     skirmishes: [],
     nextSkirmishId: 1,
     dungeons: [],
     dungeonProgress: { unlockedDungeonIds: [], clearCounts: {}, firstClearRewardsClaimed: {} },
     images: {},
     logs: [],
-    timers: { spawn: 0, monsterSpawn: 0, visitorSpawn: 0, dungeonSpawnMs: 0, ui: 0 },
+    timers: { spawn: 0, monsterSpawn: 0, giantEnemySpawnFrames: 0, visitorSpawn: 0, dungeonSpawnMs: 0, ui: 0 },
     time: { timeScale: CONFIG.TIME.DEFAULT_SCALE },
     save: { autoSaveTimerMs: 0, lastSavedAt: null, statusText: '' },
     village: { knownness: CONFIG.knownness.initial, clearCount: 0 },
@@ -908,11 +910,24 @@ function normalizeMonster(monster, index = 0) {
   const x = safeFiniteNumber(monster?.x, fallback.x);
   const y = safeFiniteNumber(monster?.y, fallback.y);
   const states = CONFIG.monster?.states ?? {};
-  const state = [states.idle, states.patrol, states.engaged].includes(monster?.state) ? monster.state : states.idle;
+  const giantStates = ['roaming', 'engaged', 'huntPreparing', 'huntActive', 'defeated'];
+  const state = monster?.isGiant === true ? (giantStates.includes(monster?.state) ? monster.state : 'roaming') : ([states.idle, states.patrol, states.engaged].includes(monster?.state) ? monster.state : states.idle);
   const target = Number.isFinite(Number(monster?.target?.x)) && Number.isFinite(Number(monster?.target?.y)) ? { x: Number(monster.target.x), y: Number(monster.target.y) } : null;
   return {
     id: String(monster?.id || `crab-${Date.now()}-${index}`),
-    type: 'crab',
+    type: String(monster?.type || 'crab'),
+    name: monster?.name ? String(monster.name) : null,
+    isGiant: monster?.isGiant === true,
+    giantEnemyId: monster?.giantEnemyId ? String(monster.giantEnemyId) : null,
+    level: clampInteger(monster?.level, 1, Number.MAX_SAFE_INTEGER, 1),
+    power: safeFiniteNumber(monster?.power, CONFIG.monster.attack, 0),
+    rewardGold: safeFiniteNumber(monster?.rewardGold, CONFIG.monster.rewardG, 0),
+    rewardFame: safeFiniteNumber(monster?.rewardFame, 0, 0),
+    firstClearUnlocks: Array.isArray(monster?.firstClearUnlocks) ? monster.firstClearUnlocks.map(String) : [],
+    rewardClaimed: monster?.rewardClaimed === true,
+    defeated: monster?.defeated === true,
+    spawnedAt: clampInteger(monster?.spawnedAt, 0, Number.MAX_SAFE_INTEGER, 0),
+    huntParticipantSealIds: Array.isArray(monster?.huntParticipantSealIds) ? monster.huntParticipantSealIds.map(String) : [],
     assetKey: String(monster?.assetKey || 'monsters.crab'),
     facing: monster?.facing === 'right' ? 'right' : 'left',
     facingOverride: ['left', 'right'].includes(monster?.facingOverride) ? monster.facingOverride : null,
