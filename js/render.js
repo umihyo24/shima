@@ -602,7 +602,7 @@ function drawClearPreview(gx, gy) {
 function drawFallbackSeal(context, seal, x, y, w, h, options = {}) {
   const cx = x + w / 2;
   const cy = y + h / 2;
-  const bodyColor = seal?.state === 'fallen' ? '#cbd2d8' : (seal?.type === 'resident' ? '#fff7ec' : '#d8f4ff');
+  const bodyColor = ['fallen', 'downed', 'beingCarried'].includes(seal?.state) ? '#cbd2d8' : (seal?.type === 'resident' ? '#fff7ec' : '#d8f4ff');
   const face = options?.facing === 'right' ? 1 : -1;
   context.save();
   context.fillStyle = bodyColor;
@@ -941,7 +941,7 @@ function renderSelectedFacilityInfo() {
   const direction = requiresRoad ? getDirectionSideName(getFacilityEntranceDirectionIndex(facility)) : '-';
   const connected = requiresRoad ? isEntranceConnectedToRoad(facility) : true;
   const levelText = isLevelableFacility(facility) ? `<br>Lv${getFacilityLevel(facility)} (${escapeHtml(getFacilityLevelProgressText(facility))})` : '';
-  const effectText = isLifeFacility(facility) ? `<br>効果: 好感度+${Math.floor(getLifeFacilityFavorGain(facility))}${facility.type === 'bench' ? ` / HP+${Math.floor(getBenchHealAmount(facility))}` : ''}` : '';
+  const effectText = isLifeFacility(facility) ? `<br>効果: 好感度+${Math.floor(getLifeFacilityFavorGain(facility))} / HP徐々に回復 ${Math.floor(getFacilityRecoveryPerSecond(facility))}/秒` : '';
   return `<div class="compactCard selected-facility-card"><b>マップ上の選択施設</b><br>${escapeHtml(name)} (${facility.w}x${facility.h})${levelText}${effectText}<br>入口: ${escapeHtml(direction)}<br>道路接続: ${requiresRoad ? (connected ? 'あり' : 'なし') : '不要'}<br>座標: ${facility.x}, ${facility.y}</div>`;
 }
 
@@ -1233,7 +1233,7 @@ function renderFacilityProgressList() {
     const shopText = renderFacilityShopItemSummary(facility);
     const entranceText = facilityRequiresRoadConnection(facility) ? getDirectionSideName(getFacilityEntranceDirectionIndex(facility)) : '-';
     const roadText = facilityRequiresRoadConnection(facility) ? (isEntranceConnectedToRoad(facility) ? 'Yes' : 'No') : '不要';
-    const effectText = isLifeFacility(facility) ? ` / 効果 好感度+${Math.floor(getLifeFacilityFavorGain(facility))}${facility.type === 'bench' ? ` HP+${Math.floor(getBenchHealAmount(facility))}` : ''}` : ` / 料金${Math.floor(getFacilityPrice(facility))}G / 回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G`;
+    const effectText = facility?.type === 'inn' ? ` / 料金${Math.floor(getFacilityPrice(facility))}G / HP回復なし / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G` : (isLifeFacility(facility) ? ` / 効果 好感度+${Math.floor(getLifeFacilityFavorGain(facility))} HP徐々に回復${Math.floor(getFacilityRecoveryPerSecond(facility))}/秒` : ` / 料金${Math.floor(getFacilityPrice(facility))}G / 食事回復${Math.floor(getFacilityHealAmount(facility))} / 累計${Math.floor(safeFiniteNumber(facility.totalIncome, 0, 0))}G`);
     return `${escapeHtml(name)}${levelText} / Entrance: ${escapeHtml(entranceText)} / Road Connected: ${roadText}${effectText}${shopText}`;
   }).join('<br>');
 }
@@ -1344,7 +1344,8 @@ function renderFacilityProgressInspectorSection(facility) {
   const threshold = getNextFacilityLevelThreshold(facility);
   const next = Number.isFinite(threshold) ? `${Math.floor(safeFiniteNumber(progress.totalUses, 0, 0))}/${threshold}` : 'Max Level';
   const quality = 1 + Math.max(0, getFacilityLevel(facility) - 1) * safeFiniteNumber(CONFIG.FACILITY_LEVELS?.healingMultiplierPerLevel, 0, 0);
-  return `<section><h3>共有レベル</h3><div class="inspectorInfoGrid"><span>Lv</span><b>${getFacilityLevel(facility)}</b><span>次</span><b>${escapeHtml(next)}</b><span>料金</span><b>${Math.floor(getFacilityPrice(facility))}G</b><span>品質</span><b>x${quality.toFixed(2)}</b><span>回復</span><b>${Math.ceil(getFacilityHealAmount(facility))}</b><span>収益倍率</span><b>x${getFacilityIncomeMultiplier(facility).toFixed(2)}</b></div></section>`;
+  const recoveryLabel = facility?.type === 'inn' ? 'HPなし' : (isLifeFacility(facility) ? `${Math.ceil(getFacilityRecoveryPerSecond(facility))}/秒` : Math.ceil(getFacilityHealAmount(facility)));
+  return `<section><h3>共有レベル</h3><div class="inspectorInfoGrid"><span>Lv</span><b>${getFacilityLevel(facility)}</b><span>次</span><b>${escapeHtml(next)}</b><span>料金</span><b>${Math.floor(getFacilityPrice(facility))}G</b><span>品質</span><b>x${quality.toFixed(2)}</b><span>回復</span><b>${escapeHtml(recoveryLabel)}</b><span>収益倍率</span><b>x${getFacilityIncomeMultiplier(facility).toFixed(2)}</b></div></section>`;
 }
 
 function renderFacilityShopGoodsInspectorSection(facility) {
@@ -1373,13 +1374,14 @@ function renderSealInspector(seal) {
   const icon = seal?.type === 'resident' ? '🦭' : '🌊🦭';
   const stay = seal?.type === 'visitor' ? `<div class="inspectorInfoGrid"><span>滞在</span><b>${formatStayTime(seal)}</b><span>訪問狩猟</span><b>${Math.floor(safeFiniteNumber(seal?.huntsThisVisit, 0, 0))}</b><span>訪問施設</span><b>${Math.floor(safeFiniteNumber(seal?.facilitiesUsedThisVisit, 0, 0))}</b><span>帰宅希望</span><b>${seal?.wantsToLeave ? 'あり' : 'なし'}</b></div>` : '';
   const targetText = formatSealTarget(seal) || 'なし';
+  const recoveryText = formatRecoverySource(seal);
   return `<div class="inspectorHeader"><div><div class="inspectorKicker">${escapeHtml(typeLabel)}</div><h2>${escapeHtml(seal?.name ?? '不明')}</h2></div><button data-action="closeInspector" class="subtle">閉じる</button></div>
     <div class="sealInspectorTop"><div class="sealInspectorIcon" aria-hidden="true">${icon}</div><div><div class="sealInspectorLevel">Lv ${Math.floor(safeFiniteNumber(seal?.level, 1, 1))} / ${escapeHtml(formatSealState(seal))}</div><div class="hpText">HP ${Math.ceil(hp)} / ${Math.ceil(maxHp)}</div><div class="bar"><div class="fill" style="width:${hpRate}%"></div></div></div></div>
     <section><h3>ステータス</h3><div class="inspectorInfoGrid">
       <span>好感度</span><b>${Math.floor(safeFiniteNumber(seal?.favor, 0, 0))}</b><span>所持G</span><b>${Math.floor(safeFiniteNumber(seal?.carriedG, 0, 0))}</b><span>装備予算</span><b>${Math.floor(safeFiniteNumber(seal?.gearBudget, 0, 0))}</b><span>戦力</span><b>${Math.floor(getSealPowerScore(seal))}</b><span>攻撃</span><b>${Math.floor(stats.attack)}</b><span>防御</span><b>${Math.floor(stats.defense)}</b><span>最大HP</span><b>${Math.ceil(stats.maxHp)}</b><span>EXP</span><b>${Math.floor(safeFiniteNumber(seal?.exp, 0, 0))}</b>
     </div></section>
     <section><h3>装備</h3>${renderInspectorEquipment(seal)}</section>
-    <section><h3>行動</h3><div class="inspectorInfoGrid"><span>現在</span><b>${escapeHtml(targetText)}</b></div>${stay}</section>`;
+    <section><h3>行動</h3><div class="inspectorInfoGrid"><span>現在</span><b>${escapeHtml(targetText)}</b><span>回復元</span><b>${escapeHtml(recoveryText)}</b></div>${stay}</section>`;
 }
 
 function renderInspectorEquipment(seal) {
@@ -1392,6 +1394,11 @@ function getSealPowerScore(seal) {
 }
 
 function formatSealState(seal) { return stateLabel(seal?.state ?? 'idle') || '不明'; }
+function formatRecoverySource(seal) {
+  const source = String(seal?.recoverySource ?? '');
+  const labels = { downed: 'ダウン中の自然回復', carried: '搬送救助', 'fallback-rest': '空き地/道路休憩', 'inn-prep': '宿屋の旅支度（HPなし）', restaurant: '食堂の食事', manjuShop: 'まんじゅう', bench: 'ベンチ休憩', observationDeck: '展望台休憩', sealPlaza: '広場休憩' };
+  return labels[source] ?? (source || 'なし');
+}
 
 function formatEquipmentName(itemId) {
   if (!itemId) return 'なし';
@@ -1412,7 +1419,7 @@ function renderSelectedSealPanel(seal) {
   const hpMax = safeFiniteNumber(stats.maxHp, seal?.maxHp ?? CONFIG.seal.maxHp, 1);
   const targetText = formatSealTarget(seal);
   const stay = seal?.type === 'visitor' ? `<br>滞在: ${Math.floor(safeFiniteNumber(seal.visitTimerMs, 0, 0) / 1000)}秒 / 最短${Math.floor(safeFiniteNumber(seal.minStayMs, 0, 0) / 1000)}秒 / 最長${Math.floor(safeFiniteNumber(seal.maxStayMs, 0, 0) / 1000)}秒<br>訪問狩猟/施設: ${seal.huntsThisVisit ?? 0}/${seal.facilitiesUsedThisVisit ?? 0} / ${seal.wantsToLeave ? '帰りたい' : '滞在中'}` : '';
-  return `<div class="compactCard selectedSealCard"><b>${escapeHtml(seal.name)}</b>（${seal.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(seal)?.label ?? seal.personality)}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))} / ${Math.ceil(hpMax)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, safeFiniteNumber(seal.hp, 0, 0) / hpMax * 100))}%"></div></div>所持G: ${Math.floor(safeFiniteNumber(seal.carriedG, 0, 0))}<br>装備予算: ${Math.floor(safeFiniteNumber(seal.gearBudget, 0, 0))}<br>Lv: ${seal.level} / EXP: ${Math.floor(safeFiniteNumber(seal.exp, 0, 0))}<br>好感度: ${Math.floor(safeFiniteNumber(seal.favor, 0, 0))}<br>状態: ${escapeHtml(stateLabel(seal.state))}<br>行動/目標: ${escapeHtml(targetText)}${stay}<hr>武器: ${equipmentText(seal, 'weapon')}<br>防具: ${equipmentText(seal, 'armor')}<br>アクセ: ${equipmentText(seal, 'accessory')}<br>有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}<div class="buildActions"><button data-action="closeSeal" class="subtle">詳細を閉じる</button></div></div>`;
+  return `<div class="compactCard selectedSealCard"><b>${escapeHtml(seal.name)}</b>（${seal.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(seal)?.label ?? seal.personality)}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))} / ${Math.ceil(hpMax)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, safeFiniteNumber(seal.hp, 0, 0) / hpMax * 100))}%"></div></div>所持G: ${Math.floor(safeFiniteNumber(seal.carriedG, 0, 0))}<br>装備予算: ${Math.floor(safeFiniteNumber(seal.gearBudget, 0, 0))}<br>Lv: ${seal.level} / EXP: ${Math.floor(safeFiniteNumber(seal.exp, 0, 0))}<br>好感度: ${Math.floor(safeFiniteNumber(seal.favor, 0, 0))}<br>状態: ${escapeHtml(stateLabel(seal.state))}<br>回復元: ${escapeHtml(formatRecoverySource(seal))}<br>行動/目標: ${escapeHtml(targetText)}${stay}<hr>武器: ${equipmentText(seal, 'weapon')}<br>防具: ${equipmentText(seal, 'armor')}<br>アクセ: ${equipmentText(seal, 'accessory')}<br>有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}<div class="buildActions"><button data-action="closeSeal" class="subtle">詳細を閉じる</button></div></div>`;
 }
 
 function clearContextSelectionIfInvalid() {
@@ -1452,7 +1459,7 @@ function formatSealTarget(seal) {
   if (seal?.target?.reason) return seal?.currentAction || seal.target.reason;
   return seal?.currentAction || 'なし';
 }
-function stateLabel(state) { return ({ movingToDungeon:'遠征集合中', waitingAtDungeon:'入口で待機中', expeditionRunning:'遠征中', returningFromDungeon:'遠征帰還中', questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'狩猟中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', rescuing:'救助中', carryingFallenSeal:'搬送中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
+function stateLabel(state) { return ({ movingToDungeon:'遠征集合中', waitingAtDungeon:'入口で待機中', expeditionRunning:'遠征中', returningFromDungeon:'遠征帰還中', questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'狩猟中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', downed:'ダウン中', rescuing:'救助中', carryingFallenSeal:'搬送中', beingCarried:'搬送されている', resting:'休憩中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
 
 function drawDungeon(context, dungeon) {
   if (!context || !dungeon) return;
