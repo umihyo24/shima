@@ -10,6 +10,7 @@ function update(deltaMs) {
   updateCalendar(safeDeltaMs);
   updateSpawner(dt);
   updateDungeons(safeDeltaMs);
+  updateMonsters(dt);
   updateSeals(dt);
   removeDefeatedMonsters();
   updateAutoSave(safeDeltaMs);
@@ -108,7 +109,7 @@ function updateMonsterSpawner(dt) {
   gameState.timers.spawn = 0;
   if ((gameState.monsters ?? []).length >= CONFIG.monster.cap) return;
   const p = randomCoastPoint();
-  gameState.monsters.push({ id: `crab-${Date.now()}-${Math.random().toString(16).slice(2)}`, type: 'crab', areaId: 'coast', x: p.x, y: p.y, hp: CONFIG.monster.hp, maxHp: CONFIG.monster.hp, attack: CONFIG.monster.attack, defense: CONFIG.monster.defense, assignedSealId: null, assetKey: 'monsters.crab', facing: 'left' });
+  gameState.monsters.push(normalizeMonster({ id: `crab-${Date.now()}-${Math.random().toString(16).slice(2)}`, type: 'crab', areaId: 'coast', x: p.x, y: p.y, homeX: p.x, homeY: p.y, hp: CONFIG.monster.hp, maxHp: CONFIG.monster.hp, attack: CONFIG.monster.attack, defense: CONFIG.monster.defense, assignedSealId: null, assetKey: 'monsters.crab', facing: 'left', state: CONFIG.monster.states.idle }));
 }
 
 function updateVisitorSpawner(dt) {
@@ -245,6 +246,96 @@ function shouldReturnFromHunt(seal) {
 
 function chooseNextHuntTarget(seal) {
   return claimNearestMonster(seal, seal?.selectedHuntAreaId ?? 'coast');
+}
+
+
+function updateMonsters(dt) {
+  for (const monster of gameState.monsters ?? []) updateMonsterBehavior(monster, dt);
+}
+
+function updateMonsterBehavior(monster, dt) {
+  if (!monster || safeFiniteNumber(monster.hp, 0, 0) <= 0) return;
+  normalizeMonsterRuntime(monster);
+  const assignedSeal = getSealById(monster.assignedSealId);
+  const nearbySeal = findNearestThreateningSeal(monster);
+  const engagedSeal = assignedSeal ?? nearbySeal;
+  if (engagedSeal) {
+    monster.state = CONFIG.monster.states.engaged;
+    monster.alertTimer = safeFiniteNumber(monster.alertTimer, 0, 0) + dt;
+    nudgeMonsterWithinTerritory(monster, engagedSeal, dt, CONFIG.monster.movement?.engagedSpeed);
+    return;
+  }
+  monster.alertTimer = 0;
+  monster.stateTimer = Math.max(0, safeFiniteNumber(monster.stateTimer, 0, 0) - dt);
+  if (monster.stateTimer <= 0 || !monster.target) chooseMonsterIdleState(monster);
+  if (monster.state === CONFIG.monster.states.patrol) moveMonsterTowardTarget(monster, dt, CONFIG.monster.movement?.patrolSpeed);
+}
+
+function normalizeMonsterRuntime(monster) {
+  const states = CONFIG.monster.states ?? {};
+  if (![states.idle, states.patrol, states.engaged].includes(monster.state)) monster.state = states.idle;
+  monster.homeX = safeFiniteNumber(monster.homeX, monster.x, 0);
+  monster.homeY = safeFiniteNumber(monster.homeY, monster.y, 0);
+  monster.stateTimer = safeFiniteNumber(monster.stateTimer, 0, 0);
+  if (!monster.target || !Number.isFinite(Number(monster.target?.x)) || !Number.isFinite(Number(monster.target?.y))) monster.target = null;
+}
+
+function findNearestThreateningSeal(monster) {
+  const radius = safeFiniteNumber(CONFIG.monster.territory?.reactionRadius, 0, 0);
+  if (radius <= 0) return null;
+  return (gameState.seals ?? []).filter(seal => seal && !['fallen', 'expeditionRunning', 'returningFromDungeon'].includes(seal.state) && distance(seal.x, seal.y, monster.x, monster.y) <= radius)
+    .reduce((best, seal) => !best || distance(seal.x, seal.y, monster.x, monster.y) < distance(best.x, best.y, monster.x, monster.y) ? seal : best, null);
+}
+
+function chooseMonsterIdleState(monster) {
+  const cfg = CONFIG.monster.movement ?? {};
+  const states = CONFIG.monster.states ?? {};
+  if (Math.random() < 0.45) {
+    monster.state = states.idle;
+    monster.target = null;
+    monster.stateTimer = randomRange(safeFiniteNumber(cfg.idleSecondsMin, 0.8, 0), safeFiniteNumber(cfg.idleSecondsMax, 1.8, 0));
+    return;
+  }
+  monster.state = states.patrol;
+  monster.target = clampMonsterPoint(monster, randomMonsterPatrolPoint(monster));
+  monster.stateTimer = randomRange(safeFiniteNumber(cfg.patrolSecondsMin, 1.2, 0), safeFiniteNumber(cfg.patrolSecondsMax, 2.8, 0));
+}
+
+function randomMonsterPatrolPoint(monster) {
+  const radius = safeFiniteNumber(CONFIG.monster.movement?.wanderRadius, 85, 0);
+  const angle = Math.random() * Math.PI * 2;
+  const range = randomRange(radius * 0.25, radius);
+  return { x: safeFiniteNumber(monster.homeX, monster.x, 0) + Math.cos(angle) * range, y: safeFiniteNumber(monster.homeY, monster.y, 0) + Math.sin(angle) * range };
+}
+
+function clampMonsterPoint(monster, point) {
+  const area = CONFIG.DUNGEONS?.spawnAreas?.[monster?.areaId ?? 'coast']?.bounds ?? CONFIG.DUNGEONS?.spawnAreas?.coast?.bounds;
+  const pad = safeFiniteNumber(CONFIG.monster.movement?.edgePadding, 12, 0);
+  if (!area) return { x: safeFiniteNumber(point?.x, monster?.x, 0), y: safeFiniteNumber(point?.y, monster?.y, 0) };
+  return { x: clampNumber(safeFiniteNumber(point?.x, monster?.x, 0), gridToWorld(area.x, area.y).x - CONFIG.world.tile / 2 + pad, gridToWorld(area.x + area.w - 1, area.y).x + CONFIG.world.tile / 2 - pad, monster?.x ?? 0), y: clampNumber(safeFiniteNumber(point?.y, monster?.y, 0), gridToWorld(area.x, area.y).y - CONFIG.world.tile / 2 + pad, gridToWorld(area.x, area.y + area.h - 1).y + CONFIG.world.tile / 2 - pad, monster?.y ?? 0) };
+}
+
+function moveMonsterTowardTarget(monster, dt, speed) {
+  if (!monster?.target) return;
+  const d = distance(monster.x, monster.y, monster.target.x, monster.target.y);
+  if (d <= safeFiniteNumber(CONFIG.monster.movement?.retargetDistance, 10, 0)) { monster.target = null; monster.stateTimer = 0; return; }
+  const step = Math.min(d, safeFiniteNumber(speed, 0, 0) * dt);
+  if (step <= 0) return;
+  const dx = ((monster.target.x - monster.x) / d) * step;
+  const dy = ((monster.target.y - monster.y) / d) * step;
+  monster.facing = dx > 0 ? 'right' : dx < 0 ? 'left' : monster.facing;
+  const next = clampMonsterPoint(monster, { x: monster.x + dx, y: monster.y + dy });
+  monster.x = next.x; monster.y = next.y;
+}
+
+function nudgeMonsterWithinTerritory(monster, seal, dt, speed) {
+  const leash = safeFiniteNumber(CONFIG.monster.territory?.leashRadius, 170, 0);
+  const awayFromHome = distance(monster.x, monster.y, monster.homeX, monster.homeY);
+  const tooFar = leash > 0 && awayFromHome > leash;
+  const target = tooFar ? { x: monster.homeX, y: monster.homeY } : { x: seal.x, y: seal.y };
+  if (distance(monster.x, monster.y, target.x, target.y) <= CONFIG.monster.contactDistance * 0.85) return;
+  monster.target = target;
+  moveMonsterTowardTarget(monster, dt, speed);
 }
 
 function updateSeals(dt) {

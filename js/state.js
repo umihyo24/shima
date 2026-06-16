@@ -891,22 +891,38 @@ function findDungeonSpawnPoint(areaId) {
   return null;
 }
 
+function normalizeMonster(monster, index = 0) {
+  const fallback = randomCoastPoint();
+  const x = safeFiniteNumber(monster?.x, fallback.x);
+  const y = safeFiniteNumber(monster?.y, fallback.y);
+  const states = CONFIG.monster?.states ?? {};
+  const state = [states.idle, states.patrol, states.engaged].includes(monster?.state) ? monster.state : states.idle;
+  const target = Number.isFinite(Number(monster?.target?.x)) && Number.isFinite(Number(monster?.target?.y)) ? { x: Number(monster.target.x), y: Number(monster.target.y) } : null;
+  return {
+    id: String(monster?.id || `crab-${Date.now()}-${index}`),
+    type: 'crab',
+    assetKey: String(monster?.assetKey || 'monsters.crab'),
+    facing: monster?.facing === 'right' ? 'right' : 'left',
+    areaId: String(monster?.areaId || 'coast'),
+    x,
+    y,
+    homeX: safeFiniteNumber(monster?.homeX, x),
+    homeY: safeFiniteNumber(monster?.homeY, y),
+    target,
+    state,
+    stateTimer: safeFiniteNumber(monster?.stateTimer, 0, 0),
+    alertTimer: safeFiniteNumber(monster?.alertTimer, 0, 0),
+    hp: safeFiniteNumber(monster?.hp, CONFIG.monster.hp, 0),
+    maxHp: safeFiniteNumber(monster?.maxHp, CONFIG.monster.hp, 1),
+    attack: safeFiniteNumber(monster?.attack, CONFIG.monster.attack, 0),
+    defense: safeFiniteNumber(monster?.defense, CONFIG.monster.defense, 0),
+    assignedSealId: monster?.assignedSealId ? String(monster.assignedSealId) : null
+  };
+}
+
 function normalizeMonsters(monsters) {
   if (!Array.isArray(monsters)) return [];
-  return monsters.map((m, index) => ({
-    id: String(m?.id || `crab-${Date.now()}-${index}`),
-    type: 'crab',
-    assetKey: String(m?.assetKey || 'monsters.crab'),
-    facing: m?.facing === 'right' ? 'right' : 'left',
-    areaId: String(m?.areaId || 'coast'),
-    x: safeFiniteNumber(m?.x, randomCoastPoint().x),
-    y: safeFiniteNumber(m?.y, randomCoastPoint().y),
-    hp: safeFiniteNumber(m?.hp, CONFIG.monster.hp, 0),
-    maxHp: safeFiniteNumber(m?.maxHp, CONFIG.monster.hp, 1),
-    attack: safeFiniteNumber(m?.attack, CONFIG.monster.attack, 0),
-    defense: safeFiniteNumber(m?.defense, CONFIG.monster.defense, 0),
-    assignedSealId: m?.assignedSealId ? String(m.assignedSealId) : null
-  }));
+  return monsters.map((monster, index) => normalizeMonster(monster, index));
 }
 
 function nextObjectNumber(objects) {
