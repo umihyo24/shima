@@ -174,6 +174,8 @@ function applyLoadedGameState(data) {
   gameState.stats.monthlyKnownnessGained = safeFiniteNumber(loaded.stats?.monthlyKnownnessGained, 0, 0);
   gameState.stats.monthlyPlayerIncome = safeFiniteNumber(loaded.stats?.monthlyPlayerIncome, 0, 0);
   gameState.monsters = normalizeMonsters(loaded.monsters);
+  gameState.skirmishes = [];
+  gameState.nextSkirmishId = clampInteger(loaded.nextSkirmishId, 1, Number.MAX_SAFE_INTEGER, 1);
   gameState.dungeonProgress = normalizeDungeonProgress(loaded.dungeonProgress);
   updateDungeonUnlocks();
   gameState.dungeons = normalizeDungeons(loaded.dungeons);
