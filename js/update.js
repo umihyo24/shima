@@ -343,6 +343,43 @@ function assignSkirmishSlots(skirmish) {
   enemies.forEach((enemy, index) => { const slot = getSkirmishEnemySlot(skirmish, index, enemy); enemy.combatSlotX = slot.x; enemy.combatSlotY = slot.y; enemy.target = slot; });
 }
 
+
+function getNearestOpponent(actor, opponentList) {
+  if (!actor || !Array.isArray(opponentList) || opponentList.length <= 0) return null;
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const opponent of opponentList) {
+    if (!opponent || safeFiniteNumber(opponent.hp, 0, 0) <= 0) continue;
+    const d = getDistance(actor, opponent);
+    if (d < nearestDistance) { nearest = opponent; nearestDistance = d; }
+  }
+  return nearest;
+}
+
+function getCombatFacingDirection(actor, skirmish, role) {
+  if (!actor || !skirmish) return null;
+  const seals = (skirmish?.sealIds ?? []).map(getSealById).filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0 && seal.state === 'fighting');
+  const enemies = (skirmish?.enemyIds ?? []).map(id => (gameState.monsters ?? []).find(monster => monster?.id === id)).filter(enemy => enemy && safeFiniteNumber(enemy.hp, 0, 0) > 0);
+  const opponents = role === 'enemy' ? seals : enemies;
+  const assignedId = role === 'enemy' ? actor.assignedSealId : actor.targetId;
+  const assignedOpponent = assignedId ? opponents.find(opponent => opponent?.id === assignedId) : null;
+  const target = assignedOpponent ?? getNearestOpponent(actor, opponents) ?? { x: skirmish.centerX, y: skirmish.centerY };
+  const dx = safeFiniteNumber(target?.x, safeFiniteNumber(skirmish.centerX, actor.x, 0), 0) - safeFiniteNumber(actor.x, 0, 0);
+  if (dx > 0) return 'right';
+  if (dx < 0) return 'left';
+  return actor.facingOverride === 'right' || actor.facingOverride === 'left' ? actor.facingOverride : (actor.facing === 'right' ? 'right' : 'left');
+}
+
+function updateCombatFacingForSkirmish(skirmish) {
+  if (!skirmish || skirmish.state !== 'fighting') return;
+  for (const seal of (skirmish?.sealIds ?? []).map(getSealById).filter(Boolean)) seal.facingOverride = getCombatFacingDirection(seal, skirmish, 'seal');
+  for (const enemy of (skirmish?.enemyIds ?? []).map(id => (gameState.monsters ?? []).find(monster => monster?.id === id)).filter(Boolean)) enemy.facingOverride = getCombatFacingDirection(enemy, skirmish, 'enemy');
+}
+
+function clearCombatFacingOverride(actor) {
+  if (actor) actor.facingOverride = null;
+}
+
 function resetCombatApproachState(actor) {
   if (!actor) return;
   actor.combatApproachStuckFrames = 0;
@@ -440,8 +477,8 @@ function resolveSkirmish(skirmish, won) {
 }
 
 function cleanupSkirmish(skirmish) {
-  for (const sealId of skirmish?.sealIds ?? []) { const seal = getSealById(sealId); if (!seal) continue; seal.skirmishId = null; seal.combatSlotX = null; seal.combatSlotY = null; resetCombatApproachState(seal); seal.targetId = null; seal.target = null; seal.path = []; if (seal.state === 'fighting') { if (safeFiniteNumber(seal.hp, 0, 0) <= 0) seal.state = 'downed'; else if (shouldContinueHunting(seal)) { seal.state = 'hunting'; seal.currentAction = '探索中'; } else sendSealBackThroughHuntCorridor(seal); } }
-  for (const enemyId of skirmish?.enemyIds ?? []) { const enemy = (gameState.monsters ?? []).find(m => m?.id === enemyId); if (!enemy) continue; enemy.skirmishId = null; enemy.combatSlotX = null; enemy.combatSlotY = null; resetCombatApproachState(enemy); enemy.assignedSealId = null; if (safeFiniteNumber(enemy.hp, 0, 0) > 0) enemy.state = CONFIG.monster.states.idle; }
+  for (const sealId of skirmish?.sealIds ?? []) { const seal = getSealById(sealId); if (!seal) continue; clearCombatFacingOverride(seal); seal.skirmishId = null; seal.combatSlotX = null; seal.combatSlotY = null; resetCombatApproachState(seal); seal.targetId = null; seal.target = null; seal.path = []; if (seal.state === 'fighting') { if (safeFiniteNumber(seal.hp, 0, 0) <= 0) seal.state = 'downed'; else if (shouldContinueHunting(seal)) { seal.state = 'hunting'; seal.currentAction = '探索中'; } else sendSealBackThroughHuntCorridor(seal); } }
+  for (const enemyId of skirmish?.enemyIds ?? []) { const enemy = (gameState.monsters ?? []).find(m => m?.id === enemyId); if (!enemy) continue; clearCombatFacingOverride(enemy); enemy.skirmishId = null; enemy.combatSlotX = null; enemy.combatSlotY = null; resetCombatApproachState(enemy); enemy.assignedSealId = null; if (safeFiniteNumber(enemy.hp, 0, 0) > 0) enemy.state = CONFIG.monster.states.idle; }
 }
 
 function updateSkirmishes() {
@@ -463,6 +500,7 @@ function updateSkirmishes() {
     const seals = skirmish.sealIds.map(getSealById).filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0 && seal.state === 'fighting');
     const enemies = skirmish.enemyIds.map(id => (gameState.monsters ?? []).find(m => m?.id === id)).filter(enemy => enemy && safeFiniteNumber(enemy.hp, 0, 0) > 0);
     for (const actor of [...seals, ...enemies]) moveActorTowardCombatSlot(actor);
+    updateCombatFacingForSkirmish(skirmish);
     if (skirmish.timer % clampInteger(CONFIG.SKIRMISH?.battleTickFrames, 1, Number.MAX_SAFE_INTEGER, 30) === 0) {
       for (const seal of seals) { const enemy = enemies.find(e => safeFiniteNumber(e.hp, 0, 0) > 0); if (enemy) enemy.hp -= Math.max(CONFIG.combat.minDamage, getSealEffectiveStats(seal).attack - safeFiniteNumber(enemy.defense, 0, 0)); }
       for (const enemy of enemies.filter(e => safeFiniteNumber(e.hp, 0, 0) > 0)) { const seal = seals.find(s => safeFiniteNumber(s.hp, 0, 0) > 0); if (seal) { seal.hp -= Math.max(CONFIG.combat.minDamage, safeFiniteNumber(enemy.attack, 0, 0) - getSealEffectiveStats(seal).defense); if (seal.hp <= 0) { seal.hp = 0; seal.state = 'downed'; seal.recoverySource = 'downed'; seal.rescueTargetId = null; seal.stuckFrames = 0; logMessage(`${seal.name}が倒れました。`); } } }
