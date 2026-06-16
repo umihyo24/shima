@@ -429,14 +429,73 @@ function drawSeal(context, seal) {
   drawSealNameAndHp(context, seal, x, y, spriteSize);
 }
 
+
+function getMonsterCombatGroup(monster) {
+  const radius = safeFiniteNumber(CONFIG.monster?.territory?.groupRadius, 120, 0);
+  return (gameState.seals ?? []).filter(seal => seal && ['movingToMonster', 'fighting'].includes(seal.state) && (seal.targetId === monster?.id || distance(seal.x, seal.y, monster?.x, monster?.y) <= radius));
+}
+
+function drawMonsterTerritory(context, monster, x, y) {
+  const states = CONFIG.monster?.states ?? {};
+  const territory = CONFIG.monster?.territory ?? {};
+  const visuals = CONFIG.monster?.visuals ?? {};
+  const radius = safeFiniteNumber(territory.reactionRadius, 0, 0);
+  if (radius <= 0 || monster?.state === states.idle) return;
+  context.save();
+  context.strokeStyle = monster?.state === states.engaged ? `rgba(255,108,77,${safeFiniteNumber(visuals.engagedLineAlpha, 0.36, 0)})` : `rgba(255,238,160,${safeFiniteNumber(visuals.territoryAlpha, 0.1, 0)})`;
+  context.lineWidth = Math.max(1, 2 / Math.max(gameState.camera?.zoom ?? 1, 0.1));
+  context.setLineDash(monster?.state === states.engaged ? [] : [8, 8]);
+  context.beginPath();
+  context.arc(x, y, radius, 0, Math.PI * 2);
+  context.stroke();
+  context.restore();
+}
+
+function drawMonsterCombatLinks(context, monster, x, y) {
+  const group = getMonsterCombatGroup(monster);
+  if (group.length <= 0) return;
+  const visuals = CONFIG.monster?.visuals ?? {};
+  context.save();
+  context.strokeStyle = `rgba(255,235,135,${safeFiniteNumber(visuals.engagedLineAlpha, 0.36, 0)})`;
+  context.lineWidth = Math.max(1, 2 / Math.max(gameState.camera?.zoom ?? 1, 0.1));
+  for (const seal of group) {
+    context.beginPath();
+    context.moveTo(x, y);
+    context.lineTo(safeFiniteNumber(seal?.x, x, 0), safeFiniteNumber(seal?.y, y, 0));
+    context.stroke();
+  }
+  if (group.length > 1) {
+    context.fillStyle = `rgba(255,221,96,${safeFiniteNumber(visuals.groupRingAlpha, 0.18, 0)})`;
+    context.beginPath();
+    context.arc(x, y, safeFiniteNumber(CONFIG.monster?.territory?.groupRadius, 120, 0) * 0.42, 0, Math.PI * 2);
+    context.fill();
+  }
+  context.restore();
+}
+
+function drawMonsterStateDot(context, monster, x, y, spriteSize) {
+  const states = CONFIG.monster?.states ?? {};
+  const radius = safeFiniteNumber(CONFIG.monster?.visuals?.stateDotRadius, 3, 1);
+  const color = monster?.state === states.engaged ? '#ff6c4d' : monster?.state === states.patrol ? '#ffe66b' : '#b9f3ff';
+  context.save();
+  context.fillStyle = color;
+  context.beginPath();
+  context.arc(x + spriteSize * 0.32, y - spriteSize * 0.26, radius, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
 function drawMonster(context, monster) {
   const { x, y } = getEntityScreenPosition(monster);
   const spriteSize = getMonsterRenderSize();
   const drawX = x - spriteSize / 2;
   const drawY = y - spriteSize / 2;
+  drawMonsterTerritory(context, monster, x, y);
+  drawMonsterCombatLinks(context, monster, x, y);
   drawEntityShadow(context, x, y, spriteSize, spriteSize, 'monster');
   drawSpriteFacing(context, monster.assetKey || 'monsters.crab', drawX, drawY, spriteSize, spriteSize, monster.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackMonster(fallbackContext, monster, fx, fy, width, height, options));
   drawMonsterHp(context, monster, x, y, spriteSize);
+  drawMonsterStateDot(context, monster, x, y, spriteSize);
 }
 
 function drawMonsters() {
