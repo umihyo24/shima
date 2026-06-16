@@ -425,7 +425,7 @@ function drawSeal(context, seal) {
     context.stroke();
     context.restore();
   }
-  drawSpriteFacing(context, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), drawX, drawY, spriteSize, spriteSize, seal.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackSeal(fallbackContext, seal, fx, fy, width, height, options));
+  drawSpriteFacing(context, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), drawX, drawY, spriteSize, spriteSize, seal.facingOverride ?? seal.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackSeal(fallbackContext, seal, fx, fy, width, height, options));
   drawSealNameAndHp(context, seal, x, y, spriteSize);
 }
 
@@ -493,7 +493,7 @@ function drawMonster(context, monster) {
   drawMonsterTerritory(context, monster, x, y);
   drawMonsterCombatLinks(context, monster, x, y);
   drawEntityShadow(context, x, y, spriteSize, spriteSize, 'monster');
-  drawSpriteFacing(context, monster.assetKey || 'monsters.crab', drawX, drawY, spriteSize, spriteSize, monster.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackMonster(fallbackContext, monster, fx, fy, width, height, options));
+  drawSpriteFacing(context, monster.assetKey || 'monsters.crab', drawX, drawY, spriteSize, spriteSize, monster.facingOverride ?? monster.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackMonster(fallbackContext, monster, fx, fy, width, height, options));
   drawMonsterHp(context, monster, x, y, spriteSize);
   drawMonsterStateDot(context, monster, x, y, spriteSize);
 }
