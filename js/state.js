@@ -623,7 +623,10 @@ function normalizeSeal(s, index) {
     chestsOpened: clampInteger(s?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0),
     skirmishId: s?.skirmishId ? String(s.skirmishId) : null,
     combatSlotX: Number.isFinite(Number(s?.combatSlotX)) ? Number(s.combatSlotX) : null,
-    combatSlotY: Number.isFinite(Number(s?.combatSlotY)) ? Number(s.combatSlotY) : null
+    combatSlotY: Number.isFinite(Number(s?.combatSlotY)) ? Number(s.combatSlotY) : null,
+    combatApproachStuckFrames: clampInteger(s?.combatApproachStuckFrames, 0, Number.MAX_SAFE_INTEGER, 0),
+    combatApproachLastX: Number.isFinite(Number(s?.combatApproachLastX)) ? Number(s.combatApproachLastX) : null,
+    combatApproachLastY: Number.isFinite(Number(s?.combatApproachLastY)) ? Number(s.combatApproachLastY) : null
   };
 }
 
@@ -927,7 +930,10 @@ function normalizeMonster(monster, index = 0) {
     assignedSealId: monster?.assignedSealId ? String(monster.assignedSealId) : null,
     skirmishId: monster?.skirmishId ? String(monster.skirmishId) : null,
     combatSlotX: Number.isFinite(Number(monster?.combatSlotX)) ? Number(monster.combatSlotX) : null,
-    combatSlotY: Number.isFinite(Number(monster?.combatSlotY)) ? Number(monster.combatSlotY) : null
+    combatSlotY: Number.isFinite(Number(monster?.combatSlotY)) ? Number(monster.combatSlotY) : null,
+    combatApproachStuckFrames: clampInteger(monster?.combatApproachStuckFrames, 0, Number.MAX_SAFE_INTEGER, 0),
+    combatApproachLastX: Number.isFinite(Number(monster?.combatApproachLastX)) ? Number(monster.combatApproachLastX) : null,
+    combatApproachLastY: Number.isFinite(Number(monster?.combatApproachLastY)) ? Number(monster.combatApproachLastY) : null
   };
 }
 

@@ -343,12 +343,55 @@ function assignSkirmishSlots(skirmish) {
   enemies.forEach((enemy, index) => { const slot = getSkirmishEnemySlot(skirmish, index, enemy); enemy.combatSlotX = slot.x; enemy.combatSlotY = slot.y; enemy.target = slot; });
 }
 
-function moveActorTowardSlot(actor) {
-  if (!actor || !Number.isFinite(Number(actor.combatSlotX)) || !Number.isFinite(Number(actor.combatSlotY))) return;
-  const d = distance(actor.x, actor.y, actor.combatSlotX, actor.combatSlotY);
-  if (d <= CONFIG.seal.contactDistance) return;
-  const step = Math.min(d, safeFiniteNumber(CONFIG.SKIRMISH?.slotRadius, 34, 0) * safeFiniteNumber(CONFIG.SKIRMISH?.slotMoveStepRatio, 0.5, 0));
-  actor.x += ((actor.combatSlotX - actor.x) / d) * step; actor.y += ((actor.combatSlotY - actor.y) / d) * step;
+function resetCombatApproachState(actor) {
+  if (!actor) return;
+  actor.combatApproachStuckFrames = 0;
+  actor.combatApproachLastX = actor.x;
+  actor.combatApproachLastY = actor.y;
+}
+
+function snapActorToCombatSlot(actor, targetX, targetY) {
+  actor.x = targetX;
+  actor.y = targetY;
+  resetCombatApproachState(actor);
+}
+
+function getCombatApproachSpeedMultiplier(actor) {
+  const base = safeFiniteNumber(CONFIG.SKIRMISH_MOVEMENT?.approachSpeedMultiplier, 0.65, 0);
+  if (actor?.sizeClass !== 'giant') return base;
+  const sizeScale = safeFiniteNumber(CONFIG.RENDER?.ENTITIES?.sealSizeClassScale?.giant, 1, 0);
+  return sizeScale > 0 ? base / sizeScale : base;
+}
+
+function moveActorTowardCombatSlot(actor, targetX = actor?.combatSlotX, targetY = actor?.combatSlotY) {
+  if (!actor || !Number.isFinite(Number(targetX)) || !Number.isFinite(Number(targetY))) return;
+  targetX = Number(targetX);
+  targetY = Number(targetY);
+  const d = distance(actor.x, actor.y, targetX, targetY);
+  const snapDistance = safeFiniteNumber(CONFIG.SKIRMISH_MOVEMENT?.snapDistance, 3, 0);
+  if (d <= snapDistance) { snapActorToCombatSlot(actor, targetX, targetY); return; }
+
+  const movedSinceLastFrame = distance(actor.x, actor.y, actor.combatApproachLastX ?? actor.x, actor.combatApproachLastY ?? actor.y);
+  if (movedSinceLastFrame < safeFiniteNumber(CONFIG.COMBAT_STUCK?.stuckMoveEpsilon, 0.2, 0)) actor.combatApproachStuckFrames = clampInteger(actor.combatApproachStuckFrames, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  else actor.combatApproachStuckFrames = 0;
+  actor.combatApproachLastX = actor.x;
+  actor.combatApproachLastY = actor.y;
+
+  if (d >= safeFiniteNumber(CONFIG.SKIRMISH_MOVEMENT?.emergencySnapDistance, 120, 0) || actor.combatApproachStuckFrames >= clampInteger(CONFIG.SKIRMISH_MOVEMENT?.emergencySnapFrames, 1, Number.MAX_SAFE_INTEGER, 180)) {
+    snapActorToCombatSlot(actor, targetX, targetY);
+    return;
+  }
+
+  const smoothing = safeFiniteNumber(CONFIG.SKIRMISH_MOVEMENT?.smoothing, 0.12, 0);
+  const maxStep = safeFiniteNumber(CONFIG.SKIRMISH_MOVEMENT?.maxApproachStep, 1.2, 0);
+  const step = Math.min(d, maxStep, d * smoothing * getCombatApproachSpeedMultiplier(actor));
+  if (step <= 0) return;
+  const dx = ((targetX - actor.x) / d) * step;
+  const dy = ((targetY - actor.y) / d) * step;
+  if (dx > 0) actor.facing = 'right';
+  else if (dx < 0) actor.facing = 'left';
+  actor.x += dx;
+  actor.y += dy;
 }
 
 function nearSkirmishJoinPoint(actor, skirmish, opponents) {
@@ -397,8 +440,8 @@ function resolveSkirmish(skirmish, won) {
 }
 
 function cleanupSkirmish(skirmish) {
-  for (const sealId of skirmish?.sealIds ?? []) { const seal = getSealById(sealId); if (!seal) continue; seal.skirmishId = null; seal.combatSlotX = null; seal.combatSlotY = null; seal.targetId = null; seal.target = null; seal.path = []; if (seal.state === 'fighting') { if (safeFiniteNumber(seal.hp, 0, 0) <= 0) seal.state = 'downed'; else if (shouldContinueHunting(seal)) { seal.state = 'hunting'; seal.currentAction = '探索中'; } else sendSealBackThroughHuntCorridor(seal); } }
-  for (const enemyId of skirmish?.enemyIds ?? []) { const enemy = (gameState.monsters ?? []).find(m => m?.id === enemyId); if (!enemy) continue; enemy.skirmishId = null; enemy.combatSlotX = null; enemy.combatSlotY = null; enemy.assignedSealId = null; if (safeFiniteNumber(enemy.hp, 0, 0) > 0) enemy.state = CONFIG.monster.states.idle; }
+  for (const sealId of skirmish?.sealIds ?? []) { const seal = getSealById(sealId); if (!seal) continue; seal.skirmishId = null; seal.combatSlotX = null; seal.combatSlotY = null; resetCombatApproachState(seal); seal.targetId = null; seal.target = null; seal.path = []; if (seal.state === 'fighting') { if (safeFiniteNumber(seal.hp, 0, 0) <= 0) seal.state = 'downed'; else if (shouldContinueHunting(seal)) { seal.state = 'hunting'; seal.currentAction = '探索中'; } else sendSealBackThroughHuntCorridor(seal); } }
+  for (const enemyId of skirmish?.enemyIds ?? []) { const enemy = (gameState.monsters ?? []).find(m => m?.id === enemyId); if (!enemy) continue; enemy.skirmishId = null; enemy.combatSlotX = null; enemy.combatSlotY = null; resetCombatApproachState(enemy); enemy.assignedSealId = null; if (safeFiniteNumber(enemy.hp, 0, 0) > 0) enemy.state = CONFIG.monster.states.idle; }
 }
 
 function updateSkirmishes() {
@@ -419,7 +462,7 @@ function updateSkirmishes() {
     assignSkirmishSlots(skirmish);
     const seals = skirmish.sealIds.map(getSealById).filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0 && seal.state === 'fighting');
     const enemies = skirmish.enemyIds.map(id => (gameState.monsters ?? []).find(m => m?.id === id)).filter(enemy => enemy && safeFiniteNumber(enemy.hp, 0, 0) > 0);
-    for (const actor of [...seals, ...enemies]) moveActorTowardSlot(actor);
+    for (const actor of [...seals, ...enemies]) moveActorTowardCombatSlot(actor);
     if (skirmish.timer % clampInteger(CONFIG.SKIRMISH?.battleTickFrames, 1, Number.MAX_SAFE_INTEGER, 30) === 0) {
       for (const seal of seals) { const enemy = enemies.find(e => safeFiniteNumber(e.hp, 0, 0) > 0); if (enemy) enemy.hp -= Math.max(CONFIG.combat.minDamage, getSealEffectiveStats(seal).attack - safeFiniteNumber(enemy.defense, 0, 0)); }
       for (const enemy of enemies.filter(e => safeFiniteNumber(e.hp, 0, 0) > 0)) { const seal = seals.find(s => safeFiniteNumber(s.hp, 0, 0) > 0); if (seal) { seal.hp -= Math.max(CONFIG.combat.minDamage, safeFiniteNumber(enemy.attack, 0, 0) - getSealEffectiveStats(seal).defense); if (seal.hp <= 0) { seal.hp = 0; seal.state = 'downed'; seal.recoverySource = 'downed'; seal.rescueTargetId = null; seal.stuckFrames = 0; logMessage(`${seal.name}が倒れました。`); } } }
