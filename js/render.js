@@ -487,7 +487,7 @@ function drawMonsterStateDot(context, monster, x, y, spriteSize) {
 
 function drawMonster(context, monster) {
   const { x, y } = getEntityScreenPosition(monster);
-  const spriteSize = getMonsterRenderSize();
+  const spriteSize = getMonsterRenderSize() * (monster?.isGiant ? safeFiniteNumber(CONFIG.GIANT_ENEMY?.scale, 2.2, 0.1) : 1);
   const drawX = x - spriteSize / 2;
   const drawY = y - spriteSize / 2;
   drawMonsterTerritory(context, monster, x, y);
@@ -495,6 +495,7 @@ function drawMonster(context, monster) {
   drawEntityShadow(context, x, y, spriteSize, spriteSize, 'monster');
   drawSpriteFacing(context, monster.assetKey || 'monsters.crab', drawX, drawY, spriteSize, spriteSize, monster.facingOverride ?? monster.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackMonster(fallbackContext, monster, fx, fy, width, height, options));
   drawMonsterHp(context, monster, x, y, spriteSize);
+  if (monster?.isGiant) { context.font = '700 13px system-ui'; context.textAlign = 'center'; context.fillStyle = 'rgba(0,0,0,.6)'; context.fillText(monster?.name ?? '巨大敵', x + 1, y - spriteSize / 2 - 13); context.fillStyle = '#fff3a6'; context.fillText(monster?.name ?? '巨大敵', x, y - spriteSize / 2 - 14); context.textAlign = 'start'; }
   drawMonsterStateDot(context, monster, x, y, spriteSize);
 }
 
@@ -694,6 +695,7 @@ function renderUI() {
       renderManagementButtons();
       renderManagementPanel();
       renderInspector();
+      renderGiantHuntPanel();
     }
     updateToolButtons();
     if (shouldUpdateHud) gameState.ui.needsHudUpdate = false;
@@ -1639,3 +1641,21 @@ function renderDungeonRewardSummary(dungeon) {
 }
 
 function dungeonStateLabel(state) { return (CONFIG.dungeon?.stateLabels ?? {})[state] ?? String(state ?? ''); }
+
+
+function renderGiantHuntPanel() {
+  const element = getInspectorElement();
+  if (!element || gameState.ui?.giantHuntOpen !== true) return;
+  const enemy = getGiantEnemyById(gameState.ui?.giantHuntEnemyId);
+  if (!enemy) { closeGiantHunt(); return; }
+  const participants = getGiantHuntParticipants(enemy);
+  const totalPower = participants.reduce((sum, seal) => sum + getSealCombatPower(seal), 0);
+  const enemyPower = safeFiniteNumber(enemy.power, enemy.attack, 0);
+  const successText = participants.length <= 0 ? '参加可能なアザラシがいません' : totalPower >= enemyPower ? '討伐できそうです' : '戦力不足かもしれません';
+  const rows = participants.map(seal => `<li>${escapeHtml(seal?.name ?? '不明')} Lv.${clampInteger(seal?.level, 1, 999, 1)} / 戦力 ${Math.floor(getSealCombatPower(seal))}</li>`).join('') || '<li>参加可能なアザラシがいません</li>';
+  element.hidden = false;
+  element.innerHTML = `<div class="inspectorHeader"><div><div class="inspectorKicker">Giant Hunt</div><h2>${escapeHtml(enemy?.name ?? '巨大敵')}</h2></div><button data-action="closeGiantHunt" class="subtle">閉じる</button></div>
+    <section><h3>敵情報</h3><div class="inspectorInfoGrid"><span>Lv</span><b>${clampInteger(enemy?.level, 1, 999, 1)}</b><span>HP</span><b>${Math.ceil(safeFiniteNumber(enemy?.hp, 0, 0))}/${Math.ceil(safeFiniteNumber(enemy?.maxHp, 1, 1))}</b><span>戦力</span><b>${Math.floor(enemyPower)}</b><span>推奨</span><b>${Math.floor(enemyPower)}</b><span>報酬</span><b>${Math.floor(safeFiniteNumber(enemy?.rewardGold, 0, 0))}G / 知名度+${Math.floor(safeFiniteNumber(enemy?.rewardFame, CONFIG.GIANT_ENEMY?.rewardFame, 0))}</b></div></section>
+    <section><h3>選抜メンバー</h3><ul class="compactList">${rows}</ul><div class="inspectorInfoGrid"><span>合計戦力</span><b>${Math.floor(totalPower)}</b><span>見込み</span><b>${escapeHtml(successText)}</b></div></section>
+    <div class="inspectorActions"><button data-action="startGiantHunt" data-giant-enemy-id="${escapeHtml(enemy.id)}" ${participants.length <= 0 ? 'disabled' : ''}>討伐開始</button><button data-action="closeGiantHunt" class="subtle">閉じる</button></div>`;
+}
