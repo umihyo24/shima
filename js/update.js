@@ -12,6 +12,7 @@ function update(deltaMs) {
   updateDungeons(safeDeltaMs);
   updateMonsters(dt);
   updateSeals(dt);
+  updateCombatContacts();
   removeDefeatedMonsters();
   updateAutoSave(safeDeltaMs);
   gameState.timers.ui += dt;
@@ -248,6 +249,180 @@ function chooseNextHuntTarget(seal) {
   return claimNearestMonster(seal, seal?.selectedHuntAreaId ?? 'coast');
 }
 
+
+
+function getDistance(a, b) {
+  return distance(safeFiniteNumber(a?.x, 0, 0), safeFiniteNumber(a?.y, 0, 0), safeFiniteNumber(b?.x, 0, 0), safeFiniteNumber(b?.y, 0, 0));
+}
+
+function isPointInsideMonsterTerritory(monster, point) {
+  if (!monster || !point) return false;
+  const area = CONFIG.DUNGEONS?.spawnAreas?.[monster.areaId ?? 'coast']?.bounds ?? CONFIG.DUNGEONS?.spawnAreas?.coast?.bounds;
+  if (!area) return false;
+  const gx = Math.floor(safeFiniteNumber(point.x, -1, -1) / CONFIG.world.tile);
+  const gy = Math.floor(safeFiniteNumber(point.y, -1, -1) / CONFIG.world.tile);
+  return inRect(gx, gy, area.x, area.y, area.w, area.h);
+}
+
+function isSealEnemyContact(seal, monster) {
+  return !!seal && !!monster && getDistance(seal, monster) <= safeFiniteNumber(CONFIG.COMBAT_STUCK?.contactRadius, CONFIG.monster.contactDistance, 0);
+}
+
+function canForceStartCombat(seal, monster) {
+  if (!seal || !monster) return false;
+  if (safeFiniteNumber(seal.hp, 0, 0) <= 0 || safeFiniteNumber(monster.hp, 0, 0) <= 0) return false;
+  if (!isPointInsideMonsterTerritory(monster, seal) || !isPointInsideMonsterTerritory(monster, monster)) return false;
+  if (['fallen', 'rescuing', 'carryingFallenSeal', 'leaving', 'leavingToSea', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing', 'usingFacility'].includes(seal.state)) return false;
+  if (seal.state === 'fighting' && seal.targetId && seal.targetId !== monster.id) return false;
+  return true;
+}
+
+function getCombatSlotPoint(monster, index) {
+  const distanceFromEnemy = safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0);
+  const offsets = [ [-1, 0], [1, 0], [0, -1], [0, 1], [-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7] ];
+  const attempts = clampInteger(CONFIG.COMBAT_STUCK?.maxResolveAttempts, 1, offsets.length, 6);
+  let fallback = null;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const offset = offsets[(index + attempt) % offsets.length] ?? offsets[0];
+    const point = clampMonsterPoint(monster, { x: monster.x + offset[0] * distanceFromEnemy, y: monster.y + offset[1] * distanceFromEnemy });
+    if (!fallback) fallback = point;
+    if (isValidDungeonWorldPoint(point.x, point.y, monster?.areaId ?? 'coast')) return point;
+  }
+  return fallback ?? clampMonsterPoint(monster, { x: monster.x - distanceFromEnemy, y: monster.y });
+}
+
+function assignOrReassignCombatSlots(monster) {
+  if (!monster) return [];
+  const maxAttackers = clampInteger(CONFIG.dungeon?.participant?.max, 1, 8, 3);
+  const attackers = (gameState.seals ?? []).filter(seal => seal?.targetId === monster.id && seal.state === 'fighting' && safeFiniteNumber(seal.hp, 0, 0) > 0).slice(0, maxAttackers);
+  attackers.forEach((seal, index) => {
+    const slot = getCombatSlotPoint(monster, index);
+    seal.combatSlotX = slot.x;
+    seal.combatSlotY = slot.y;
+    const slotDistance = getDistance(seal, slot);
+    if (slotDistance > CONFIG.seal.contactDistance) {
+      seal.target = { x: slot.x, y: slot.y, reason: 'combat-slot' };
+      seal.path = [slot];
+      const step = Math.min(slotDistance, safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0) / 2);
+      if (step > 0) {
+        seal.x += ((slot.x - seal.x) / slotDistance) * step;
+        seal.y += ((slot.y - seal.y) / slotDistance) * step;
+      }
+    } else {
+      seal.path = [];
+      seal.target = null;
+    }
+  });
+  return attackers;
+}
+
+function findCombatSupportSeals(leader, monster) {
+  const maxAttackers = clampInteger(CONFIG.dungeon?.participant?.max, 1, 8, 3);
+  const radius = safeFiniteNumber(CONFIG.monster.territory?.groupRadius, 120, 0);
+  return (gameState.seals ?? [])
+    .filter(seal => seal && seal !== leader && canForceStartCombat(seal, monster) && getDistance(seal, monster) <= radius)
+    .sort((a, b) => getDistance(a, monster) - getDistance(b, monster))
+    .slice(0, Math.max(0, maxAttackers - 1));
+}
+
+function forceStartCombatFromContact(seal, monster) {
+  if (!canForceStartCombat(seal, monster)) return false;
+  monster.state = CONFIG.monster.states.engaged;
+  monster.assignedSealId = seal.id;
+  const participants = [seal, ...findCombatSupportSeals(seal, monster)];
+  for (const participant of participants) {
+    if (!canForceStartCombat(participant, monster)) continue;
+    participant.state = 'fighting';
+    participant.targetId = monster.id;
+    participant.combatTimer = 0;
+    participant.monsterTimer = 0;
+    participant.currentAction = '戦闘中';
+  }
+  assignOrReassignCombatSlots(monster);
+  return true;
+}
+
+function resolveSealEnemyOverlap(seal, monster) {
+  if (!seal || !monster) return;
+  const desired = safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0);
+  let dx = safeFiniteNumber(seal.x, 0, 0) - safeFiniteNumber(monster.x, 0, 0);
+  let dy = safeFiniteNumber(seal.y, 0, 0) - safeFiniteNumber(monster.y, 0, 0);
+  let d = Math.hypot(dx, dy);
+  if (d <= 0.001) { dx = 1; dy = 0; d = 1; }
+  const push = Math.min(desired, Math.max(0, desired - d) / 2 || desired / 4);
+  const nx = dx / d, ny = dy / d;
+  const sealNext = clampMonsterPoint(monster, { x: seal.x + nx * push, y: seal.y + ny * push });
+  const monsterNext = clampMonsterPoint(monster, { x: monster.x - nx * push, y: monster.y - ny * push });
+  if (isValidDungeonWorldPoint(sealNext.x, sealNext.y, monster.areaId ?? 'coast')) { seal.x = sealNext.x; seal.y = sealNext.y; }
+  monster.x = monsterNext.x; monster.y = monsterNext.y;
+}
+
+function clearCombatContactState(monster) {
+  if (!monster) return;
+  monster.contactTimersBySealId = {};
+  monster.stuckFrames = 0;
+  monster.lastX = monster.x;
+  monster.lastY = monster.y;
+}
+
+function actorTryingToMove(actor) {
+  return !!actor?.target || (Array.isArray(actor?.path) && actor.path.length > 0) || actor?.state === 'fighting' || actor?.state === CONFIG.monster.states.engaged;
+}
+
+function updateActorStuckState(actor) {
+  if (!actor) return false;
+  const lastX = safeFiniteNumber(actor.lastX, actor.x, 0);
+  const lastY = safeFiniteNumber(actor.lastY, actor.y, 0);
+  const moved = distance(actor.x, actor.y, lastX, lastY);
+  actor.stuckFrames = actorTryingToMove(actor) && moved < safeFiniteNumber(CONFIG.COMBAT_STUCK?.stuckMoveEpsilon, 0.2, 0) ? clampInteger(actor.stuckFrames, 0, Number.MAX_SAFE_INTEGER, 0) + 1 : 0;
+  actor.lastX = actor.x;
+  actor.lastY = actor.y;
+  return actor.stuckFrames >= clampInteger(CONFIG.COMBAT_STUCK?.stuckFramesLimit, 1, Number.MAX_SAFE_INTEGER, 45);
+}
+
+function resolveStuckCombatActor(actor, monster) {
+  if (!actor || !monster) return;
+  if (actor.state === 'fighting' && Number.isFinite(Number(actor.combatSlotX)) && Number.isFinite(Number(actor.combatSlotY))) {
+    const target = { x: Number(actor.combatSlotX), y: Number(actor.combatSlotY) };
+    const d = getDistance(actor, target);
+    if (d > 0) {
+      const step = Math.min(safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0) / 2, d);
+      actor.x += ((target.x - actor.x) / d) * step;
+      actor.y += ((target.y - actor.y) / d) * step;
+    }
+    actor.stuckFrames = 0;
+    return;
+  }
+  resolveSealEnemyOverlap(actor, monster);
+  actor.stuckFrames = 0;
+}
+
+function updateCombatContacts() {
+  for (const monster of gameState.monsters ?? []) {
+    if (!monster || safeFiniteNumber(monster.hp, 0, 0) <= 0) { clearCombatContactState(monster); continue; }
+    normalizeMonsterRuntime(monster);
+    monster.contactTimersBySealId = monster.contactTimersBySealId && typeof monster.contactTimersBySealId === 'object' ? monster.contactTimersBySealId : {};
+    const seen = new Set();
+    for (const seal of gameState.seals ?? []) {
+      if (!seal || !isSealEnemyContact(seal, monster)) continue;
+      seen.add(seal.id);
+      monster.contactTimersBySealId[seal.id] = clampInteger(monster.contactTimersBySealId[seal.id], 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+      if (canForceStartCombat(seal, monster)) {
+        if (seal.state !== 'fighting' || seal.targetId !== monster.id || monster.state !== CONFIG.monster.states.engaged || monster.contactTimersBySealId[seal.id] >= CONFIG.COMBAT_STUCK.forcedEngageFrames) forceStartCombatFromContact(seal, monster);
+      } else {
+        resolveSealEnemyOverlap(seal, monster);
+      }
+    }
+    for (const id of Object.keys(monster.contactTimersBySealId)) if (!seen.has(id)) delete monster.contactTimersBySealId[id];
+    assignOrReassignCombatSlots(monster);
+    if (updateActorStuckState(monster)) {
+      const targetSeal = getSealById(monster.assignedSealId) ?? (gameState.seals ?? []).find(seal => isSealEnemyContact(seal, monster));
+      if (targetSeal) resolveSealEnemyOverlap(targetSeal, monster);
+      monster.stuckFrames = 0;
+    }
+    for (const seal of (gameState.seals ?? []).filter(seal => seal?.targetId === monster.id || isSealEnemyContact(seal, monster))) if (updateActorStuckState(seal)) resolveStuckCombatActor(seal, monster);
+  }
+}
 
 function updateMonsters(dt) {
   for (const monster of gameState.monsters ?? []) updateMonsterBehavior(monster, dt);
@@ -567,7 +742,7 @@ function updateMovingToMonster(seal, dt) {
     if (!setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster')) { monster.assignedSealId = null; seal.targetId = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
   }
   updateSealMovement(seal, dt * 1000);
-  if (distance(seal.x, seal.y, monster.x, monster.y) <= CONFIG.monster.contactDistance) { seal.state = 'fighting'; seal.combatTimer = 0; seal.monsterTimer = 0; }
+  if (distance(seal.x, seal.y, monster.x, monster.y) <= CONFIG.monster.contactDistance) forceStartCombatFromContact(seal, monster);
 }
 
 function updateFighting(seal, dt) {
@@ -583,6 +758,7 @@ function updateFighting(seal, dt) {
     seal.combatTimer = 0;
     monster.hp -= Math.max(CONFIG.combat.minDamage, getSealEffectiveStats(seal).attack - monster.defense);
     if (monster.hp <= 0) {
+      clearCombatContactState(monster);
       seal.exp += CONFIG.monster.rewardExp;
       const gearShare = Math.floor(CONFIG.monster.rewardG * CONFIG.EQUIPMENT.GEAR_BUDGET_RATE);
       seal.gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0) + gearShare;
@@ -602,7 +778,7 @@ function updateFighting(seal, dt) {
   if (seal.monsterTimer >= CONFIG.combat.monsterAttackSeconds) {
     seal.monsterTimer = 0;
     seal.hp -= Math.max(CONFIG.combat.minDamage, monster.attack - getSealEffectiveStats(seal).defense);
-    if (seal.hp <= 0) { seal.hp = 0; monster.assignedSealId = null; seal.state = 'fallen'; seal.targetId = null; seal.rescueTargetId = null; logMessage(`${seal.name}が倒れました。`); }
+    if (seal.hp <= 0) { seal.hp = 0; monster.assignedSealId = null; seal.state = 'fallen'; seal.targetId = null; seal.rescueTargetId = null; seal.stuckFrames = 0; logMessage(`${seal.name}が倒れました。`); }
   }
 }
 
