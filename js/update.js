@@ -13,6 +13,7 @@ function update(deltaMs) {
   updateMonsters(dt);
   updateSeals(dt);
   updateCombatContacts();
+  updateSkirmishes();
   removeDefeatedMonsters();
   updateAutoSave(safeDeltaMs);
   gameState.timers.ui += dt;
@@ -265,97 +266,168 @@ function isPointInsideMonsterTerritory(monster, point) {
 }
 
 function isSealEnemyContact(seal, monster) {
-  return !!seal && !!monster && getDistance(seal, monster) <= safeFiniteNumber(CONFIG.COMBAT_STUCK?.contactRadius, CONFIG.monster.contactDistance, 0);
+  return !!seal && !!monster && getDistance(seal, monster) <= safeFiniteNumber(CONFIG.SKIRMISH?.triggerRadius, CONFIG.monster.territory?.reactionRadius, 0);
 }
 
 function canForceStartCombat(seal, monster) {
   if (!seal || !monster) return false;
   if (safeFiniteNumber(seal.hp, 0, 0) <= 0 || safeFiniteNumber(monster.hp, 0, 0) <= 0) return false;
   if (!isPointInsideMonsterTerritory(monster, seal) || !isPointInsideMonsterTerritory(monster, monster)) return false;
-  if (['fallen', 'downed', 'beingCarried', 'rescuing', 'carryingFallenSeal', 'leaving', 'leavingToSea', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing', 'usingFacility'].includes(seal.state)) return false;
-  if (seal.state === 'fighting' && seal.targetId && seal.targetId !== monster.id) return false;
-  return true;
+  return isSealAvailableForSkirmish(seal) && isEnemyAvailableForSkirmish(monster);
 }
 
-function getCombatSlotPoint(monster, index) {
-  const distanceFromEnemy = safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0);
-  const offsets = [ [-1, 0], [1, 0], [0, -1], [0, 1], [-0.7, -0.7], [0.7, -0.7], [-0.7, 0.7], [0.7, 0.7] ];
-  const attempts = clampInteger(CONFIG.COMBAT_STUCK?.maxResolveAttempts, 1, offsets.length, 6);
-  let fallback = null;
-  for (let attempt = 0; attempt < attempts; attempt += 1) {
-    const offset = offsets[(index + attempt) % offsets.length] ?? offsets[0];
-    const point = clampMonsterPoint(monster, { x: monster.x + offset[0] * distanceFromEnemy, y: monster.y + offset[1] * distanceFromEnemy });
-    if (!fallback) fallback = point;
-    if (isValidDungeonWorldPoint(point.x, point.y, monster?.areaId ?? 'coast')) return point;
+function getSkirmishById(id) {
+  return (gameState.skirmishes ?? []).find(skirmish => skirmish?.id === id) ?? null;
+}
+
+function getActiveSkirmishForActor(seal, monster) {
+  const sealSkirmish = seal?.skirmishId ? getSkirmishById(seal.skirmishId) : null;
+  const monsterSkirmish = monster?.skirmishId ? getSkirmishById(monster.skirmishId) : null;
+  return sealSkirmish ?? monsterSkirmish;
+}
+
+function isSealAvailableForSkirmish(seal) {
+  if (!seal || safeFiniteNumber(seal.hp, 0, 0) <= 0) return false;
+  if (seal.skirmishId && getSkirmishById(seal.skirmishId)) return false;
+  return !['fallen', 'downed', 'beingCarried', 'rescuing', 'carryingFallenSeal', 'leaving', 'leavingToSea', 'movingToDungeon', 'waitingAtDungeon', 'expeditionRunning', 'returningFromDungeon', 'questing', 'usingFacility'].includes(seal.state);
+}
+
+function isEnemyAvailableForSkirmish(enemy) {
+  if (!enemy || safeFiniteNumber(enemy.hp, 0, 0) <= 0) return false;
+  return !(enemy.skirmishId && getSkirmishById(enemy.skirmishId));
+}
+
+function createSkirmish(seal, enemy) {
+  if (!canForceStartCombat(seal, enemy)) return null;
+  const existing = getActiveSkirmishForActor(seal, enemy);
+  if (existing) return existing;
+  gameState.skirmishes = Array.isArray(gameState.skirmishes) ? gameState.skirmishes : [];
+  const id = `skirmish-${clampInteger(gameState.nextSkirmishId, 1, Number.MAX_SAFE_INTEGER, 1)}`;
+  gameState.nextSkirmishId = clampInteger(gameState.nextSkirmishId, 1, Number.MAX_SAFE_INTEGER, 1) + 1;
+  const skirmish = { id, state: 'fighting', centerX: (seal.x + enemy.x) / 2, centerY: (seal.y + enemy.y) / 2, sealIds: [], enemyIds: [], timer: 0, joinTimer: 0, resultResolved: false };
+  gameState.skirmishes.push(skirmish);
+  addSealToSkirmish(skirmish, seal);
+  addEnemyToSkirmish(skirmish, enemy);
+  assignSkirmishSlots(skirmish);
+  return skirmish;
+}
+
+function addSealToSkirmish(skirmish, seal) {
+  if (!skirmish || !seal || skirmish.sealIds.includes(seal.id)) return false;
+  if (skirmish.sealIds.length >= clampInteger(CONFIG.SKIRMISH?.maxSealParticipants, 1, 8, 3)) return false;
+  skirmish.sealIds.push(seal.id); seal.skirmishId = skirmish.id; seal.state = 'fighting'; seal.targetId = skirmish.enemyIds[0] ?? seal.targetId; seal.combatTimer = 0; seal.monsterTimer = 0; seal.currentAction = '戦闘中'; return true;
+}
+
+function addEnemyToSkirmish(skirmish, enemy) {
+  if (!skirmish || !enemy || skirmish.enemyIds.includes(enemy.id)) return false;
+  if (skirmish.enemyIds.length >= clampInteger(CONFIG.SKIRMISH?.maxEnemyParticipants, 1, 8, 3)) return false;
+  skirmish.enemyIds.push(enemy.id); enemy.skirmishId = skirmish.id; enemy.state = CONFIG.monster.states.engaged; enemy.assignedSealId = skirmish.sealIds[0] ?? enemy.assignedSealId; return true;
+}
+
+function getSkirmishSealSlot(skirmish, index, seal) {
+  const radius = seal?.sizeClass === 'giant' ? safeFiniteNumber(CONFIG.SKIRMISH?.giantSlotRadius, 52, 0) : safeFiniteNumber(CONFIG.SKIRMISH?.slotRadius, 34, 0);
+  const offset = (index - (skirmish.sealIds.length - 1) / 2) * radius;
+  return { x: safeFiniteNumber(skirmish.centerX, 0, 0) - radius, y: safeFiniteNumber(skirmish.centerY, 0, 0) + offset };
+}
+
+function getSkirmishEnemySlot(skirmish, index, enemy) {
+  const radius = safeFiniteNumber(CONFIG.SKIRMISH?.slotRadius, 34, 0);
+  const offset = (index - (skirmish.enemyIds.length - 1) / 2) * radius;
+  return clampMonsterPoint(enemy, { x: safeFiniteNumber(skirmish.centerX, 0, 0) + radius, y: safeFiniteNumber(skirmish.centerY, 0, 0) + offset });
+}
+
+function assignSkirmishSlots(skirmish) {
+  const seals = (skirmish?.sealIds ?? []).map(getSealById).filter(Boolean);
+  const enemies = (skirmish?.enemyIds ?? []).map(id => (gameState.monsters ?? []).find(m => m?.id === id)).filter(Boolean);
+  seals.forEach((seal, index) => { const slot = getSkirmishSealSlot(skirmish, index, seal); seal.combatSlotX = slot.x; seal.combatSlotY = slot.y; seal.target = { ...slot, reason: 'skirmish-slot' }; seal.path = []; });
+  enemies.forEach((enemy, index) => { const slot = getSkirmishEnemySlot(skirmish, index, enemy); enemy.combatSlotX = slot.x; enemy.combatSlotY = slot.y; enemy.target = slot; });
+}
+
+function moveActorTowardSlot(actor) {
+  if (!actor || !Number.isFinite(Number(actor.combatSlotX)) || !Number.isFinite(Number(actor.combatSlotY))) return;
+  const d = distance(actor.x, actor.y, actor.combatSlotX, actor.combatSlotY);
+  if (d <= CONFIG.seal.contactDistance) return;
+  const step = Math.min(d, safeFiniteNumber(CONFIG.SKIRMISH?.slotRadius, 34, 0) * safeFiniteNumber(CONFIG.SKIRMISH?.slotMoveStepRatio, 0.5, 0));
+  actor.x += ((actor.combatSlotX - actor.x) / d) * step; actor.y += ((actor.combatSlotY - actor.y) / d) * step;
+}
+
+function nearSkirmishJoinPoint(actor, skirmish, opponents) {
+  const radius = safeFiniteNumber(CONFIG.SKIRMISH?.joinRadius, 160, 0);
+  if (distance(actor.x, actor.y, skirmish.centerX, skirmish.centerY) <= radius) return true;
+  return opponents.some(opponent => opponent && getDistance(actor, opponent) <= radius);
+}
+
+function tryJoinNearbySeals(skirmish) {
+  const enemies = (skirmish.enemyIds ?? []).map(id => (gameState.monsters ?? []).find(m => m?.id === id)).filter(Boolean);
+  for (const seal of gameState.seals ?? []) {
+    if ((skirmish.sealIds ?? []).length >= clampInteger(CONFIG.SKIRMISH?.maxSealParticipants, 1, 8, 3)) break;
+    if (isSealAvailableForSkirmish(seal) && nearSkirmishJoinPoint(seal, skirmish, enemies)) addSealToSkirmish(skirmish, seal);
   }
-  return fallback ?? clampMonsterPoint(monster, { x: monster.x - distanceFromEnemy, y: monster.y });
 }
 
-function assignOrReassignCombatSlots(monster) {
-  if (!monster) return [];
-  const maxAttackers = clampInteger(CONFIG.dungeon?.participant?.max, 1, 8, 3);
-  const attackers = (gameState.seals ?? []).filter(seal => seal?.targetId === monster.id && seal.state === 'fighting' && safeFiniteNumber(seal.hp, 0, 0) > 0).slice(0, maxAttackers);
-  attackers.forEach((seal, index) => {
-    const slot = getCombatSlotPoint(monster, index);
-    seal.combatSlotX = slot.x;
-    seal.combatSlotY = slot.y;
-    const slotDistance = getDistance(seal, slot);
-    if (slotDistance > CONFIG.seal.contactDistance) {
-      seal.target = { x: slot.x, y: slot.y, reason: 'combat-slot' };
-      seal.path = [slot];
-      const step = Math.min(slotDistance, safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0) / 2);
-      if (step > 0) {
-        seal.x += ((slot.x - seal.x) / slotDistance) * step;
-        seal.y += ((slot.y - seal.y) / slotDistance) * step;
-      }
-    } else {
-      seal.path = [];
-      seal.target = null;
+function tryJoinNearbyEnemies(skirmish) {
+  const seals = (skirmish.sealIds ?? []).map(getSealById).filter(Boolean);
+  for (const enemy of gameState.monsters ?? []) {
+    if ((skirmish.enemyIds ?? []).length >= clampInteger(CONFIG.SKIRMISH?.maxEnemyParticipants, 1, 8, 3)) break;
+    if (isEnemyAvailableForSkirmish(enemy) && nearSkirmishJoinPoint(enemy, skirmish, seals)) addEnemyToSkirmish(skirmish, enemy);
+  }
+}
+
+function grantSkirmishReward(seal, enemy) {
+  if (!seal || !enemy || enemy.rewardResolved) return;
+  enemy.rewardResolved = true;
+  seal.exp = safeFiniteNumber(seal.exp, 0, 0) + CONFIG.monster.rewardExp;
+  const gearShare = Math.floor(CONFIG.monster.rewardG * CONFIG.EQUIPMENT.GEAR_BUDGET_RATE);
+  seal.gearBudget = safeFiniteNumber(seal.gearBudget, 0, 0) + gearShare;
+  seal.carriedG = safeFiniteNumber(seal.carriedG, 0, 0) + CONFIG.monster.rewardG - gearShare;
+  addFavor(seal, CONFIG.seal.favorDefeat);
+  seal.huntCountThisTrip = clampInteger(seal.huntCountThisTrip, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  if (seal.type === 'visitor') seal.huntsThisVisit = clampInteger(seal.huntsThisVisit, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  gameState.stats.monthlyHunts = clampInteger(gameState.stats?.monthlyHunts, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+  applyLevelUps(seal);
+  gameState.frameTemps.toRemoveMonsters.push(enemy.id);
+  logMessage(`${seal.name}がカニを倒して${CONFIG.monster.rewardG}Gを獲得！`);
+}
+
+function resolveSkirmish(skirmish, won) {
+  if (!skirmish || skirmish.resultResolved) return;
+  skirmish.resultResolved = true; skirmish.state = 'done';
+  const seals = (skirmish.sealIds ?? []).map(getSealById).filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0);
+  if (won) for (const enemyId of skirmish.enemyIds ?? []) grantSkirmishReward(seals[0], (gameState.monsters ?? []).find(m => m?.id === enemyId));
+}
+
+function cleanupSkirmish(skirmish) {
+  for (const sealId of skirmish?.sealIds ?? []) { const seal = getSealById(sealId); if (!seal) continue; seal.skirmishId = null; seal.combatSlotX = null; seal.combatSlotY = null; seal.targetId = null; seal.target = null; seal.path = []; if (seal.state === 'fighting') { if (safeFiniteNumber(seal.hp, 0, 0) <= 0) seal.state = 'downed'; else if (shouldContinueHunting(seal)) { seal.state = 'hunting'; seal.currentAction = '探索中'; } else sendSealBackThroughHuntCorridor(seal); } }
+  for (const enemyId of skirmish?.enemyIds ?? []) { const enemy = (gameState.monsters ?? []).find(m => m?.id === enemyId); if (!enemy) continue; enemy.skirmishId = null; enemy.combatSlotX = null; enemy.combatSlotY = null; enemy.assignedSealId = null; if (safeFiniteNumber(enemy.hp, 0, 0) > 0) enemy.state = CONFIG.monster.states.idle; }
+}
+
+function updateSkirmishes() {
+  gameState.skirmishes = Array.isArray(gameState.skirmishes) ? gameState.skirmishes : [];
+  const done = [];
+  for (const skirmish of gameState.skirmishes) {
+    if (!skirmish || skirmish.state !== 'fighting') { done.push(skirmish); continue; }
+    skirmish.timer = clampInteger(skirmish.timer, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+    skirmish.joinTimer = clampInteger(skirmish.joinTimer, 0, Number.MAX_SAFE_INTEGER, 0) + 1;
+    const liveSeals = (skirmish.sealIds ?? []).map(getSealById).filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0 && seal.state === 'fighting');
+    const presentEnemies = (skirmish.enemyIds ?? []).map(id => (gameState.monsters ?? []).find(m => m?.id === id)).filter(Boolean);
+    const liveEnemies = presentEnemies.filter(enemy => safeFiniteNumber(enemy.hp, 0, 0) > 0);
+    if (liveSeals.length <= 0) resolveSkirmish(skirmish, false);
+    else if (presentEnemies.length <= 0 || liveEnemies.length <= 0) resolveSkirmish(skirmish, true);
+    else if (skirmish.timer >= clampInteger(CONFIG.SKIRMISH?.staleCombatTimeoutFrames, 1, Number.MAX_SAFE_INTEGER, 600)) resolveSkirmish(skirmish, false);
+    if (skirmish.state !== 'fighting') { cleanupSkirmish(skirmish); done.push(skirmish); continue; }
+    if (skirmish.joinTimer >= clampInteger(CONFIG.SKIRMISH?.joinCheckIntervalFrames, 1, Number.MAX_SAFE_INTEGER, 20)) { skirmish.joinTimer = 0; tryJoinNearbySeals(skirmish); tryJoinNearbyEnemies(skirmish); assignSkirmishSlots(skirmish); }
+    assignSkirmishSlots(skirmish);
+    const seals = skirmish.sealIds.map(getSealById).filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0 && seal.state === 'fighting');
+    const enemies = skirmish.enemyIds.map(id => (gameState.monsters ?? []).find(m => m?.id === id)).filter(enemy => enemy && safeFiniteNumber(enemy.hp, 0, 0) > 0);
+    for (const actor of [...seals, ...enemies]) moveActorTowardSlot(actor);
+    if (skirmish.timer % clampInteger(CONFIG.SKIRMISH?.battleTickFrames, 1, Number.MAX_SAFE_INTEGER, 30) === 0) {
+      for (const seal of seals) { const enemy = enemies.find(e => safeFiniteNumber(e.hp, 0, 0) > 0); if (enemy) enemy.hp -= Math.max(CONFIG.combat.minDamage, getSealEffectiveStats(seal).attack - safeFiniteNumber(enemy.defense, 0, 0)); }
+      for (const enemy of enemies.filter(e => safeFiniteNumber(e.hp, 0, 0) > 0)) { const seal = seals.find(s => safeFiniteNumber(s.hp, 0, 0) > 0); if (seal) { seal.hp -= Math.max(CONFIG.combat.minDamage, safeFiniteNumber(enemy.attack, 0, 0) - getSealEffectiveStats(seal).defense); if (seal.hp <= 0) { seal.hp = 0; seal.state = 'downed'; seal.recoverySource = 'downed'; seal.rescueTargetId = null; seal.stuckFrames = 0; logMessage(`${seal.name}が倒れました。`); } } }
     }
-  });
-  return attackers;
-}
-
-function findCombatSupportSeals(leader, monster) {
-  const maxAttackers = clampInteger(CONFIG.dungeon?.participant?.max, 1, 8, 3);
-  const radius = safeFiniteNumber(CONFIG.monster.territory?.groupRadius, 120, 0);
-  return (gameState.seals ?? [])
-    .filter(seal => seal && seal !== leader && canForceStartCombat(seal, monster) && getDistance(seal, monster) <= radius)
-    .sort((a, b) => getDistance(a, monster) - getDistance(b, monster))
-    .slice(0, Math.max(0, maxAttackers - 1));
-}
-
-function forceStartCombatFromContact(seal, monster) {
-  if (!canForceStartCombat(seal, monster)) return false;
-  monster.state = CONFIG.monster.states.engaged;
-  monster.assignedSealId = seal.id;
-  const participants = [seal, ...findCombatSupportSeals(seal, monster)];
-  for (const participant of participants) {
-    if (!canForceStartCombat(participant, monster)) continue;
-    participant.state = 'fighting';
-    participant.targetId = monster.id;
-    participant.combatTimer = 0;
-    participant.monsterTimer = 0;
-    participant.currentAction = '戦闘中';
   }
-  assignOrReassignCombatSlots(monster);
-  return true;
+  gameState.skirmishes = gameState.skirmishes.filter(skirmish => !done.includes(skirmish));
 }
 
-function resolveSealEnemyOverlap(seal, monster) {
-  if (!seal || !monster) return;
-  const desired = safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0);
-  let dx = safeFiniteNumber(seal.x, 0, 0) - safeFiniteNumber(monster.x, 0, 0);
-  let dy = safeFiniteNumber(seal.y, 0, 0) - safeFiniteNumber(monster.y, 0, 0);
-  let d = Math.hypot(dx, dy);
-  if (d <= 0.001) { dx = 1; dy = 0; d = 1; }
-  const push = Math.min(desired, Math.max(0, desired - d) / 2 || desired / 4);
-  const nx = dx / d, ny = dy / d;
-  const sealNext = clampMonsterPoint(monster, { x: seal.x + nx * push, y: seal.y + ny * push });
-  const monsterNext = clampMonsterPoint(monster, { x: monster.x - nx * push, y: monster.y - ny * push });
-  if (isValidDungeonWorldPoint(sealNext.x, sealNext.y, monster.areaId ?? 'coast')) { seal.x = sealNext.x; seal.y = sealNext.y; }
-  monster.x = monsterNext.x; monster.y = monsterNext.y;
-}
 
 function clearCombatContactState(monster) {
   if (!monster) return;
@@ -365,62 +437,11 @@ function clearCombatContactState(monster) {
   monster.lastY = monster.y;
 }
 
-function actorTryingToMove(actor) {
-  return !!actor?.target || (Array.isArray(actor?.path) && actor.path.length > 0) || actor?.state === 'fighting' || actor?.state === CONFIG.monster.states.engaged;
-}
-
-function updateActorStuckState(actor) {
-  if (!actor) return false;
-  const lastX = safeFiniteNumber(actor.lastX, actor.x, 0);
-  const lastY = safeFiniteNumber(actor.lastY, actor.y, 0);
-  const moved = distance(actor.x, actor.y, lastX, lastY);
-  actor.stuckFrames = actorTryingToMove(actor) && moved < safeFiniteNumber(CONFIG.COMBAT_STUCK?.stuckMoveEpsilon, 0.2, 0) ? clampInteger(actor.stuckFrames, 0, Number.MAX_SAFE_INTEGER, 0) + 1 : 0;
-  actor.lastX = actor.x;
-  actor.lastY = actor.y;
-  return actor.stuckFrames >= clampInteger(CONFIG.COMBAT_STUCK?.stuckFramesLimit, 1, Number.MAX_SAFE_INTEGER, 45);
-}
-
-function resolveStuckCombatActor(actor, monster) {
-  if (!actor || !monster) return;
-  if (actor.state === 'fighting' && Number.isFinite(Number(actor.combatSlotX)) && Number.isFinite(Number(actor.combatSlotY))) {
-    const target = { x: Number(actor.combatSlotX), y: Number(actor.combatSlotY) };
-    const d = getDistance(actor, target);
-    if (d > 0) {
-      const step = Math.min(safeFiniteNumber(CONFIG.COMBAT_STUCK?.separateDistance, 28, 0) / 2, d);
-      actor.x += ((target.x - actor.x) / d) * step;
-      actor.y += ((target.y - actor.y) / d) * step;
-    }
-    actor.stuckFrames = 0;
-    return;
-  }
-  resolveSealEnemyOverlap(actor, monster);
-  actor.stuckFrames = 0;
-}
-
 function updateCombatContacts() {
   for (const monster of gameState.monsters ?? []) {
-    if (!monster || safeFiniteNumber(monster.hp, 0, 0) <= 0) { clearCombatContactState(monster); continue; }
+    if (!monster || safeFiniteNumber(monster.hp, 0, 0) <= 0 || monster.skirmishId) { clearCombatContactState(monster); continue; }
     normalizeMonsterRuntime(monster);
-    monster.contactTimersBySealId = monster.contactTimersBySealId && typeof monster.contactTimersBySealId === 'object' ? monster.contactTimersBySealId : {};
-    const seen = new Set();
-    for (const seal of gameState.seals ?? []) {
-      if (!seal || !isSealEnemyContact(seal, monster)) continue;
-      seen.add(seal.id);
-      monster.contactTimersBySealId[seal.id] = clampInteger(monster.contactTimersBySealId[seal.id], 0, Number.MAX_SAFE_INTEGER, 0) + 1;
-      if (canForceStartCombat(seal, monster)) {
-        if (seal.state !== 'fighting' || seal.targetId !== monster.id || monster.state !== CONFIG.monster.states.engaged || monster.contactTimersBySealId[seal.id] >= CONFIG.COMBAT_STUCK.forcedEngageFrames) forceStartCombatFromContact(seal, monster);
-      } else {
-        resolveSealEnemyOverlap(seal, monster);
-      }
-    }
-    for (const id of Object.keys(monster.contactTimersBySealId)) if (!seen.has(id)) delete monster.contactTimersBySealId[id];
-    assignOrReassignCombatSlots(monster);
-    if (updateActorStuckState(monster)) {
-      const targetSeal = getSealById(monster.assignedSealId) ?? (gameState.seals ?? []).find(seal => isSealEnemyContact(seal, monster));
-      if (targetSeal) resolveSealEnemyOverlap(targetSeal, monster);
-      monster.stuckFrames = 0;
-    }
-    for (const seal of (gameState.seals ?? []).filter(seal => seal?.targetId === monster.id || isSealEnemyContact(seal, monster))) if (updateActorStuckState(seal)) resolveStuckCombatActor(seal, monster);
+    for (const seal of gameState.seals ?? []) if (seal && canForceStartCombat(seal, monster) && isSealEnemyContact(seal, monster)) createSkirmish(seal, monster);
   }
 }
 
@@ -429,7 +450,7 @@ function updateMonsters(dt) {
 }
 
 function updateMonsterBehavior(monster, dt) {
-  if (!monster || safeFiniteNumber(monster.hp, 0, 0) <= 0) return;
+  if (!monster || safeFiniteNumber(monster.hp, 0, 0) <= 0 || monster.skirmishId) return;
   normalizeMonsterRuntime(monster);
   const assignedSeal = getSealById(monster.assignedSealId);
   const nearbySeal = findNearestThreateningSeal(monster);
@@ -749,10 +770,11 @@ function updateMovingToMonster(seal, dt) {
     if (!setSealDestination(seal, { x: monster.x, y: monster.y }, 'monster')) { monster.assignedSealId = null; seal.targetId = null; seal.currentAction = '探索中'; seal.state = 'hunting'; return; }
   }
   updateSealMovement(seal, dt * 1000);
-  if (distance(seal.x, seal.y, monster.x, monster.y) <= CONFIG.monster.contactDistance) forceStartCombatFromContact(seal, monster);
+  if (distance(seal.x, seal.y, monster.x, monster.y) <= safeFiniteNumber(CONFIG.SKIRMISH?.triggerRadius, CONFIG.monster.territory?.reactionRadius, 0)) createSkirmish(seal, monster);
 }
 
 function updateFighting(seal, dt) {
+  if (seal?.skirmishId) return;
   const monster = (gameState.monsters ?? []).find(m => m?.id === seal.targetId);
   if (!monster || monster.hp <= 0) {
     seal.targetId = null;

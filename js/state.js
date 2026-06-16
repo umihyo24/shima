@@ -13,6 +13,8 @@ function createNewGameState() {
     shopCatalog: { unlockedItemIds: [], discoveredAt: {} },
     facilityProgress: {},
     monsters: [],
+    skirmishes: [],
+    nextSkirmishId: 1,
     dungeons: [],
     dungeonProgress: { unlockedDungeonIds: [], clearCounts: {}, firstClearRewardsClaimed: {} },
     images: {},
@@ -618,7 +620,10 @@ function normalizeSeal(s, index) {
     dungeonRuns: clampInteger(s?.dungeonRuns, 0, Number.MAX_SAFE_INTEGER, 0),
     dungeonClears: clampInteger(s?.dungeonClears, 0, Number.MAX_SAFE_INTEGER, 0),
     dungeonBattles: clampInteger(s?.dungeonBattles, 0, Number.MAX_SAFE_INTEGER, 0),
-    chestsOpened: clampInteger(s?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0)
+    chestsOpened: clampInteger(s?.chestsOpened, 0, Number.MAX_SAFE_INTEGER, 0),
+    skirmishId: s?.skirmishId ? String(s.skirmishId) : null,
+    combatSlotX: Number.isFinite(Number(s?.combatSlotX)) ? Number(s.combatSlotX) : null,
+    combatSlotY: Number.isFinite(Number(s?.combatSlotY)) ? Number(s.combatSlotY) : null
   };
 }
 
@@ -919,7 +924,10 @@ function normalizeMonster(monster, index = 0) {
     maxHp: safeFiniteNumber(monster?.maxHp, CONFIG.monster.hp, 1),
     attack: safeFiniteNumber(monster?.attack, CONFIG.monster.attack, 0),
     defense: safeFiniteNumber(monster?.defense, CONFIG.monster.defense, 0),
-    assignedSealId: monster?.assignedSealId ? String(monster.assignedSealId) : null
+    assignedSealId: monster?.assignedSealId ? String(monster.assignedSealId) : null,
+    skirmishId: monster?.skirmishId ? String(monster.skirmishId) : null,
+    combatSlotX: Number.isFinite(Number(monster?.combatSlotX)) ? Number(monster.combatSlotX) : null,
+    combatSlotY: Number.isFinite(Number(monster?.combatSlotY)) ? Number(monster.combatSlotY) : null
   };
 }
 
