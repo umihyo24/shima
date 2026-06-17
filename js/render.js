@@ -432,6 +432,22 @@ function drawMonsterHp(context, monster, x, y, spriteSize) {
   drawCompactHpBar(context, x - hpWidth / 2, hpY, hpWidth, safeFiniteNumber(monster?.hp, 0, 0) / maxHp, '#e14635');
 }
 
+function renderDownedSeal(context, seal, x, y, spriteSize) {
+  const cfg = CONFIG.DOWNED_RECOVERY ?? {};
+  const size = spriteSize * safeFiniteNumber(cfg.downedBounceScale, 0.95, 0.1);
+  context.save();
+  context.translate(x, y);
+  context.rotate(safeFiniteNumber(cfg.downedVisualTiltRadians, 1.5708, 0));
+  drawSpriteFacing(context, seal?.assetKey || (seal?.type === 'visitor' ? assetKeyForVisitorProfile(seal?.profileId) : 'seals.resident'), -size / 2, -size / 2, size, size, seal?.facingOverride ?? seal?.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackSeal(fallbackContext, seal, fx, fy, width, height, { ...(options ?? {}), downed: true }));
+  context.restore();
+  drawOutlinedText(context, String(cfg.downedIcon ?? '💫'), x, y - spriteSize * 0.58, '#fff1a8');
+}
+
+function renderRecoveryRestIcon(context, seal, x, y, spriteSize) {
+  if (seal?.state !== 'recoveryRest') return;
+  drawOutlinedText(context, String(CONFIG.DOWNED_RECOVERY?.recoveryIcon ?? '💤'), x + spriteSize * 0.28, y - spriteSize * 0.42, '#d8f4ff');
+}
+
 function drawSeal(context, seal) {
   const { x, y } = getEntityScreenPosition(seal);
   const spriteSize = getSealRenderSize(seal);
@@ -449,7 +465,11 @@ function drawSeal(context, seal) {
     context.stroke();
     context.restore();
   }
-  drawSpriteFacing(context, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), drawX, drawY, spriteSize, spriteSize, seal.facingOverride ?? seal.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackSeal(fallbackContext, seal, fx, fy, width, height, options));
+  if (['fallen', 'downed', 'beingCarried'].includes(seal?.state)) renderDownedSeal(context, seal, x, y, spriteSize);
+  else {
+    drawSpriteFacing(context, seal.assetKey || (seal.type === 'visitor' ? assetKeyForVisitorProfile(seal.profileId) : 'seals.resident'), drawX, drawY, spriteSize, spriteSize, seal.facingOverride ?? seal.facing, (fallbackContext, fx, fy, width, height, options) => drawFallbackSeal(fallbackContext, seal, fx, fy, width, height, options));
+    renderRecoveryRestIcon(context, seal, x, y, spriteSize);
+  }
   drawSealNameAndHp(context, seal, x, y, spriteSize);
 }
 
@@ -719,6 +739,7 @@ function drawFallbackSeal(context, seal, x, y, w, h, options = {}) {
   context.beginPath();
   context.ellipse(cx, cy, w * 0.5, h * 0.5, 0, 0, Math.PI * 2);
   context.fill();
+  if (options?.downed) { context.fillStyle = 'rgba(255,230,107,.82)'; context.beginPath(); context.arc(cx - face * 16, cy - 8, 4, 0, Math.PI * 2); context.arc(cx - face * 25, cy + 1, 3, 0, Math.PI * 2); context.fill(); }
   context.strokeStyle = seal?.type === 'resident' ? '#f2a93b' : '#35aee2';
   context.lineWidth = 3 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
   context.stroke();
@@ -1568,7 +1589,13 @@ function getSealPowerScore(seal) {
   return safeFiniteNumber(stats.attack, 0, 0) * 2 + safeFiniteNumber(stats.defense, 0, 0) * 1.5 + safeFiniteNumber(stats.maxHp, 0, 0) * 0.25 + safeFiniteNumber(seal?.level, 1, 1) * 3;
 }
 
-function formatSealState(seal) { return stateLabel(seal?.state ?? 'idle') || '不明'; }
+function getSealRecoveryProgressText(seal) {
+  const maxHp = Math.max(1, safeFiniteNumber(getSealEffectiveStats(seal).maxHp, CONFIG.seal.maxHp, 1));
+  const ratio = seal?.state === 'recoveryRest' ? safeFiniteNumber(CONFIG.DOWNED_RECOVERY?.carriedRecoveryHpRatioToStand, 0.6, 0) : safeFiniteNumber(CONFIG.DOWNED_RECOVERY?.recoveryHpRatioToStand, 0.45, 0);
+  if (!['downed', 'beingCarried', 'recoveryRest'].includes(String(seal?.state ?? ''))) return '';
+  return ` / 回復目標 ${Math.ceil(safeFiniteNumber(seal?.hp, 0, 0))}/${Math.ceil(maxHp * ratio)}`;
+}
+function formatSealState(seal) { return (stateLabel(seal?.state ?? 'idle') || '不明') + getSealRecoveryProgressText(seal); }
 function formatRecoverySource(seal) {
   const source = String(seal?.recoverySource ?? '');
   const labels = { downed: 'ダウン中の自然回復', carried: '搬送救助', 'fallback-rest': '空き地/道路休憩', 'inn-prep': '宿屋の旅支度（HPなし）', restaurant: '食堂の食事', manjuShop: 'まんじゅう', bench: 'ベンチ休憩', observationDeck: '展望台休憩', sealPlaza: '広場休憩' };
@@ -1594,7 +1621,7 @@ function renderSelectedSealPanel(seal) {
   const hpMax = safeFiniteNumber(stats.maxHp, seal?.maxHp ?? CONFIG.seal.maxHp, 1);
   const targetText = formatSealTarget(seal);
   const stay = seal?.type === 'visitor' ? `<br>滞在: ${Math.floor(safeFiniteNumber(seal.visitTimerMs, 0, 0) / 1000)}秒 / 最短${Math.floor(safeFiniteNumber(seal.minStayMs, 0, 0) / 1000)}秒 / 最長${Math.floor(safeFiniteNumber(seal.maxStayMs, 0, 0) / 1000)}秒<br>訪問狩猟/施設: ${seal.huntsThisVisit ?? 0}/${seal.facilitiesUsedThisVisit ?? 0} / ${seal.wantsToLeave ? '帰りたい' : '滞在中'}` : '';
-  return `<div class="compactCard selectedSealCard"><b>${escapeHtml(seal.name)}</b>（${seal.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(seal)?.label ?? seal.personality)}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))} / ${Math.ceil(hpMax)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, safeFiniteNumber(seal.hp, 0, 0) / hpMax * 100))}%"></div></div>所持G: ${Math.floor(safeFiniteNumber(seal.carriedG, 0, 0))}<br>装備予算: ${Math.floor(safeFiniteNumber(seal.gearBudget, 0, 0))}<br>Lv: ${seal.level} / EXP: ${Math.floor(safeFiniteNumber(seal.exp, 0, 0))}<br>好感度: ${Math.floor(safeFiniteNumber(seal.favor, 0, 0))}<br>状態: ${escapeHtml(stateLabel(seal.state))}<br>回復元: ${escapeHtml(formatRecoverySource(seal))}<br>行動/目標: ${escapeHtml(targetText)}${stay}<hr>武器: ${equipmentText(seal, 'weapon')}<br>防具: ${equipmentText(seal, 'armor')}<br>アクセ: ${equipmentText(seal, 'accessory')}<br>有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}<div class="buildActions"><button data-action="closeSeal" class="subtle">詳細を閉じる</button></div></div>`;
+  return `<div class="compactCard selectedSealCard"><b>${escapeHtml(seal.name)}</b>（${seal.type === 'resident' ? '住民' : '訪問者'}）<br>性格: ${escapeHtml(getPersonalityConfig(seal)?.label ?? seal.personality)}<br>HP ${Math.ceil(safeFiniteNumber(seal.hp, 0, 0))} / ${Math.ceil(hpMax)}<div class="bar"><div class="fill" style="width:${Math.max(0, Math.min(100, safeFiniteNumber(seal.hp, 0, 0) / hpMax * 100))}%"></div></div>所持G: ${Math.floor(safeFiniteNumber(seal.carriedG, 0, 0))}<br>装備予算: ${Math.floor(safeFiniteNumber(seal.gearBudget, 0, 0))}<br>Lv: ${seal.level} / EXP: ${Math.floor(safeFiniteNumber(seal.exp, 0, 0))}<br>好感度: ${Math.floor(safeFiniteNumber(seal.favor, 0, 0))}<br>状態: ${escapeHtml(formatSealState(seal))}<br>回復元: ${escapeHtml(formatRecoverySource(seal))}<br>行動/目標: ${escapeHtml(targetText)}${stay}<hr>武器: ${equipmentText(seal, 'weapon')}<br>防具: ${equipmentText(seal, 'armor')}<br>アクセ: ${equipmentText(seal, 'accessory')}<br>有効攻撃: ${Math.floor(stats.attack)} / 有効防御: ${Math.floor(stats.defense)} / 有効最大HP: ${Math.ceil(stats.maxHp)}<div class="buildActions"><button data-action="closeSeal" class="subtle">詳細を閉じる</button></div></div>`;
 }
 
 function clearContextSelectionIfInvalid() {
@@ -1634,7 +1661,7 @@ function formatSealTarget(seal) {
   if (seal?.target?.reason) return seal?.currentAction || seal.target.reason;
   return seal?.currentAction || 'なし';
 }
-function stateLabel(state) { return ({ movingToDungeon:'遠征集合中', waitingAtDungeon:'入口で待機中', expeditionRunning:'遠征中', returningFromDungeon:'遠征帰還中', questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'狩猟中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', downed:'ダウン中', rescuing:'救助中', carryingFallenSeal:'搬送中', beingCarried:'搬送されている', resting:'休憩中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
+function stateLabel(state) { return ({ movingToDungeon:'遠征集合中', waitingAtDungeon:'入口で待機中', expeditionRunning:'遠征中', returningFromDungeon:'遠征帰還中', questing:'攻略参加中', arrivingFromSea:'海から到着中', choosingArrivalAction:'到着後の行動選択', movingToFacility:'施設へ移動中', usingFacility:'施設利用中', choosingHuntArea:'狩場選択', movingToHuntArea:'狩場へ移動中', hunting:'狩猟中', movingToMonster:'獲物へ移動中', fighting:'戦闘中', returningFromHunt:'帰宅中', choosingPostHuntFacility:'帰還後の行動選択', leavingToSea:'帰宅中', idle:'待機中', fallen:'倒れている', downed:'ダウン中', rescuing:'救助中', carryingFallenSeal:'搬送中', beingCarried:'搬送中', recoveryRest:'回復待機中', resting:'休憩中', arriving:'海から到着中', movingToHuntExit:'狩場へ移動中', choosingFacility:'施設選択', leaving:'帰宅中' })[state] ?? state; }
 
 function drawDungeon(context, dungeon) {
   if (!context || !dungeon) return;
