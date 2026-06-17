@@ -34,6 +34,7 @@ const CONFIG = Object.freeze({
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
   SAVE_VERSION: 15,
+  OCEAN_CHART: { revealRadiusTiles: 4, currentVisionRadiusTiles: 3, expeditionSpeed: 0.04, foodCostPerTile: 1, actionCostPerTile: 1, minFoodToDepart: 5, maxExpeditionMembers: 3, islandRevealPaddingTiles: 2, states: { unknown: 0, discovered: 1, currentlyVisible: 2 }, islandIds: { start: 'start', second: 'second' }, colors: { unknown: 'rgba(0,0,0,.82)', discovered: 'rgba(5,19,31,.46)', currentVision: 'rgba(120,220,255,.10)', mystery: 'rgba(0,0,0,.55)' } },
   OCEAN_EXPANSION: { deepWaterHpDrainPerSecond: 2, deepWaterRetreatHpRatio: 0.35, deepWaterBlockedUntilBossDefeated: false, secondIslandUnlockRequiresBoss: true, safeRetreatSearchRadius: 12, secondIslandMinWidth: 12, secondIslandMinHeight: 10, deepSeaWidthTiles: 10, shallowBandWidthTiles: 4 },
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,

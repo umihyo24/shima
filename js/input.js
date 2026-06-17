@@ -525,6 +525,7 @@ function bindInputEvents() {
   window.addEventListener('keydown', e => {
     gameState.input.keys[e.code] = true;
     if (e.code === 'KeyR') rotateTool();
+    if (e.code === 'KeyE' && gameState.phase === CONFIG.phase.playing) launchExpedition(gameState.input?.mouseTile);
     if (e.code === 'Escape') {
       cancelCurrentAction('escape');
     }

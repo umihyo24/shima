@@ -12,6 +12,7 @@ function update(deltaMs) {
   updateDungeons(safeDeltaMs);
   updateGiantEnemies();
   updateOceanExpansion(dt);
+  updateExpedition(dt);
   updateMonsters(dt);
   updateSeals(dt);
   updateCombatContacts();
@@ -267,6 +268,8 @@ function canSealIntentionallyAttackBoss(seal, boss) {
 
 function canSealAutoTargetEnemy(seal, enemy) {
   if (!seal || !enemy || safeFiniteNumber(enemy?.hp, 0, 0) <= 0) return false;
+  const grid = worldToGrid(enemy.x, enemy.y);
+  if (!isTileDiscovered(grid.x, grid.y) && !isTileCurrentlyVisible(grid.x, grid.y)) return false;
   if (!isGiantEnemy(enemy)) return true;
   return canSealIntentionallyAttackBoss(seal, enemy);
 }
@@ -616,6 +619,8 @@ function clearCombatContactState(monster) {
 
 function updateCombatContacts() {
   for (const monster of gameState.monsters ?? []) {
+    const grid = worldToGrid(monster?.x, monster?.y);
+    if (!isTileDiscovered(grid.x, grid.y) && !isTileCurrentlyVisible(grid.x, grid.y)) { clearCombatContactState(monster); continue; }
     if (!monster || safeFiniteNumber(monster.hp, 0, 0) <= 0 || monster.skirmishId) { clearCombatContactState(monster); continue; }
     normalizeMonsterRuntime(monster);
     for (const seal of gameState.seals ?? []) if (seal && canForceStartCombat(seal, monster) && isSealEnemyContact(seal, monster)) createSkirmish(seal, monster);
@@ -2171,6 +2176,63 @@ function clampSeaBossToDeepWater(boss) {
   if (getTile(grid.x, grid.y)?.terrain === CONFIG.tileState.terrainDeepWater) return;
   const home = getSeaBossSpawnPoint();
   boss.x = home.x; boss.y = home.y; boss.homeX = home.x; boss.homeY = home.y; boss.target = null;
+}
+
+
+function chooseExpeditionMembers() {
+  const maxMembers = CONFIG.OCEAN_CHART.maxExpeditionMembers;
+  return (gameState.seals ?? [])
+    .filter(seal => seal && safeFiniteNumber(seal.hp, 0, 0) > 0 && !['fallen', 'downed', 'beingCarried', 'expeditionRunning'].includes(seal.state))
+    .sort((a, b) => ((safeFiniteNumber(b?.level, 1, 0) * CONFIG.seal.attack + safeFiniteNumber(b?.attack, 0, 0)) - (safeFiniteNumber(a?.level, 1, 0) * CONFIG.seal.attack + safeFiniteNumber(a?.attack, 0, 0))))
+    .slice(0, maxMembers);
+}
+
+function launchExpedition(targetTile = gameState.input?.mouseTile) {
+  const target = targetTile && getTile(targetTile.x, targetTile.y) ? targetTile : { x: CONFIG.world.deepSeaX + CONFIG.OCEAN_CHART.revealRadiusTiles, y: CONFIG.world.safeY };
+  const expedition = gameState.expedition = createExpeditionState(gameState.expedition);
+  if (expedition.active) { logMessage('遠征隊はすでに航海中です。'); return false; }
+  const members = chooseExpeditionMembers();
+  if (members.length <= 0) { logMessage('遠征できるあざらしがいません。'); return false; }
+  const start = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  const targetWorld = gridToWorld(target.x, target.y);
+  const tileDistance = Math.max(CONFIG.OCEAN_CHART.minFoodToDepart, Math.ceil(distance(CONFIG.world.safeX, CONFIG.world.safeY, target.x, target.y)));
+  const food = tileDistance * CONFIG.OCEAN_CHART.foodCostPerTile;
+  const action = tileDistance * CONFIG.OCEAN_CHART.actionCostPerTile;
+  if (food < CONFIG.OCEAN_CHART.minFoodToDepart) { logMessage('遠征に必要な食料が足りません。'); return false; }
+  Object.assign(expedition, { active: true, memberSealIds: members.map(seal => seal.id), x: start.x, y: start.y, targetX: targetWorld.x, targetY: targetWorld.y, food, action, state: 'traveling' });
+  for (const seal of members) { seal.previousStateBeforeExpedition = seal.state; seal.state = 'expeditionRunning'; seal.currentAction = '海図遠征中'; }
+  logMessage('海図遠征隊が出発しました。');
+  revealFogAt(CONFIG.world.safeX, CONFIG.world.safeY, CONFIG.OCEAN_CHART.revealRadiusTiles);
+  return true;
+}
+
+function updateExpedition(dt) {
+  const expedition = gameState.expedition = createExpeditionState(gameState.expedition);
+  if (!expedition.active) return;
+  const targetX = expedition.state === 'returning' ? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x : expedition.targetX;
+  const targetY = expedition.state === 'returning' ? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y : expedition.targetY;
+  const speed = CONFIG.OCEAN_CHART.expeditionSpeed * CONFIG.world.tile * safeFiniteNumber(dt, 0, 0);
+  const d = distance(expedition.x, expedition.y, targetX, targetY);
+  if (d <= Math.max(speed, CONFIG.OCEAN_CHART.expeditionSpeed)) {
+    expedition.x = targetX; expedition.y = targetY;
+    if (expedition.state === 'traveling') expedition.state = 'returning';
+    else {
+      expedition.active = false; expedition.state = 'done';
+      for (const id of expedition.memberSealIds ?? []) { const seal = getSealById(id); if (seal) { seal.state = seal.previousStateBeforeExpedition || 'idle'; seal.currentAction = '遠征から帰還'; seal.previousStateBeforeExpedition = null; } }
+      logMessage('海図遠征隊が帰還しました。');
+    }
+  } else if (d > 0) {
+    expedition.x += (targetX - expedition.x) / d * speed;
+    expedition.y += (targetY - expedition.y) / d * speed;
+  }
+  const grid = worldToGrid(expedition.x, expedition.y);
+  revealFogAt(grid.x, grid.y, CONFIG.OCEAN_CHART.revealRadiusTiles);
+  for (const island of getIslandDefinitions()) {
+    if (gameState.discoveredIslands?.[island.id] === true) continue;
+    const nearestX = Math.max(island.x, Math.min(grid.x, island.x + island.w - 1));
+    const nearestY = Math.max(island.y, Math.min(grid.y, island.y + island.h - 1));
+    if (distance(grid.x, grid.y, nearestX, nearestY) <= CONFIG.OCEAN_CHART.currentVisionRadiusTiles) revealIsland(island.id, true);
+  }
 }
 
 function updateOceanExpansion(dt) {
