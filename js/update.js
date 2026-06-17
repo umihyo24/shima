@@ -2187,30 +2187,65 @@ function chooseExpeditionMembers() {
     .slice(0, maxMembers);
 }
 
-function launchExpedition(targetTile = gameState.input?.mouseTile) {
-  const target = targetTile && getTile(targetTile.x, targetTile.y) ? targetTile : { x: CONFIG.world.deepSeaX + CONFIG.OCEAN_CHART.revealRadiusTiles, y: CONFIG.world.safeY };
+function getActiveExpeditionOriginTile() {
+  const activeIds = new Set(createOceanProgress(gameState.oceanProgress).activeIslandIds ?? []);
+  const islands = getIslandDefinitions().filter(island => activeIds.has(island.id));
+  const selected = islands.find(island => gameState.discoveredIslands?.[island.id] === true) ?? islands[0] ?? getIslandDefinitions()[0];
+  return { x: Math.floor((selected.x + selected.x + selected.w - 1) / 2), y: Math.floor((selected.y + selected.y + selected.h - 1) / 2) };
+}
+
+function isTileInExpeditionRange(tile) {
+  if (!tile || !getTile(tile.x, tile.y)) return false;
+  const origin = getActiveExpeditionOriginTile();
+  return distance(origin.x, origin.y, tile.x, tile.y) <= safeFiniteNumber(CONFIG.OCEAN_EXPEDITION?.rangeTiles, 18, 1);
+}
+
+function setExpeditionDestination(tile) {
+  if (!tile || !getTile(tile.x, tile.y) || !isTileInExpeditionRange(tile)) { logMessage('遠征範囲内の海域を選んでください。'); return false; }
+  const expedition = gameState.expedition = createExpeditionState(gameState.expedition);
+  expedition.destinationTile = { x: tile.x, y: tile.y };
+  markUIDirty('panel');
+  return true;
+}
+
+function launchExpedition(targetTile = gameState.expedition?.destinationTile ?? gameState.input?.mouseTile) {
+  const target = targetTile && getTile(targetTile.x, targetTile.y) ? targetTile : null;
   const expedition = gameState.expedition = createExpeditionState(gameState.expedition);
   if (expedition.active) { logMessage('遠征隊はすでに航海中です。'); return false; }
+  if (!target || !isTileInExpeditionRange(target)) { logMessage('海図で到達できる範囲の目的地を選んでください。'); return false; }
   const members = chooseExpeditionMembers();
   if (members.length <= 0) { logMessage('遠征できるあざらしがいません。'); return false; }
-  const start = gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+  const origin = getActiveExpeditionOriginTile();
+  const start = gridToWorld(origin.x, origin.y);
   const targetWorld = gridToWorld(target.x, target.y);
-  const tileDistance = Math.max(CONFIG.OCEAN_CHART.minFoodToDepart, Math.ceil(distance(CONFIG.world.safeX, CONFIG.world.safeY, target.x, target.y)));
-  const food = tileDistance * CONFIG.OCEAN_CHART.foodCostPerTile;
-  const action = tileDistance * CONFIG.OCEAN_CHART.actionCostPerTile;
-  if (food < CONFIG.OCEAN_CHART.minFoodToDepart) { logMessage('遠征に必要な食料が足りません。'); return false; }
-  Object.assign(expedition, { active: true, memberSealIds: members.map(seal => seal.id), x: start.x, y: start.y, targetX: targetWorld.x, targetY: targetWorld.y, food, action, state: 'traveling' });
+  Object.assign(expedition, { active: true, memberSealIds: members.map(seal => seal.id), x: start.x, y: start.y, targetX: targetWorld.x, targetY: targetWorld.y, destinationTile: { x: target.x, y: target.y }, originTile: origin, state: 'traveling' });
   for (const seal of members) { seal.previousStateBeforeExpedition = seal.state; seal.state = 'expeditionRunning'; seal.currentAction = '海図遠征中'; }
-  logMessage('海図遠征隊が出発しました。');
-  revealFogAt(CONFIG.world.safeX, CONFIG.world.safeY, CONFIG.OCEAN_CHART.revealRadiusTiles);
+  logMessage(`海図遠征隊が${target.x},${target.y}へ出発しました。`);
+  revealFogAt(origin.x, origin.y, CONFIG.OCEAN_CHART.revealRadiusTiles);
   return true;
+}
+
+function discoverOceanFeaturesAt(grid) {
+  const progress = gameState.oceanProgress = createOceanProgress(gameState.oceanProgress);
+  for (const region of CONFIG.OCEAN_EXPEDITION?.regions ?? []) {
+    if (!inRect(grid.x, grid.y, region.x, region.y, region.w, region.h) || progress.discoveredRegionIds.includes(region.id)) continue;
+    progress.discoveredRegionIds.push(region.id);
+    logMessage(`新しい海域「${region.name}」を発見しました！`);
+  }
+  for (const boss of CONFIG.OCEAN_EXPEDITION?.bosses ?? []) {
+    if (distance(grid.x, grid.y, boss.x, boss.y) > CONFIG.OCEAN_CHART.currentVisionRadiusTiles || progress.discoveredBossIds.includes(boss.id)) continue;
+    progress.discoveredBossIds.push(boss.id);
+    logMessage(`海の大物「${boss.name}」を発見しました。討伐で航路が開けそうです。`);
+  }
 }
 
 function updateExpedition(dt) {
   const expedition = gameState.expedition = createExpeditionState(gameState.expedition);
   if (!expedition.active) return;
-  const targetX = expedition.state === 'returning' ? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x : expedition.targetX;
-  const targetY = expedition.state === 'returning' ? gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y : expedition.targetY;
+  const origin = expedition.originTile ?? getActiveExpeditionOriginTile();
+  const returnPoint = gridToWorld(origin.x, origin.y);
+  const targetX = expedition.state === 'returning' || expedition.state === 'retreating' ? returnPoint.x : expedition.targetX;
+  const targetY = expedition.state === 'returning' || expedition.state === 'retreating' ? returnPoint.y : expedition.targetY;
   const speed = CONFIG.OCEAN_CHART.expeditionSpeed * CONFIG.world.tile * safeFiniteNumber(dt, 0, 0);
   const d = distance(expedition.x, expedition.y, targetX, targetY);
   if (d <= Math.max(speed, CONFIG.OCEAN_CHART.expeditionSpeed)) {
@@ -2218,8 +2253,8 @@ function updateExpedition(dt) {
     if (expedition.state === 'traveling') expedition.state = 'returning';
     else {
       expedition.active = false; expedition.state = 'done';
-      for (const id of expedition.memberSealIds ?? []) { const seal = getSealById(id); if (seal) { seal.state = seal.previousStateBeforeExpedition || 'idle'; seal.currentAction = '遠征から帰還'; seal.previousStateBeforeExpedition = null; } }
-      logMessage('海図遠征隊が帰還しました。');
+      for (const id of expedition.memberSealIds ?? []) { const seal = getSealById(id); if (seal) { seal.state = seal.previousStateBeforeExpedition || 'idle'; seal.currentAction = '遠征から無事帰還'; seal.previousStateBeforeExpedition = null; } }
+      logMessage('海図遠征隊が無事に帰還しました。');
     }
   } else if (d > 0) {
     expedition.x += (targetX - expedition.x) / d * speed;
@@ -2227,6 +2262,7 @@ function updateExpedition(dt) {
   }
   const grid = worldToGrid(expedition.x, expedition.y);
   revealFogAt(grid.x, grid.y, CONFIG.OCEAN_CHART.revealRadiusTiles);
+  discoverOceanFeaturesAt(grid);
   for (const island of getIslandDefinitions()) {
     if (gameState.discoveredIslands?.[island.id] === true) continue;
     const nearestX = Math.max(island.x, Math.min(grid.x, island.x + island.w - 1));
@@ -2235,13 +2271,43 @@ function updateExpedition(dt) {
   }
 }
 
+function establishRouteLighthouse(islandId) {
+  const island = getIslandDefinitions().find(item => item?.id === String(islandId ?? ''));
+  if (!island || gameState.discoveredIslands?.[island.id] !== true) return false;
+  const progress = gameState.oceanProgress = createOceanProgress(gameState.oceanProgress);
+  if (progress.lighthouses?.[island.id] === true) { logMessage('この島にはすでに航路灯台があります。'); return false; }
+  if (progress.lighthouseProjects?.[island.id] && progress.lighthouseProjects[island.id].complete !== true) { logMessage('航路灯台を建設中です。'); return false; }
+  progress.lighthouseProjects[island.id] = { remainingMs: CONFIG.OCEAN_EXPEDITION?.lighthouseBuildMs ?? 18000, complete: false };
+  logMessage('航路灯台プロジェクトを開始しました。完成すると活動エリアが広がります。');
+  markUIDirty('panel');
+  return true;
+}
+
 function updateOceanExpansion(dt) {
   ensureOceanProgress();
   const boss = ensureSeaBoss();
   if (boss) clampSeaBossToDeepWater(boss);
   if (boss && safeFiniteNumber(boss.hp, 0, 0) <= 0 && !gameState.oceanProgress.deepSeaBossDefeated) unlockOceanRoute();
+  updateLighthouseProjects(dt);
   updateDeepWaterSealSafety(dt);
 }
+
+function updateLighthouseProjects(dt) {
+  const progress = gameState.oceanProgress = createOceanProgress(gameState.oceanProgress);
+  for (const [islandId, project] of Object.entries(progress.lighthouseProjects ?? {})) {
+    if (!project || project.complete === true) continue;
+    project.remainingMs = safeFiniteNumber(project.remainingMs, CONFIG.OCEAN_EXPEDITION?.lighthouseBuildMs ?? 18000, 0) - safeFiniteNumber(dt, 0, 0) * 1000;
+    if (project.remainingMs > 0) continue;
+    project.complete = true;
+    progress.lighthouses[islandId] = true;
+    if (!progress.activeIslandIds.includes(islandId)) progress.activeIslandIds.push(islandId);
+    const island = getIslandDefinitions().find(item => item?.id === islandId);
+    if (island) revealFogRect(island.x, island.y, island.w, island.h, CONFIG.OCEAN_EXPEDITION?.lighthouseRouteRevealPadding ?? 2);
+    logMessage('航路灯台が完成し、活動エリアが広がりました！');
+    markUIDirty('panel');
+  }
+}
+
 
 function unlockOceanRoute() {
   if (gameState.oceanProgress?.safeRouteUnlocked === true) return;

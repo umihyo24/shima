@@ -235,3 +235,9 @@ button.subtle { background: rgba(255,255,255,.08); }
 @media (max-width: 900px) {
   .inspectorPanel { top: 82px; right: 8px; width: min(340px, calc(100vw - 16px)); max-height: calc(100vh - var(--bottom-tab-height) - 96px); }
 }
+
+.expedition-panel-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 10px;
+}

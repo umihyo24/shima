@@ -25,6 +25,7 @@ function markPanelDirty(reason = 'panel') {
 const MANAGEMENT_PANELS = Object.freeze([
   { id: 'people', label: '人物' },
   { id: 'dungeons', label: 'ダンジョン' },
+  { id: 'expedition', label: '遠征' },
   { id: 'progress', label: '発展' }
 ]);
 const BOTTOM_TABS = MANAGEMENT_PANELS;
@@ -272,11 +273,12 @@ function handleUiAction(event, options = {}) {
   const buildToggle = actionTarget.dataset?.buildToggle;
   const managementPanel = actionTarget.dataset?.managementPanel;
   const action = actionTarget.dataset?.action;
+  const expeditionAction = actionTarget.dataset?.expeditionAction;
   const dungeonAction = actionTarget.dataset?.dungeonAction;
   const sealFilter = actionTarget.dataset?.sealFilter;
   const sealSort = actionTarget.dataset?.sealSort;
   const rosterId = actionTarget.dataset?.rosterId;
-  const hasUiAction = Boolean(tab || tool || buildCategory || buildToggle || managementPanel || speed !== undefined || action || dungeonAction || sealFilter || sealSort || rosterId);
+  const hasUiAction = Boolean(tab || tool || buildCategory || buildToggle || managementPanel || speed !== undefined || action || expeditionAction || dungeonAction || sealFilter || sealSort || rosterId);
   if (!hasUiAction) return false;
 
   event.preventDefault();
@@ -302,6 +304,8 @@ function handleUiAction(event, options = {}) {
   else if (action === 'closeBuild' || action === 'closeBottom') closeBuildDrawer();
   else if (action === 'closeGiantHunt') closeGiantHunt();
   else if (action === 'startGiantHunt') startGiantHunt(actionTarget.dataset?.giantEnemyId);
+  else if (expeditionAction === 'launch') launchExpedition(gameState.expedition?.destinationTile);
+  else if (expeditionAction === 'lighthouse') establishRouteLighthouse(actionTarget.dataset?.islandId);
   else if (action === 'closeInspector' || action === 'closeSeal') { closeInspector(); clearContextSelection(); renderUI(); }
   else if (dungeonAction === 'start') startDungeon(actionTarget.dataset?.dungeonId);
   else if (dungeonAction === 'select') { gameState.ui.selectedDungeonId = actionTarget.dataset?.dungeonId ?? null; markUIDirty('dungeon'); renderUI(); }
@@ -485,6 +489,7 @@ function bindInputEvents() {
       handlePlacementClick(t, gameState.input.mouseTile);
       return;
     }
+    if (gameState.ui?.activeManagementPanel === 'expedition' && setExpeditionDestination(gameState.input?.mouseTile)) { renderUI(); return; }
     const clickedDungeon = selectDungeonAtWorldPosition(gameState.input.mouseWorld?.x, gameState.input.mouseWorld?.y);
     const clickedSeal = sealAtWorldPoint(gameState.input.mouseWorld);
     if (clickedDungeon?.id && (!clickedSeal || distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedDungeon.x, clickedDungeon.y) <= distance(gameState.input.mouseWorld.x, gameState.input.mouseWorld.y, clickedSeal.x, clickedSeal.y))) {
@@ -525,7 +530,7 @@ function bindInputEvents() {
   window.addEventListener('keydown', e => {
     gameState.input.keys[e.code] = true;
     if (e.code === 'KeyR') rotateTool();
-    if (e.code === 'KeyE' && gameState.phase === CONFIG.phase.playing) launchExpedition(gameState.input?.mouseTile);
+    if (e.code === 'KeyE' && gameState.phase === CONFIG.phase.playing) { openManagementPanel('expedition'); setExpeditionDestination(gameState.input?.mouseTile); }
     if (e.code === 'Escape') {
       cancelCurrentAction('escape');
     }

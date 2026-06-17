@@ -34,7 +34,18 @@ const CONFIG = Object.freeze({
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
   SAVE_VERSION: 15,
-  OCEAN_CHART: { revealRadiusTiles: 4, currentVisionRadiusTiles: 3, expeditionSpeed: 0.04, foodCostPerTile: 1, actionCostPerTile: 1, minFoodToDepart: 5, maxExpeditionMembers: 3, islandRevealPaddingTiles: 2, states: { unknown: 0, discovered: 1, currentlyVisible: 2 }, islandIds: { start: 'start', second: 'second' }, colors: { unknown: 'rgba(0,8,14,1)', discovered: 'rgba(0,20,30,.08)', currentVision: 'rgba(120,220,255,0)', mystery: 'rgba(0,0,0,.55)' } },
+  OCEAN_CHART: { revealRadiusTiles: 5, currentVisionRadiusTiles: 3, expeditionSpeed: 0.04, maxExpeditionMembers: 3, islandRevealPaddingTiles: 2, states: { unknown: 0, discovered: 1, currentlyVisible: 2 }, islandIds: { start: 'start', second: 'second' }, colors: { unknown: 'rgba(0,8,14,1)', discovered: 'rgba(0,20,30,.08)', currentVision: 'rgba(120,220,255,0)', mystery: 'rgba(0,0,0,.55)' } },
+
+  OCEAN_EXPEDITION: { rangeTiles: 18, lighthouseBuildMs: 18000, lighthouseRouteRevealPadding: 2, routeStepTiles: 2, destinationPulseSeconds: 1.2, regions: [
+    { id: 'calmShoals', name: 'Calm Shoals', x: 32, y: 7, w: 14, h: 20 },
+    { id: 'crabWaters', name: 'Crab Waters', x: 44, y: 6, w: 12, h: 22 },
+    { id: 'whirlpoolSea', name: 'Whirlpool Sea', x: 56, y: 4, w: 12, h: 24 },
+    { id: 'deepBlueChannel', name: 'Deep Blue Channel', x: 66, y: 6, w: 11, h: 20 }
+  ], bosses: [
+    { id: 'giantCrab', name: 'Giant Crab', regionId: 'crabWaters', x: 50, y: 16 },
+    { id: 'ancientOctopus', name: 'Ancient Octopus', regionId: 'whirlpoolSea', x: 60, y: 13 },
+    { id: 'seaGuardian', name: 'Sea Guardian', regionId: 'deepBlueChannel', x: 69, y: 18 }
+  ] },
   OCEAN_CHART_VISUAL: { unknownAlpha: 1.0, discoveredAlpha: 0.08, currentVisibleAlpha: 0, unknownColor: 'rgba(0, 8, 14, 1)', discoveredTint: 'rgba(0, 20, 30, 0.08)', minimapUnknownColor: '#000', minimapDiscoveredTint: 'rgba(0,0,0,.42)', minimapVisibleTint: 'rgba(170,235,255,0)' },
   OCEAN_CHART_INITIAL_REVEAL: { startingShallowPaddingTiles: 2, objectPaddingTiles: 2, routePaddingTiles: 1, huntingAreaPaddingTiles: 1, dungeonPaddingTiles: 1, huntingAreaIds: ['coast'], dungeonIds: ['crabNest_1'] },
   OCEAN_EXPANSION: { deepWaterHpDrainPerSecond: 2, deepWaterRetreatHpRatio: 0.35, deepWaterBlockedUntilBossDefeated: false, secondIslandUnlockRequiresBoss: true, safeRetreatSearchRadius: 12, secondIslandMinWidth: 12, secondIslandMinHeight: 10, deepSeaWidthTiles: 10, shallowBandWidthTiles: 4 },
