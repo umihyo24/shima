@@ -43,6 +43,9 @@ function getSerializableGameState() {
     giantEnemies: cloneSerializable(gameState.giantEnemies, []),
     giantEnemyFirstClears: cloneSerializable(gameState.giantEnemyFirstClears, {}),
     oceanProgress: cloneSerializable(createOceanProgress(gameState.oceanProgress), createOceanProgress()),
+    worldFog: cloneSerializable(gameState.worldFog, null),
+    discoveredIslands: cloneSerializable(gameState.discoveredIslands, {}),
+    expedition: cloneSerializable(createExpeditionState(gameState.expedition), createExpeditionState()),
     logs: cloneSerializable(gameState.logs, []).slice(0, CONFIG.MAX_LOGS),
     timers: {
       spawn: safeFiniteNumber(gameState.timers?.spawn, 0, 0),
@@ -181,6 +184,9 @@ function applyLoadedGameState(data) {
   gameState.giantEnemies = gameState.monsters.filter(m => m?.isGiant);
   gameState.giantEnemyFirstClears = loaded.giantEnemyFirstClears && typeof loaded.giantEnemyFirstClears === 'object' ? { ...loaded.giantEnemyFirstClears } : {};
   gameState.oceanProgress = createOceanProgress(loaded.oceanProgress);
+  gameState.discoveredIslands = loaded.discoveredIslands && typeof loaded.discoveredIslands === 'object' ? { ...loaded.discoveredIslands } : {};
+  gameState.expedition = createExpeditionState(loaded.expedition);
+  initializeWorldFog(loaded.worldFog);
   gameState.skirmishes = [];
   gameState.nextSkirmishId = clampInteger(loaded.nextSkirmishId, 1, Number.MAX_SAFE_INTEGER, 1);
   gameState.dungeonProgress = normalizeDungeonProgress(loaded.dungeonProgress);

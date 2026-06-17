@@ -30,6 +30,9 @@ function createNewGameState() {
     frameTemps: { occupied: new Set(), usableFacilities: [], toRemoveMonsters: [] },
     warnings: { visitorSpawnBlocked: false },
     oceanProgress: createOceanProgress(),
+    worldFog: null,
+    discoveredIslands: {},
+    expedition: createExpeditionState(),
     lastTime: performance.now()
   };
 }
@@ -286,6 +289,20 @@ function clampNumber(value, min, max, fallback) {
 
 function clampInteger(value, min, max, fallback) {
   return Math.trunc(clampNumber(value, min, max, fallback));
+}
+
+function createExpeditionState(source = {}) {
+  return {
+    active: source?.active === true,
+    memberSealIds: Array.isArray(source?.memberSealIds) ? source.memberSealIds.map(String) : [],
+    x: safeFiniteNumber(source?.x, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x),
+    y: safeFiniteNumber(source?.y, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y),
+    targetX: safeFiniteNumber(source?.targetX, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x),
+    targetY: safeFiniteNumber(source?.targetY, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y),
+    food: safeFiniteNumber(source?.food, 0, 0),
+    action: safeFiniteNumber(source?.action, 0, 0),
+    state: ['idle', 'traveling', 'returning', 'done'].includes(source?.state) ? source.state : 'idle'
+  };
 }
 
 function createOceanProgress(source = {}) {
@@ -992,6 +1009,8 @@ function initGame(residentName) {
   gameState.giantEnemies = [];
   gameState.giantEnemyFirstClears = {};
   gameState.oceanProgress = createOceanProgress();
+  gameState.discoveredIslands = {};
+  gameState.expedition = createExpeditionState();
   gameState.visitorProfiles = createDefaultVisitorProfiles();
   gameState.relicInventory = [];
   gameState.dungeons = [];
@@ -1028,6 +1047,7 @@ function initGame(residentName) {
   initializeAssetRegistry();
   gameState.seals = [createResidentSeal(gameState.residentName)];
   addDefaultVillage();
+  initializeWorldFog();
   startScreen.style.display = 'none';
   logMessage('ゲーム開始。住民あざらしが海辺の通り道から冒険へ向かいます。');
 }
@@ -1051,6 +1071,84 @@ function inRect(gx, gy, x, y, w, h) { return gx >= x && gy >= y && gx < x + w &&
 function isInExpansionRegion(gx, gy) { return inRect(gx, gy, CONFIG.expansion.regionX, CONFIG.expansion.regionY, CONFIG.expansion.regionW, CONFIG.expansion.regionH); }
 function isInBuildableRegion(gx, gy) { return isInExpansionRegion(gx, gy) || isSecondIslandTile(gx, gy); }
 function isInStartingVillage(gx, gy) { return inRect(gx, gy, CONFIG.expansion.startX, CONFIG.expansion.startY, CONFIG.expansion.startW, CONFIG.expansion.startH); }
+
+
+function getIslandDefinitions() {
+  return [
+    { id: CONFIG.OCEAN_CHART.islandIds.start, x: CONFIG.world.islandX, y: CONFIG.world.islandY, w: CONFIG.world.islandW, h: CONFIG.world.islandH },
+    { id: CONFIG.OCEAN_CHART.islandIds.second, x: CONFIG.world.secondIslandX, y: CONFIG.world.secondIslandY, w: CONFIG.world.secondIslandW, h: CONFIG.world.secondIslandH }
+  ];
+}
+
+function initializeWorldFog(source = null) {
+  const width = CONFIG.world.cols;
+  const height = CONFIG.world.rows;
+  const size = width * height;
+  const sourceTiles = Array.isArray(source?.tiles) && source.tiles.length === size ? source.tiles : null;
+  gameState.worldFog = { width, height, tiles: Array.from({ length: size }, (_, i) => clampInteger(sourceTiles?.[i], CONFIG.OCEAN_CHART.states.unknown, CONFIG.OCEAN_CHART.states.discovered, CONFIG.OCEAN_CHART.states.unknown)) };
+  gameState.discoveredIslands = gameState.discoveredIslands && typeof gameState.discoveredIslands === 'object' ? { ...gameState.discoveredIslands } : {};
+  revealIsland(CONFIG.OCEAN_CHART.islandIds.start, false);
+  revealFogAt(CONFIG.world.safeX, CONFIG.world.safeY, CONFIG.OCEAN_CHART.revealRadiusTiles);
+  for (const object of gameState.world?.objects ?? []) revealFogAt(object?.x ?? 0, object?.y ?? 0, CONFIG.OCEAN_CHART.islandRevealPaddingTiles);
+  return gameState.worldFog;
+}
+
+function getFogIndex(x, y) {
+  const fog = gameState.worldFog;
+  if (!fog || !Array.isArray(fog.tiles)) return -1;
+  const gx = Math.trunc(x); const gy = Math.trunc(y);
+  if (gx < 0 || gy < 0 || gx >= safeFiniteNumber(fog.width, CONFIG.world.cols, 1) || gy >= safeFiniteNumber(fog.height, CONFIG.world.rows, 1)) return -1;
+  return gy * fog.width + gx;
+}
+
+function revealFogAt(x, y, radius = CONFIG.OCEAN_CHART.revealRadiusTiles) {
+  if (!gameState.worldFog?.tiles) initializeWorldFog(gameState.worldFog);
+  const cx = Math.trunc(x); const cy = Math.trunc(y); const r = clampInteger(radius, 0, Math.max(CONFIG.world.cols, CONFIG.world.rows), 0);
+  for (let ty = cy - r; ty <= cy + r; ty += 1) for (let tx = cx - r; tx <= cx + r; tx += 1) {
+    if (distance(cx, cy, tx, ty) > r) continue;
+    const index = getFogIndex(tx, ty);
+    if (index >= 0) gameState.worldFog.tiles[index] = CONFIG.OCEAN_CHART.states.discovered;
+  }
+}
+
+function revealIsland(islandId, showNews = true) {
+  const island = getIslandDefinitions().find(item => item?.id === islandId);
+  if (!island) return false;
+  const wasDiscovered = gameState.discoveredIslands?.[island.id] === true;
+  gameState.discoveredIslands = gameState.discoveredIslands ?? {};
+  gameState.discoveredIslands[island.id] = true;
+  const pad = CONFIG.OCEAN_CHART.islandRevealPaddingTiles;
+  for (let y = island.y - pad; y < island.y + island.h + pad; y += 1) for (let x = island.x - pad; x < island.x + island.w + pad; x += 1) {
+    const index = getFogIndex(x, y);
+    if (index >= 0) gameState.worldFog.tiles[index] = CONFIG.OCEAN_CHART.states.discovered;
+  }
+  if (!wasDiscovered && showNews) logMessage('新しい島を発見しました！');
+  return true;
+}
+
+function getIslandIdAt(x, y) {
+  if (isFirstIslandTile(x, y)) return CONFIG.OCEAN_CHART.islandIds.start;
+  if (isSecondIslandTile(x, y)) return CONFIG.OCEAN_CHART.islandIds.second;
+  return null;
+}
+
+function isTileDiscovered(x, y) {
+  if (!gameState.worldFog?.tiles) return false;
+  const index = getFogIndex(x, y);
+  return index >= 0 && safeFiniteNumber(gameState.worldFog.tiles[index], CONFIG.OCEAN_CHART.states.unknown, 0) >= CONFIG.OCEAN_CHART.states.discovered;
+}
+
+function isTileCurrentlyVisible(x, y) {
+  const expedition = gameState.expedition;
+  if (!expedition?.active) return false;
+  const center = worldToGrid(expedition.x, expedition.y);
+  return distance(center.x, center.y, x, y) <= CONFIG.OCEAN_CHART.currentVisionRadiusTiles;
+}
+
+function canBuildOnDiscoveredTile(x, y) {
+  const islandId = getIslandIdAt(x, y);
+  return isTileDiscovered(x, y) && (!islandId || gameState.discoveredIslands?.[islandId] === true);
+}
 
 function generateInitialMap() {
   const tiles = Array.from({ length: CONFIG.world.rows }, (_, y) => Array.from({ length: CONFIG.world.cols }, (_, x) => createTile(x, y)));
@@ -1139,7 +1237,8 @@ function getTile(x, y) {
 
 function isBuildableTile(x, y) {
   const tile = getTile(x, y);
-  return tile?.terrain === CONFIG.tileState.terrainLand
+  return canBuildOnDiscoveredTile(x, y)
+    && tile?.terrain === CONFIG.tileState.terrainLand
     && tile?.buildState === CONFIG.tileState.buildable
     && tile?.obstacle === null
     && tile?.unlocked === true;
@@ -1187,6 +1286,7 @@ function canPlaceAt(tileX, tileY, objectDef, directionIndex = gameState.ui?.dire
       if (!tile) return { ok: false, reason: 'マップ外です。' };
       if (tile?.terrain === CONFIG.tileState.terrainWater || tile?.terrain === CONFIG.tileState.terrainShallowWater || tile?.terrain === CONFIG.tileState.terrainDeepWater) return { ok: false, reason: '水上には配置できません。' };
       if (tile?.terrain === CONFIG.tileState.terrainOutside) return { ok: false, reason: '外の冒険エリアには配置できません。' };
+      if (!canBuildOnDiscoveredTile(x, y)) return { ok: false, reason: '未発見の場所には建設できません' };
       if (!isInBuildableRegion(x, y)) return { ok: false, reason: '村の開拓範囲外です。' };
       if (!isBuildableTile(x, y)) return { ok: false, reason: '未開拓または障害物がある土地です。' };
       if (objectAt(x, y, { excludeId: options?.ignoreFacilityId ?? options?.excludeId ?? null })) return { ok: false, reason: '他の物があります。' };
@@ -1201,6 +1301,7 @@ function canClearAt(tileX, tileY) {
   const cost = getClearingCost();
   if (!tile) return { ok: false, reason: 'マップ外です。' };
   if (tile?.terrain !== CONFIG.tileState.terrainLand) return { ok: false, reason: '水辺や外の冒険エリアは開拓できません。' };
+  if (!canBuildOnDiscoveredTile(tileX, tileY)) return { ok: false, reason: '未発見の場所には建設できません' };
   if (!isInBuildableRegion(tileX, tileY)) return { ok: false, reason: '村の開拓範囲外です。' };
   if (!isBlockedLandTile(tileX, tileY)) return { ok: false, reason: 'ここはすでに建設可能、または開拓対象外です。' };
   if (gameState.player.g < cost) return { ok: false, reason: `${cost}G必要です。` };
