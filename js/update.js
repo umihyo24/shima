@@ -11,6 +11,7 @@ function update(deltaMs) {
   updateSpawner(dt);
   updateDungeons(safeDeltaMs);
   updateGiantEnemies();
+  updateOceanExpansion(dt);
   updateMonsters(dt);
   updateSeals(dt);
   updateCombatContacts();
@@ -337,7 +338,11 @@ function isSealEnemyContact(seal, monster) {
 function canForceStartCombat(seal, monster) {
   if (!seal || !monster) return false;
   if (safeFiniteNumber(seal.hp, 0, 0) <= 0 || safeFiniteNumber(monster.hp, 0, 0) <= 0) return false;
-  if (isGiantEnemy(monster)) {
+  if (isSeaBoss(monster)) {
+    if (!isWorldPointDeepWater(seal) && !canSealIntentionallyAttackBoss(seal, monster)) return false;
+    if (!canSealIntentionallyAttackBoss(seal, monster) && getDistance(seal, monster) > safeFiniteNumber(CONFIG.GIANT_ENEMY?.seaBossAggroRadius, 170, 0)) return false;
+  }
+  else if (isGiantEnemy(monster)) {
     const aggro = getBossSafetyTiles('aggroRadius', 5);
     const chase = getBossSafetyTiles('chaseRadius', 7);
     const fromHome = distance(safeFiniteNumber(monster.x, 0, 0), safeFiniteNumber(monster.y, 0, 0), safeFiniteNumber(monster.homeX, monster.x, 0), safeFiniteNumber(monster.homeY, monster.y, 0));
@@ -544,6 +549,7 @@ function grantSkirmishReward(seal, enemy) {
   applyLevelUps(seal);
   if (enemy?.isGiant) {
     enemy.defeated = true; enemy.state = 'defeated';
+    if (isSeaBoss(enemy)) unlockOceanRoute();
     gameState.village.knownness = safeFiniteNumber(gameState.village?.knownness, 0, 0) + safeFiniteNumber(enemy.rewardFame, CONFIG.GIANT_ENEMY?.rewardFame, 0);
     for (const itemId of enemy.firstClearUnlocks ?? []) if (!gameState.giantEnemyFirstClears?.[itemId]) { gameState.giantEnemyFirstClears[itemId] = true; addRelicItem(itemId, 1, '巨大討伐'); }
     logMessage(`${enemy.name ?? '巨大敵'}を討伐しました！`);
@@ -651,7 +657,7 @@ function normalizeMonsterRuntime(monster) {
 function findNearestThreateningSeal(monster) {
   const radius = safeFiniteNumber(CONFIG.monster.territory?.reactionRadius, 0, 0);
   if (radius <= 0) return null;
-  return (gameState.seals ?? []).filter(seal => seal && !['fallen', 'expeditionRunning', 'returningFromDungeon'].includes(seal.state) && distance(seal.x, seal.y, monster.x, monster.y) <= radius)
+  return (gameState.seals ?? []).filter(seal => seal && !['fallen', 'downed', 'expeditionRunning', 'returningFromDungeon'].includes(seal.state) && (!isSeaBoss(monster) || isWorldPointDeepWater(seal)) && distance(seal.x, seal.y, monster.x, monster.y) <= (isSeaBoss(monster) ? safeFiniteNumber(CONFIG.GIANT_ENEMY?.seaBossAggroRadius, radius, 0) : radius))
     .reduce((best, seal) => !best || distance(seal.x, seal.y, monster.x, monster.y) < distance(best.x, best.y, monster.x, monster.y) ? seal : best, null);
 }
 
@@ -677,7 +683,7 @@ function randomMonsterPatrolPoint(monster) {
 }
 
 function clampMonsterPoint(monster, point) {
-  const area = CONFIG.DUNGEONS?.spawnAreas?.[monster?.areaId ?? 'coast']?.bounds ?? CONFIG.DUNGEONS?.spawnAreas?.coast?.bounds;
+  const area = isSeaBoss(monster) ? { x: CONFIG.world.deepSeaX, y: CONFIG.world.deepSeaY, w: CONFIG.OCEAN_EXPANSION.deepSeaWidthTiles, h: CONFIG.world.deepSeaH } : (CONFIG.DUNGEONS?.spawnAreas?.[monster?.areaId ?? 'coast']?.bounds ?? CONFIG.DUNGEONS?.spawnAreas?.coast?.bounds);
   const pad = safeFiniteNumber(CONFIG.monster.movement?.edgePadding, 12, 0);
   if (!area) return { x: safeFiniteNumber(point?.x, monster?.x, 0), y: safeFiniteNumber(point?.y, monster?.y, 0) };
   return { x: clampNumber(safeFiniteNumber(point?.x, monster?.x, 0), gridToWorld(area.x, area.y).x - CONFIG.world.tile / 2 + pad, gridToWorld(area.x + area.w - 1, area.y).x + CONFIG.world.tile / 2 - pad, monster?.x ?? 0), y: clampNumber(safeFiniteNumber(point?.y, monster?.y, 0), gridToWorld(area.x, area.y).y - CONFIG.world.tile / 2 + pad, gridToWorld(area.x, area.y + area.h - 1).y + CONFIG.world.tile / 2 - pad, monster?.y ?? 0) };
@@ -1304,7 +1310,7 @@ function applyLevelUps(seal) {
 
 function findFallenForRescue(seal) {
   const radius = safeFiniteNumber(CONFIG.SEAL_RECOVERY?.carrySearchRadius, 5, 0) * CONFIG.world.tile;
-  return (gameState.seals ?? []).find(other => other?.id !== seal.id && other?.state === 'downed' && !isBeingCarried(other.id) && distance(seal.x, seal.y, other.x, other.y) <= radius);
+  return (gameState.seals ?? []).find(other => other?.id !== seal.id && other?.state === 'downed' && !isWorldPointDeepWater(other) && !isBeingCarried(other.id) && distance(seal.x, seal.y, other.x, other.y) <= radius);
 }
 
 function isBeingCarried(sealId) { return (gameState.seals ?? []).some(s => s?.rescueTargetId === sealId && s?.state === 'carryingFallenSeal'); }
@@ -1360,7 +1366,7 @@ function setSealDestination(seal, worldPosition, reason) {
   const key = `${goal.x},${goal.y}:${next.reason}`;
   seal.target = next;
   if (seal.pathTargetKey === key && Array.isArray(seal.path)) return true;
-  const path = findPath(worldToGrid(seal.x, seal.y), goal, { seal, reason: next.reason, allowWater: ['sea-arrival', 'leaving-sea'].includes(next.reason) });
+  const path = findPath(worldToGrid(seal.x, seal.y), goal, { seal, reason: next.reason, allowWater: ['sea-arrival', 'leaving-sea', 'deep-water-retreat'].includes(next.reason) });
   if (Array.isArray(path)) return setSealPath(seal, path, next.reason);
   if ((CONFIG.movement.directFallbackReasons ?? []).includes(next.reason)) return setSealPath(seal, [next], `${next.reason}-direct`);
   seal.path = [];
@@ -1523,7 +1529,8 @@ function getTileMovementCost(tile, entity, fallbackTier = 0, options = {}) {
   const y = clampInteger(tile?.y, 0, CONFIG.world.rows - 1, -1);
   const cell = getTile(x, y);
   if (!cell) return Infinity;
-  if (cell.terrain === CONFIG.tileState.terrainWater) return options.allowWater === true ? CONFIG.movement.waterCost : Infinity;
+  if (cell.terrain === CONFIG.tileState.terrainWater || cell.terrain === CONFIG.tileState.terrainShallowWater) return options.allowWater === true ? CONFIG.movement.waterCost : Infinity;
+  if (cell.terrain === CONFIG.tileState.terrainDeepWater) return options.allowWater === true && CONFIG.OCEAN_EXPANSION?.deepWaterBlockedUntilBossDefeated !== true ? CONFIG.movement.waterCost * (gameState.oceanProgress?.safeRouteUnlocked ? 2 : 20) : Infinity;
   if (roadAt(x, y) && !isFacilityObstacle({ x, y })) return CONFIG.movement.roadCost;
   if (isFacilityObstacle({ x, y })) {
     const facility = objectAt(x, y);
@@ -2126,10 +2133,96 @@ function ensureGiantEnemyState() { gameState.giantEnemies = Array.isArray(gameSt
 function isSafeGiantEnemySpawnTile(gx, gy) { const margin = clampInteger(CONFIG.GIANT_ENEMY?.fallbackSpawnMarginTiles, 0, 20, 3); if (gx < margin || gy < margin || gx >= CONFIG.world.cols - margin || gy >= CONFIG.world.rows - margin) return false; const tile = getTile(gx, gy); if (!tile || tile.terrain !== CONFIG.tileState.terrainLand || tile.buildState !== CONFIG.tileState.buildable || tile.obstacle) return false; if ((gameState.world?.roads ?? []).some(r => r?.x === gx && r?.y === gy)) return false; if (objectAt(gx, gy)) return false; return true; }
 function findGiantEnemySpawnPoint() { for (let i = 0; i < 120; i++) { const gx = CONFIG.expansion.regionX + Math.floor(Math.random() * CONFIG.expansion.regionW); const gy = CONFIG.expansion.regionY + Math.floor(Math.random() * CONFIG.expansion.regionH); const p = gridToWorld(gx, gy); if (isValidGiantBossSpawn(p.x, p.y)) return p; } return null; }
 function spawnGiantEnemy() { const def = getGiantEnemyDefs()[0]; const p = def ? findGiantEnemySpawnPoint() : null; if (!def || !p) return false; const enemy = normalizeMonster({ id: `giant-${def.id}-${Date.now()}`, type: def.id, name: def.name, isGiant: true, giantEnemyId: def.id, areaId: 'coast', x: p.x, y: p.y, homeX: p.x, homeY: p.y, hp: def.hp, maxHp: def.hp, attack: def.power, power: def.power, defense: def.defense, rewardGold: def.rewardGold, rewardFame: def.rewardFame ?? CONFIG.GIANT_ENEMY.rewardFame, firstClearUnlocks: def.firstClearUnlocks, assetKey: def.imageKey, level: def.level, state: 'roaming', spawnedAt: performance.now() }); gameState.monsters.push(enemy); gameState.giantEnemies.push(enemy); logMessage(`${def.name}が出現しました！`); markUIDirty('message'); return true; }
-function updateGiantEnemies() { ensureGiantEnemyState(); gameState.giantEnemies = (gameState.giantEnemies ?? []).map(g => (gameState.monsters ?? []).find(m => m?.id === g?.id) ?? g).filter(Boolean); gameState.timers.giantEnemySpawnFrames += 1; if (gameState.timers.giantEnemySpawnFrames >= clampInteger(CONFIG.GIANT_ENEMY?.spawnCheckFrames, 1, Number.MAX_SAFE_INTEGER, 3600)) { gameState.timers.giantEnemySpawnFrames = 0; if (getActiveGiantEnemies().length < clampInteger(CONFIG.GIANT_ENEMY?.maxActive, 0, 10, 1)) spawnGiantEnemy(); } for (const g of gameState.giantEnemies) { updateBossLeashAndSafeZone(g); if (safeFiniteNumber(g.hp, 0, 0) <= 0 && !g.defeated) { g.defeated = true; g.state = 'defeated'; } } }
+function updateGiantEnemies() { ensureGiantEnemyState(); ensureSeaBoss(); gameState.giantEnemies = (gameState.giantEnemies ?? []).map(g => (gameState.monsters ?? []).find(m => m?.id === g?.id) ?? g).filter(Boolean); gameState.timers.giantEnemySpawnFrames += 1; if (gameState.timers.giantEnemySpawnFrames >= clampInteger(CONFIG.GIANT_ENEMY?.spawnCheckFrames, 1, Number.MAX_SAFE_INTEGER, 3600)) { gameState.timers.giantEnemySpawnFrames = 0; if (getActiveGiantEnemies().length < clampInteger(CONFIG.GIANT_ENEMY?.maxActive, 0, 10, 1)) spawnGiantEnemy(); } for (const g of gameState.giantEnemies) { updateBossLeashAndSafeZone(g); if (safeFiniteNumber(g.hp, 0, 0) <= 0 && !g.defeated) { g.defeated = true; g.state = 'defeated'; } } }
 function getSealCombatPower(seal) { const stats = getSealEffectiveStats(seal); return safeFiniteNumber(stats.attack, 0, 0) * 10 + safeFiniteNumber(stats.defense, 0, 0) * 6 + safeFiniteNumber(stats.maxHp, 0, 0) * 0.5 + clampInteger(seal?.level, 1, Number.MAX_SAFE_INTEGER, 1) * 4; }
 function getGiantHuntParticipants(enemy) { const minRatio = safeFiniteNumber(CONFIG.GIANT_ENEMY?.minHpRatioToJoin, 0.5, 0); return (gameState.seals ?? []).filter(seal => { const ratio = safeFiniteNumber(seal?.hp, 0, 0) / Math.max(1, safeFiniteNumber(seal?.maxHp, 1, 1)); return seal && isSealAvailableForSkirmish(seal) && ratio >= minRatio; }).sort((a,b) => (getSealCombatPower(b)-getSealCombatPower(a)) || (clampInteger(b?.level,1,999,1)-clampInteger(a?.level,1,999,1)) || ((safeFiniteNumber(b?.hp,0,0)/Math.max(1,safeFiniteNumber(b?.maxHp,1,1)))-(safeFiniteNumber(a?.hp,0,0)/Math.max(1,safeFiniteNumber(a?.maxHp,1,1))))).slice(0, clampInteger(CONFIG.GIANT_ENEMY?.maxParticipants, 1, 12, 5)); }
 function openGiantHunt(enemyId) { const enemy = getGiantEnemyById(enemyId); if (!enemy || enemy.defeated) return false; closeInspector(); clearContextSelection(); gameState.ui.giantHuntOpen = true; gameState.ui.giantHuntEnemyId = enemy.id; markUIDirty('selection'); renderUI(); return true; }
 function closeGiantHunt() { if (!gameState.ui?.giantHuntOpen) return false; gameState.ui.giantHuntOpen = false; gameState.ui.giantHuntEnemyId = null; markUIDirty('selection'); renderUI(); return true; }
 function startGiantHunt(enemyId) { const enemy = getGiantEnemyById(enemyId); if (!enemy || enemy.defeated || enemy.skirmishId) return false; const seals = getGiantHuntParticipants(enemy); if (seals.length <= 0) return false; enemy.state = 'huntActive'; enemy.huntParticipantSealIds = seals.map(s => s.id); const first = seals[0]; const skirmish = createSkirmish(first, enemy); if (!skirmish) return false; skirmish.isGiantHunt = true; skirmish.giantEnemyId = enemy.id; for (const seal of seals.slice(1)) addSealToSkirmish(skirmish, seal); assignSkirmishSlots(skirmish); closeGiantHunt(); return true; }
 function giantEnemyAtWorldPoint(point) { const radius = safeFiniteNumber(CONFIG.GIANT_ENEMY?.clickRadius, 64, 0); return getActiveGiantEnemies().filter(g => getDistance(point, g) <= radius).sort((a,b) => getDistance(point,a)-getDistance(point,b))[0] ?? null; }
+
+
+function ensureOceanProgress() {
+  gameState.oceanProgress = createOceanProgress(gameState.oceanProgress);
+  if (gameState.oceanProgress.deepSeaBossDefeated) gameState.oceanProgress.safeRouteUnlocked = true;
+}
+
+function getSeaBossSpawnPoint() {
+  return gridToWorld(CONFIG.world.deepSeaX + Math.floor(CONFIG.OCEAN_EXPANSION.deepSeaWidthTiles / 2), CONFIG.world.deepSeaY + Math.floor(CONFIG.world.deepSeaH / 2));
+}
+
+function isSeaBoss(monster) { return monster?.giantEnemyId === 'deep_sea_boss' || monster?.type === 'deep_sea_boss'; }
+
+function ensureSeaBoss() {
+  ensureOceanProgress();
+  if (gameState.oceanProgress.deepSeaBossDefeated) return null;
+  const existing = (gameState.monsters ?? []).find(isSeaBoss);
+  if (existing) return existing;
+  const p = getSeaBossSpawnPoint();
+  const boss = normalizeMonster({ id: 'deep-sea-boss', type: 'deep_sea_boss', name: '深海のぬし', isGiant: true, giantEnemyId: 'deep_sea_boss', areaId: 'deepSea', x: p.x, y: p.y, homeX: p.x, homeY: p.y, hp: CONFIG.GIANT_ENEMY?.seaBossHp ?? 680, maxHp: CONFIG.GIANT_ENEMY?.seaBossHp ?? 680, attack: CONFIG.GIANT_ENEMY?.seaBossAttack ?? 34, power: CONFIG.GIANT_ENEMY?.seaBossPower ?? 340, defense: CONFIG.GIANT_ENEMY?.seaBossDefense ?? 10, rewardGold: CONFIG.GIANT_ENEMY?.seaBossRewardGold ?? 800, rewardFame: CONFIG.GIANT_ENEMY?.rewardFame ?? 80, firstClearUnlocks: [], assetKey: 'monsters.giant_crab', level: CONFIG.GIANT_ENEMY?.seaBossLevel ?? 24, state: 'roaming' });
+  gameState.monsters.push(boss);
+  gameState.giantEnemies.push(boss);
+  return boss;
+}
+
+function clampSeaBossToDeepWater(boss) {
+  if (!isSeaBoss(boss)) return;
+  const grid = worldToGrid(boss.x, boss.y);
+  if (getTile(grid.x, grid.y)?.terrain === CONFIG.tileState.terrainDeepWater) return;
+  const home = getSeaBossSpawnPoint();
+  boss.x = home.x; boss.y = home.y; boss.homeX = home.x; boss.homeY = home.y; boss.target = null;
+}
+
+function updateOceanExpansion(dt) {
+  ensureOceanProgress();
+  const boss = ensureSeaBoss();
+  if (boss) clampSeaBossToDeepWater(boss);
+  if (boss && safeFiniteNumber(boss.hp, 0, 0) <= 0 && !gameState.oceanProgress.deepSeaBossDefeated) unlockOceanRoute();
+  updateDeepWaterSealSafety(dt);
+}
+
+function unlockOceanRoute() {
+  if (gameState.oceanProgress?.safeRouteUnlocked === true) return;
+  gameState.oceanProgress.deepSeaBossDefeated = true;
+  gameState.oceanProgress.safeRouteUnlocked = true;
+  gameState.oceanProgress.secondIslandDiscovered = true;
+  logMessage('深海の道が開かれました！');
+  logMessage('第2の島を発見しました！');
+}
+
+function isWorldPointDeepWater(point) {
+  const grid = worldToGrid(safeFiniteNumber(point?.x, 0), safeFiniteNumber(point?.y, 0));
+  return getTile(grid.x, grid.y)?.terrain === CONFIG.tileState.terrainDeepWater;
+}
+
+function findNearestSafeRetreatPoint(seal) {
+  const origin = worldToGrid(seal?.x, seal?.y);
+  const radius = clampInteger(CONFIG.OCEAN_EXPANSION?.safeRetreatSearchRadius, 1, 100, 12);
+  let best = null;
+  for (let y = origin.y - radius; y <= origin.y + radius; y += 1) for (let x = origin.x - radius; x <= origin.x + radius; x += 1) {
+    if (!isSafeWaterOrLandTile(x, y) || getTile(x, y)?.terrain === CONFIG.tileState.terrainDeepWater) continue;
+    const d = distance(origin.x, origin.y, x, y);
+    if (!best || d < best.d) best = { x, y, d };
+  }
+  return best ? gridToWorld(best.x, best.y) : gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY);
+}
+
+function forceDeepWaterRetreat(seal) {
+  const target = findNearestSafeRetreatPoint(seal);
+  seal.hp = Math.max(1, Math.min(safeFiniteNumber(seal.maxHp, CONFIG.seal.maxHp, 1), safeFiniteNumber(seal.hp, 1, 0)));
+  seal.state = seal.type === 'visitor' ? 'arrivingFromSea' : 'returningFromHunt';
+  seal.target = { x: target.x, y: target.y, reason: 'deep-water-retreat' };
+  seal.targetId = null; seal.rescueTargetId = null; seal.skirmishId = null; seal.path = [];
+  seal.currentAction = '深海から退避中';
+}
+
+function updateDeepWaterSealSafety(dt) {
+  const cfg = CONFIG.OCEAN_EXPANSION ?? {};
+  const drain = gameState.oceanProgress?.safeRouteUnlocked ? 0 : safeFiniteNumber(cfg.deepWaterHpDrainPerSecond, 0, 0);
+  for (const seal of gameState.seals ?? []) {
+    if (!seal || !isWorldPointDeepWater(seal)) continue;
+    const maxHp = Math.max(1, safeFiniteNumber(seal.maxHp, CONFIG.seal.maxHp, 1));
+    if (drain > 0) seal.hp = Math.max(1, safeFiniteNumber(seal.hp, maxHp, 0) - drain * dt);
+    if (seal.hp / maxHp <= safeFiniteNumber(cfg.deepWaterRetreatHpRatio, 0.35, 0) || seal.state === 'downed' || seal.hp <= 1) forceDeepWaterRetreat(seal);
+  }
+}

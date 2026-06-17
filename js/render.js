@@ -84,6 +84,15 @@ function renderNextGoalPanel(context) {
   context.fillText('次の目標', x + padding, y + padding);
 
   context.font = panel.bodyFont ?? '13px system-ui';
+  if (gameState.oceanProgress?.safeRouteUnlocked !== true) {
+    context.fillStyle = panel.textColor ?? '#f5fbff';
+    context.fillText('深海ボスを討伐して第2の島へ', x + padding, y + padding + lineHeight);
+    context.fillStyle = panel.accentColor ?? '#aef3ff';
+    context.fillText('安全航路: 未開通', x + padding, y + padding + lineHeight * 2);
+    context.restore();
+    return;
+  }
+
   if (!nextUnlock) {
     context.fillStyle = panel.textColor ?? '#f5fbff';
     context.fillText('すべての発見済み', x + padding, y + padding + lineHeight);
@@ -110,8 +119,9 @@ function drawWorld() {
       const tile = getTile(x, y);
       ctx.fillStyle = tile?.terrain === CONFIG.tileState.terrainLand
         ? (isBuildableTile(x, y) ? CONFIG.render.buildableLand : CONFIG.render.blockedLand)
-        : tile?.terrain === CONFIG.tileState.terrainOutside ? CONFIG.render.outside : CONFIG.render.water;
-      if (tile?.terrain === CONFIG.tileState.terrainLand && (x === CONFIG.world.islandX || y === CONFIG.world.islandY || x === CONFIG.world.islandX + CONFIG.world.islandW - 1 || y === CONFIG.world.islandY + CONFIG.world.islandH - 1)) ctx.fillStyle = CONFIG.render.beach;
+        : tile?.terrain === CONFIG.tileState.terrainDeepWater ? CONFIG.render.deepWater
+          : tile?.terrain === CONFIG.tileState.terrainOutside ? CONFIG.render.outside : (CONFIG.render.shallowWater ?? CONFIG.render.water);
+      if (tile?.terrain === CONFIG.tileState.terrainLand && ((isFirstIslandTile(x, y) && (x === CONFIG.world.islandX || y === CONFIG.world.islandY || x === CONFIG.world.islandX + CONFIG.world.islandW - 1 || y === CONFIG.world.islandY + CONFIG.world.islandH - 1)) || (isSecondIslandTile(x, y) && !isSecondIslandTile(x - 1, y)) || (isSecondIslandTile(x, y) && !isSecondIslandTile(x + 1, y)) || (isSecondIslandTile(x, y) && !isSecondIslandTile(x, y - 1)) || (isSecondIslandTile(x, y) && !isSecondIslandTile(x, y + 1)))) ctx.fillStyle = CONFIG.render.beach;
       ctx.fillRect(wx, wy, CONFIG.world.tile, CONFIG.world.tile);
       if (tile?.terrain === CONFIG.tileState.terrainLand && tile?.buildState === CONFIG.tileState.buildBlocked) {
         ctx.fillStyle = CONFIG.render.blockedPatchOverlay;
@@ -127,6 +137,8 @@ function drawWorld() {
   drawExpansionBoundary();
   drawLabel('島エリア（緑=建設可 / 濃緑=未開拓）', CONFIG.world.islandX * CONFIG.world.tile + 10, CONFIG.world.islandY * CONFIG.world.tile + 24, '#123');
   drawLabel('外の冒険エリア：coast（カニ出現）', CONFIG.world.coastX * CONFIG.world.tile + 10, CONFIG.world.coastY * CONFIG.world.tile + 24, '#e8fbff');
+  drawLabel('深海危険域：深海のぬし', CONFIG.world.deepSeaX * CONFIG.world.tile + 8, CONFIG.world.deepSeaY * CONFIG.world.tile + 24, '#fff3a6');
+  drawLabel('第2の島', CONFIG.world.secondIslandX * CONFIG.world.tile + 8, CONFIG.world.secondIslandY * CONFIG.world.tile + 24, '#123');
 }
 
 function drawOpenCorridors() {
@@ -660,10 +672,14 @@ function drawMinimap() {
   const y = Math.max(118, canvas.clientHeight - h - bottomBase - drawerOffset);
   ctx.fillStyle = 'rgba(5,18,28,.82)'; ctx.fillRect(x, y, w, h); ctx.strokeStyle = 'rgba(255,255,255,.35)'; ctx.strokeRect(x, y, w, h);
   const sx = w / (CONFIG.world.cols * CONFIG.world.tile), sy = h / (CONFIG.world.rows * CONFIG.world.tile);
-  ctx.fillStyle = CONFIG.render.blockedLand; ctx.fillRect(x + CONFIG.world.islandX * CONFIG.world.tile * sx, y + CONFIG.world.islandY * CONFIG.world.tile * sy, CONFIG.world.islandW * CONFIG.world.tile * sx, CONFIG.world.islandH * CONFIG.world.tile * sy);
-  ctx.fillStyle = CONFIG.render.buildableLand;
-  for (let ty = 0; ty < CONFIG.world.rows; ty += 1) for (let tx = 0; tx < CONFIG.world.cols; tx += 1) if (isBuildableTile(tx, ty)) ctx.fillRect(x + tx * CONFIG.world.tile * sx, y + ty * CONFIG.world.tile * sy, CONFIG.world.tile * sx, CONFIG.world.tile * sy);
-  ctx.fillStyle = CONFIG.render.outside; ctx.fillRect(x + CONFIG.world.coastX * CONFIG.world.tile * sx, y + CONFIG.world.coastY * CONFIG.world.tile * sy, CONFIG.world.coastW * CONFIG.world.tile * sx, CONFIG.world.coastH * CONFIG.world.tile * sy);
+  for (let ty = 0; ty < CONFIG.world.rows; ty += 1) for (let tx = 0; tx < CONFIG.world.cols; tx += 1) {
+    const tile = getTile(tx, ty);
+    if (tile?.terrain === CONFIG.tileState.terrainDeepWater) ctx.fillStyle = CONFIG.render.deepWater;
+    else if (tile?.terrain === CONFIG.tileState.terrainOutside) ctx.fillStyle = CONFIG.render.outside;
+    else if (tile?.terrain === CONFIG.tileState.terrainLand) ctx.fillStyle = isBuildableTile(tx, ty) ? CONFIG.render.buildableLand : CONFIG.render.blockedLand;
+    else continue;
+    ctx.fillRect(x + tx * CONFIG.world.tile * sx, y + ty * CONFIG.world.tile * sy, CONFIG.world.tile * sx, CONFIG.world.tile * sy);
+  }
   ctx.fillStyle = '#ff3b30'; for (const m of gameState.monsters) ctx.fillRect(x + m.x * sx - 2, y + m.y * sy - 2, 4, 4);
   ctx.fillStyle = '#fff'; for (const s of gameState.seals) ctx.fillRect(x + s.x * sx - 2, y + s.y * sy - 2, 4, 4);
   ctx.strokeStyle = '#fff'; ctx.strokeRect(x + (gameState.camera.x - canvas.clientWidth / (2 * gameState.camera.zoom)) * sx, y + (gameState.camera.y - canvas.clientHeight / (2 * gameState.camera.zoom)) * sy, canvas.clientWidth / gameState.camera.zoom * sx, canvas.clientHeight / gameState.camera.zoom * sy);
