@@ -34,7 +34,9 @@ const CONFIG = Object.freeze({
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
   SAVE_VERSION: 15,
-  OCEAN_CHART: { revealRadiusTiles: 4, currentVisionRadiusTiles: 3, expeditionSpeed: 0.04, foodCostPerTile: 1, actionCostPerTile: 1, minFoodToDepart: 5, maxExpeditionMembers: 3, islandRevealPaddingTiles: 2, states: { unknown: 0, discovered: 1, currentlyVisible: 2 }, islandIds: { start: 'start', second: 'second' }, colors: { unknown: 'rgba(0,0,0,.82)', discovered: 'rgba(5,19,31,.46)', currentVision: 'rgba(120,220,255,.10)', mystery: 'rgba(0,0,0,.55)' } },
+  OCEAN_CHART: { revealRadiusTiles: 4, currentVisionRadiusTiles: 3, expeditionSpeed: 0.04, foodCostPerTile: 1, actionCostPerTile: 1, minFoodToDepart: 5, maxExpeditionMembers: 3, islandRevealPaddingTiles: 2, states: { unknown: 0, discovered: 1, currentlyVisible: 2 }, islandIds: { start: 'start', second: 'second' }, colors: { unknown: 'rgba(0,8,14,1)', discovered: 'rgba(0,20,30,.08)', currentVision: 'rgba(120,220,255,0)', mystery: 'rgba(0,0,0,.55)' } },
+  OCEAN_CHART_VISUAL: { unknownAlpha: 1.0, discoveredAlpha: 0.08, currentVisibleAlpha: 0, unknownColor: 'rgba(0, 8, 14, 1)', discoveredTint: 'rgba(0, 20, 30, 0.08)', minimapUnknownColor: '#000', minimapDiscoveredTint: 'rgba(0,0,0,.42)', minimapVisibleTint: 'rgba(170,235,255,0)' },
+  OCEAN_CHART_INITIAL_REVEAL: { startingShallowPaddingTiles: 2, objectPaddingTiles: 2, routePaddingTiles: 1, huntingAreaPaddingTiles: 1, dungeonPaddingTiles: 1, huntingAreaIds: ['coast'], dungeonIds: ['crabNest_1'] },
   OCEAN_EXPANSION: { deepWaterHpDrainPerSecond: 2, deepWaterRetreatHpRatio: 0.35, deepWaterBlockedUntilBossDefeated: false, secondIslandUnlockRequiresBoss: true, safeRetreatSearchRadius: 12, secondIslandMinWidth: 12, secondIslandMinHeight: 10, deepSeaWidthTiles: 10, shallowBandWidthTiles: 4 },
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
@@ -115,7 +117,7 @@ const CONFIG = Object.freeze({
   SPRITES: { seal: { w: 42, h: 30 }, monster: { w: 34, h: 24 }, defaultFacing: 'left' },
   KNOWNNESS: { UNLOCK_THRESHOLDS: [100, 200, 300, 400, 500], PANEL_WIDTH: 210, PANEL_HEIGHT: 74, PANEL_MARGIN: 18 },
   NEXT_GOAL_PANEL: {
-    x: 16, y: 80, width: 260, height: 88, padding: 10, radius: 12, shadowOffsetX: 3, shadowOffsetY: 4, borderWidth: 1,
+    x: 520, y: 16, width: 300, height: 88, padding: 10, radius: 12, shadowOffsetX: 3, shadowOffsetY: 4, borderWidth: 1,
     titleFont: '700 15px system-ui', bodyFont: '13px system-ui', lineHeight: 20,
     background: 'rgba(12, 43, 56, .82)', border: 'rgba(180, 240, 255, .72)', titleColor: '#fff8ba', textColor: '#f5fbff', accentColor: '#aef3ff', shadowColor: 'rgba(0, 0, 0, .22)'
   },

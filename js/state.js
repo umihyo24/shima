@@ -1087,10 +1087,38 @@ function initializeWorldFog(source = null) {
   const sourceTiles = Array.isArray(source?.tiles) && source.tiles.length === size ? source.tiles : null;
   gameState.worldFog = { width, height, tiles: Array.from({ length: size }, (_, i) => clampInteger(sourceTiles?.[i], CONFIG.OCEAN_CHART.states.unknown, CONFIG.OCEAN_CHART.states.discovered, CONFIG.OCEAN_CHART.states.unknown)) };
   gameState.discoveredIslands = gameState.discoveredIslands && typeof gameState.discoveredIslands === 'object' ? { ...gameState.discoveredIslands } : {};
+  revealInitialPlayableArea();
+  return gameState.worldFog;
+}
+
+function revealFogRect(x, y, w, h, padding = 0) {
+  if (!gameState.worldFog?.tiles) return;
+  const pad = clampInteger(padding, 0, Math.max(CONFIG.world.cols, CONFIG.world.rows), 0);
+  const startX = clampInteger(x - pad, 0, CONFIG.world.cols - 1, 0);
+  const startY = clampInteger(y - pad, 0, CONFIG.world.rows - 1, 0);
+  const endX = clampInteger(x + w + pad - 1, 0, CONFIG.world.cols - 1, 0);
+  const endY = clampInteger(y + h + pad - 1, 0, CONFIG.world.rows - 1, 0);
+  for (let ty = startY; ty <= endY; ty += 1) for (let tx = startX; tx <= endX; tx += 1) {
+    const index = getFogIndex(tx, ty);
+    if (index >= 0) gameState.worldFog.tiles[index] = CONFIG.OCEAN_CHART.states.discovered;
+  }
+}
+
+function revealInitialPlayableArea() {
+  const cfg = CONFIG.OCEAN_CHART_INITIAL_REVEAL ?? {};
   revealIsland(CONFIG.OCEAN_CHART.islandIds.start, false);
   revealFogAt(CONFIG.world.safeX, CONFIG.world.safeY, CONFIG.OCEAN_CHART.revealRadiusTiles);
-  for (const object of gameState.world?.objects ?? []) revealFogAt(object?.x ?? 0, object?.y ?? 0, CONFIG.OCEAN_CHART.islandRevealPaddingTiles);
-  return gameState.worldFog;
+  revealFogRect(CONFIG.world.islandX, CONFIG.world.islandY, CONFIG.world.islandW, CONFIG.world.islandH, safeFiniteNumber(cfg.startingShallowPaddingTiles, 0, 0));
+  for (const object of gameState.world?.objects ?? []) revealFogRect(object?.x ?? 0, object?.y ?? 0, object?.w ?? 1, object?.h ?? 1, safeFiniteNumber(cfg.objectPaddingTiles, 0, 0));
+  for (const point of getAllRouteWaypoints()) revealFogAt(point?.x ?? 0, point?.y ?? 0, safeFiniteNumber(cfg.routePaddingTiles, 0, 0));
+  for (const areaId of cfg.huntingAreaIds ?? []) {
+    const area = huntAreaBounds(areaId);
+    revealFogRect(area.x, area.y, area.w, area.h, safeFiniteNumber(cfg.huntingAreaPaddingTiles, 0, 0));
+  }
+  for (const dungeonId of cfg.dungeonIds ?? []) {
+    const def = (CONFIG.DUNGEONS?.definitions ?? []).find(item => item?.id === dungeonId);
+    if (def?.mapPosition) revealFogAt(def.mapPosition.x, def.mapPosition.y, safeFiniteNumber(cfg.dungeonPaddingTiles, 0, 0));
+  }
 }
 
 function getFogIndex(x, y) {

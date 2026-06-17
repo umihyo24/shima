@@ -194,9 +194,20 @@ function drawRoads() {
 }
 
 
+function isObjectVisibleByFog(object) {
+  const w = clampInteger(object?.w, 1, CONFIG.world.cols, 1);
+  const h = clampInteger(object?.h, 1, CONFIG.world.rows, 1);
+  const ox = Math.trunc(safeFiniteNumber(object?.x, 0, 0));
+  const oy = Math.trunc(safeFiniteNumber(object?.y, 0, 0));
+  for (let y = oy; y < oy + h; y += 1) for (let x = ox; x < ox + w; x += 1) {
+    if (isTileCurrentlyVisible(x, y) || isTileDiscovered(x, y)) return true;
+  }
+  return false;
+}
+
 function drawObjects() {
-  for (const o of gameState.world.objects) {
-    if (o?.isMoving === true) continue;
+  for (const o of gameState.world.objects ?? []) {
+    if (o?.isMoving === true || !isObjectVisibleByFog(o)) continue;
     if (o?.kind === 'facility') drawFacility(o); else drawDecoration(o);
   }
 }
@@ -498,9 +509,13 @@ function drawMonsterStateDot(context, monster, x, y, spriteSize) {
   context.restore();
 }
 
+function isWorldPointVisibleByFog(x, y) {
+  const grid = worldToGrid(x, y);
+  return isTileCurrentlyVisible(grid.x, grid.y) || isTileDiscovered(grid.x, grid.y);
+}
+
 function drawMonster(context, monster) {
-  const grid = worldToGrid(monster?.x, monster?.y);
-  if (!isTileDiscovered(grid.x, grid.y) && !isTileCurrentlyVisible(grid.x, grid.y)) { drawMysteryShadow(context, monster); return; }
+  if (!isWorldPointVisibleByFog(monster?.x, monster?.y)) return;
   const { x, y } = getEntityScreenPosition(monster);
   const spriteSize = getMonsterRenderSize() * (monster?.isGiant ? safeFiniteNumber(CONFIG.GIANT_ENEMY?.scale, 2.2, 0.1) : 1);
   const drawX = x - spriteSize / 2;
@@ -552,7 +567,7 @@ function drawMonsters() {
 
 function drawSeals() {
   for (const seal of gameState.seals ?? []) {
-    if (!seal || seal.state === 'expeditionRunning') continue;
+    if (!seal || seal.state === 'expeditionRunning' || !isWorldPointVisibleByFog(seal.x, seal.y)) continue;
     drawSeal(ctx, seal);
   }
 }
@@ -701,14 +716,17 @@ function drawLabel(text, x, y, color) { ctx.font = CONFIG.render.bigFont; ctx.fi
 function renderFogOverlay(context) {
   const fog = gameState.worldFog;
   if (!fog?.tiles) return;
+  const visual = CONFIG.OCEAN_CHART_VISUAL ?? {};
   context.save();
   for (let y = 0; y < CONFIG.world.rows; y += 1) for (let x = 0; x < CONFIG.world.cols; x += 1) {
     if (isTileCurrentlyVisible(x, y)) {
+      if (safeFiniteNumber(visual.currentVisibleAlpha, 0, 0) <= 0) continue;
       context.fillStyle = CONFIG.OCEAN_CHART.colors.currentVision;
     } else if (isTileDiscovered(x, y)) {
-      context.fillStyle = CONFIG.OCEAN_CHART.colors.discovered;
+      if (safeFiniteNumber(visual.discoveredAlpha, 0, 0) <= 0) continue;
+      context.fillStyle = visual.discoveredTint ?? CONFIG.OCEAN_CHART.colors.discovered;
     } else {
-      context.fillStyle = CONFIG.OCEAN_CHART.colors.unknown;
+      context.fillStyle = visual.unknownColor ?? CONFIG.OCEAN_CHART.colors.unknown;
     }
     context.fillRect(x * CONFIG.world.tile, y * CONFIG.world.tile, CONFIG.world.tile, CONFIG.world.tile);
   }
@@ -716,9 +734,12 @@ function renderFogOverlay(context) {
 }
 
 function renderMinimapFog(context, x, y, sx, sy) {
+  const visual = CONFIG.OCEAN_CHART_VISUAL ?? {};
   context.save();
   for (let ty = 0; ty < CONFIG.world.rows; ty += 1) for (let tx = 0; tx < CONFIG.world.cols; tx += 1) {
-    context.fillStyle = isTileCurrentlyVisible(tx, ty) ? 'rgba(170,235,255,.18)' : (isTileDiscovered(tx, ty) ? 'rgba(0,0,0,.35)' : 'rgba(0,0,0,.86)');
+    if (isTileCurrentlyVisible(tx, ty)) context.fillStyle = visual.minimapVisibleTint ?? 'rgba(170,235,255,0)';
+    else if (isTileDiscovered(tx, ty)) context.fillStyle = visual.minimapDiscoveredTint ?? 'rgba(0,0,0,.42)';
+    else context.fillStyle = visual.minimapUnknownColor ?? '#000';
     context.fillRect(x + tx * CONFIG.world.tile * sx, y + ty * CONFIG.world.tile * sy, CONFIG.world.tile * sx, CONFIG.world.tile * sy);
   }
   context.restore();
@@ -740,8 +761,8 @@ function drawMinimap() {
     ctx.fillRect(x + tx * CONFIG.world.tile * sx, y + ty * CONFIG.world.tile * sy, CONFIG.world.tile * sx, CONFIG.world.tile * sy);
   }
   renderMinimapFog(ctx, x, y, sx, sy);
-  ctx.fillStyle = '#ff3b30'; for (const m of gameState.monsters) if (isTileDiscovered(worldToGrid(m.x, m.y).x, worldToGrid(m.x, m.y).y) || isTileCurrentlyVisible(worldToGrid(m.x, m.y).x, worldToGrid(m.x, m.y).y)) ctx.fillRect(x + m.x * sx - 2, y + m.y * sy - 2, 4, 4);
-  ctx.fillStyle = '#fff'; for (const s of gameState.seals) ctx.fillRect(x + s.x * sx - 2, y + s.y * sy - 2, 4, 4);
+  ctx.fillStyle = '#ff3b30'; for (const m of gameState.monsters ?? []) if (m && isWorldPointVisibleByFog(m.x, m.y)) ctx.fillRect(x + m.x * sx - 2, y + m.y * sy - 2, 4, 4);
+  ctx.fillStyle = '#fff'; for (const s of gameState.seals ?? []) if (s && isWorldPointVisibleByFog(s.x, s.y)) ctx.fillRect(x + s.x * sx - 2, y + s.y * sy - 2, 4, 4);
   ctx.strokeStyle = '#fff'; ctx.strokeRect(x + (gameState.camera.x - canvas.clientWidth / (2 * gameState.camera.zoom)) * sx, y + (gameState.camera.y - canvas.clientHeight / (2 * gameState.camera.zoom)) * sy, canvas.clientWidth / gameState.camera.zoom * sx, canvas.clientHeight / gameState.camera.zoom * sy);
 }
 
