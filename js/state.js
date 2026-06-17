@@ -299,17 +299,24 @@ function createExpeditionState(source = {}) {
     y: safeFiniteNumber(source?.y, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y),
     targetX: safeFiniteNumber(source?.targetX, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).x),
     targetY: safeFiniteNumber(source?.targetY, gridToWorld(CONFIG.world.safeX, CONFIG.world.safeY).y),
-    food: safeFiniteNumber(source?.food, 0, 0),
-    action: safeFiniteNumber(source?.action, 0, 0),
-    state: ['idle', 'traveling', 'returning', 'done'].includes(source?.state) ? source.state : 'idle'
+    destinationTile: source?.destinationTile ? { x: clampInteger(source.destinationTile.x, 0, CONFIG.world.cols - 1, CONFIG.world.safeX), y: clampInteger(source.destinationTile.y, 0, CONFIG.world.rows - 1, CONFIG.world.safeY) } : null,
+    originTile: source?.originTile ? { x: clampInteger(source.originTile.x, 0, CONFIG.world.cols - 1, CONFIG.world.safeX), y: clampInteger(source.originTile.y, 0, CONFIG.world.rows - 1, CONFIG.world.safeY) } : { x: CONFIG.world.safeX, y: CONFIG.world.safeY },
+    state: ['idle', 'traveling', 'returning', 'done', 'retreating'].includes(source?.state) ? source.state : 'idle'
   };
 }
 
 function createOceanProgress(source = {}) {
+  const activeIslandIds = Array.isArray(source?.activeIslandIds) ? source.activeIslandIds.map(String) : [CONFIG.OCEAN_CHART.islandIds.start];
+  if (source?.safeRouteUnlocked === true && !activeIslandIds.includes(CONFIG.OCEAN_CHART.islandIds.second)) activeIslandIds.push(CONFIG.OCEAN_CHART.islandIds.second);
   return {
     deepSeaBossDefeated: source?.deepSeaBossDefeated === true,
     secondIslandDiscovered: source?.secondIslandDiscovered === true,
-    safeRouteUnlocked: source?.safeRouteUnlocked === true
+    safeRouteUnlocked: source?.safeRouteUnlocked === true,
+    activeIslandIds,
+    discoveredRegionIds: Array.isArray(source?.discoveredRegionIds) ? source.discoveredRegionIds.map(String) : [],
+    discoveredBossIds: Array.isArray(source?.discoveredBossIds) ? source.discoveredBossIds.map(String) : [],
+    lighthouseProjects: source?.lighthouseProjects && typeof source.lighthouseProjects === 'object' ? { ...source.lighthouseProjects } : {},
+    lighthouses: source?.lighthouses && typeof source.lighthouses === 'object' ? { ...source.lighthouses } : {}
   };
 }
 
@@ -1069,7 +1076,10 @@ function worldToGrid(x, y) {
 
 function inRect(gx, gy, x, y, w, h) { return gx >= x && gy >= y && gx < x + w && gy < y + h; }
 function isInExpansionRegion(gx, gy) { return inRect(gx, gy, CONFIG.expansion.regionX, CONFIG.expansion.regionY, CONFIG.expansion.regionW, CONFIG.expansion.regionH); }
-function isInBuildableRegion(gx, gy) { return isInExpansionRegion(gx, gy) || isSecondIslandTile(gx, gy); }
+function isInBuildableRegion(gx, gy) {
+  const secondActive = (gameState.oceanProgress?.activeIslandIds ?? []).includes(CONFIG.OCEAN_CHART.islandIds.second);
+  return isInExpansionRegion(gx, gy) || (secondActive && isSecondIslandTile(gx, gy));
+}
 function isInStartingVillage(gx, gy) { return inRect(gx, gy, CONFIG.expansion.startX, CONFIG.expansion.startY, CONFIG.expansion.startW, CONFIG.expansion.startH); }
 
 
@@ -1145,6 +1155,8 @@ function revealIsland(islandId, showNews = true) {
   const wasDiscovered = gameState.discoveredIslands?.[island.id] === true;
   gameState.discoveredIslands = gameState.discoveredIslands ?? {};
   gameState.discoveredIslands[island.id] = true;
+  gameState.oceanProgress = createOceanProgress(gameState.oceanProgress);
+  if (island.id === CONFIG.OCEAN_CHART.islandIds.start && !gameState.oceanProgress.activeIslandIds.includes(island.id)) gameState.oceanProgress.activeIslandIds.push(island.id);
   const pad = CONFIG.OCEAN_CHART.islandRevealPaddingTiles;
   for (let y = island.y - pad; y < island.y + island.h + pad; y += 1) for (let x = island.x - pad; x < island.x + island.w + pad; x += 1) {
     const index = getFogIndex(x, y);

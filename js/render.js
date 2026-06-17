@@ -543,6 +543,54 @@ function drawMysteryShadow(context, monster) {
   context.restore();
 }
 
+
+function drawExpeditionRangeOverlay(context) {
+  if (gameState.ui?.activeManagementPanel !== 'expedition' || gameState.expedition?.active) return;
+  const origin = typeof getActiveExpeditionOriginTile === 'function' ? getActiveExpeditionOriginTile() : { x: CONFIG.world.safeX, y: CONFIG.world.safeY };
+  const range = safeFiniteNumber(CONFIG.OCEAN_EXPEDITION?.rangeTiles, 18, 1);
+  context.save();
+  context.fillStyle = 'rgba(120, 220, 255, .16)';
+  context.strokeStyle = 'rgba(170, 245, 255, .42)';
+  context.lineWidth = 1 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
+  for (let y = 0; y < CONFIG.world.rows; y += 1) for (let x = 0; x < CONFIG.world.cols; x += 1) {
+    if (distance(origin.x, origin.y, x, y) > range) continue;
+    context.fillRect(x * CONFIG.world.tile, y * CONFIG.world.tile, CONFIG.world.tile, CONFIG.world.tile);
+    context.strokeRect(x * CONFIG.world.tile, y * CONFIG.world.tile, CONFIG.world.tile, CONFIG.world.tile);
+  }
+  const destination = gameState.expedition?.destinationTile;
+  if (destination) {
+    context.strokeStyle = '#fff3a6';
+    context.lineWidth = 3 / Math.max(gameState.camera?.zoom ?? 1, 0.1);
+    context.strokeRect(destination.x * CONFIG.world.tile + 4, destination.y * CONFIG.world.tile + 4, CONFIG.world.tile - 8, CONFIG.world.tile - 8);
+  }
+  context.restore();
+}
+
+function drawOceanLandmarks(context) {
+  const progress = gameState.oceanProgress ?? {};
+  context.save();
+  context.textAlign = 'center';
+  for (const boss of CONFIG.OCEAN_EXPEDITION?.bosses ?? []) {
+    if (!(progress.discoveredBossIds ?? []).includes(boss.id)) continue;
+    const p = gridToWorld(boss.x, boss.y);
+    context.fillStyle = 'rgba(70, 20, 90, .75)';
+    context.beginPath();
+    context.arc(p.x, p.y, CONFIG.world.tile * .34, 0, Math.PI * 2);
+    context.fill();
+    context.fillStyle = '#ffd1ff';
+    context.font = '700 12px system-ui';
+    context.fillText(boss.name, p.x, p.y - CONFIG.world.tile * .45);
+  }
+  for (const island of getIslandDefinitions()) {
+    if (progress.lighthouses?.[island.id] !== true) continue;
+    const p = gridToWorld(island.x + Math.floor(island.w / 2), island.y);
+    context.fillStyle = '#fff3a6';
+    context.font = '24px system-ui';
+    context.fillText('灯', p.x, p.y);
+  }
+  context.restore();
+}
+
 function drawExpedition(context) {
   const expedition = gameState.expedition;
   if (!expedition?.active) return;
@@ -562,6 +610,8 @@ function drawMonsters() {
     if (!monster || monster.hp <= 0) continue;
     drawMonster(ctx, monster);
   }
+  drawExpeditionRangeOverlay(ctx);
+  drawOceanLandmarks(ctx);
   drawExpedition(ctx);
 }
 
@@ -919,6 +969,7 @@ function getManagementPanelMeta(panelId) {
   const meta = {
     people: { title: '人物', hint: '行をクリックすると詳細インスペクタを表示します' },
     dungeons: { title: 'ダンジョン', hint: '選択中ダンジョンと攻略状況' },
+    expedition: { title: '遠征', hint: '海図を広げるチーム遠征' },
     progress: { title: '発展', hint: '知名度と解放状況' }
   };
   return meta[panelId] ?? { title: '', hint: '' };
@@ -943,7 +994,7 @@ function renderManagementPanel() {
   const meta = getManagementPanelMeta(active);
   const headerElement = getManagementPanelHeaderElement();
   if (headerElement) headerElement.innerHTML = `<div><h2>${escapeHtml(meta.title)}</h2>${meta.hint ? `<div class="panelHint">${escapeHtml(meta.hint)}</div>` : ''}</div><button data-action="closeManagement" class="subtle">閉じる</button>`;
-  const renderers = { people: renderPeoplePanel, dungeons: renderDungeonsPanel, progress: renderProgressPanel };
+  const renderers = { people: renderPeoplePanel, dungeons: renderDungeonsPanel, expedition: renderExpeditionPanel, progress: renderProgressPanel };
   const contentElement = getManagementPanelContentElement();
   if (contentElement) {
     contentElement.className = `management-panel-content${active === 'people' ? ' people-panel-content' : ''}`;
@@ -1348,6 +1399,31 @@ function renderFacilityShopItemSummary(facility) {
     return `${escapeHtml(item.name)} ${Math.floor(safeFiniteNumber(item.price, 0, 0))}G(${status})`;
   }).join('、');
   return ` / 商品: ${itemText}`;
+}
+
+
+function renderExpeditionPanel() {
+  const expedition = createExpeditionState(gameState.expedition);
+  const members = chooseExpeditionMembers().map(seal => escapeHtml(seal?.name ?? 'あざらし')).join(' / ') || '待機中のあざらしなし';
+  const dest = expedition.destinationTile ? `${expedition.destinationTile.x}, ${expedition.destinationTile.y}` : '海図上のタイルをクリック';
+  const progress = createOceanProgress(gameState.oceanProgress);
+  const regions = (CONFIG.OCEAN_EXPEDITION?.regions ?? []).map(region => `${progress.discoveredRegionIds.includes(region.id) ? '✅' : '⬛'} ${escapeHtml(region.name)}`).join('<br>');
+  const bosses = (CONFIG.OCEAN_EXPEDITION?.bosses ?? []).map(boss => `${progress.discoveredBossIds.includes(boss.id) ? '🦀' : '？'} ${escapeHtml(boss.name)}`).join('<br>');
+  const islandCards = getIslandDefinitions().filter(island => island.id !== CONFIG.OCEAN_CHART.islandIds.start).map(island => {
+    const found = gameState.discoveredIslands?.[island.id] === true;
+    const active = progress.activeIslandIds.includes(island.id);
+    const project = progress.lighthouseProjects?.[island.id];
+    const building = project && project.complete !== true;
+    const button = found && !active && !building ? `<button data-expedition-action="lighthouse" data-island-id="${escapeHtml(island.id)}">航路灯台プロジェクト</button>` : '';
+    const projectText = building ? `<br>灯台建設中: ${Math.ceil(safeFiniteNumber(project.remainingMs, 0, 0) / 1000)}秒` : '';
+    return `<div class="compactCard"><b>${island.id === CONFIG.OCEAN_CHART.islandIds.second ? '第2の島' : escapeHtml(island.id)}</b><br>状態: ${active ? 'Active Area' : (found ? 'Discovered Area' : 'Unknown Area')}${projectText}<div class="buildActions">${button}</div></div>`;
+  }).join('');
+  return `<div class="expedition-panel-grid">
+    <div class="compactCard"><b>Expedition A</b><br>Members: ${members}<br>目的地: ${escapeHtml(dest)}<br>海図上に水色の到達範囲を表示中。<div class="buildActions"><button data-expedition-action="launch"${expedition.active || !expedition.destinationTile ? ' disabled' : ''}>遠征を開始</button></div></div>
+    <div class="compactCard"><b>海域発見</b><br>${regions || '未設定'}</div>
+    <div class="compactCard"><b>海の大物</b><br>${bosses || '未設定'}<br><small>発見後、狩猟パネルから討伐すると航路が広がります。</small></div>
+    ${islandCards}
+  </div>`;
 }
 
 function renderProgressPanel() {
