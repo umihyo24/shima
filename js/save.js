@@ -42,6 +42,7 @@ function getSerializableGameState() {
     monsters: cloneSerializable(gameState.monsters, []),
     giantEnemies: cloneSerializable(gameState.giantEnemies, []),
     giantEnemyFirstClears: cloneSerializable(gameState.giantEnemyFirstClears, {}),
+    oceanProgress: cloneSerializable(createOceanProgress(gameState.oceanProgress), createOceanProgress()),
     logs: cloneSerializable(gameState.logs, []).slice(0, CONFIG.MAX_LOGS),
     timers: {
       spawn: safeFiniteNumber(gameState.timers?.spawn, 0, 0),
@@ -179,11 +180,13 @@ function applyLoadedGameState(data) {
   gameState.monsters = normalizeMonsters([...(loaded.monsters ?? []), ...(loaded.giantEnemies ?? []).filter(g => !(loaded.monsters ?? []).some(m => m?.id === g?.id))]);
   gameState.giantEnemies = gameState.monsters.filter(m => m?.isGiant);
   gameState.giantEnemyFirstClears = loaded.giantEnemyFirstClears && typeof loaded.giantEnemyFirstClears === 'object' ? { ...loaded.giantEnemyFirstClears } : {};
+  gameState.oceanProgress = createOceanProgress(loaded.oceanProgress);
   gameState.skirmishes = [];
   gameState.nextSkirmishId = clampInteger(loaded.nextSkirmishId, 1, Number.MAX_SAFE_INTEGER, 1);
   gameState.dungeonProgress = normalizeDungeonProgress(loaded.dungeonProgress);
   updateDungeonUnlocks();
   gameState.dungeons = normalizeDungeons(loaded.dungeons);
+  ensureSeaBoss();
   rebuildLoadedSealRoutes();
   if (!(gameState.seals ?? []).some(seal => seal?.id === gameState.ui.selectedSealId)) gameState.ui.selectedSealId = null;
   if (!getDungeonById(gameState.ui.selectedDungeonId)) gameState.ui.selectedDungeonId = null;

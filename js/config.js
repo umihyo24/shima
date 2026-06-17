@@ -3,7 +3,7 @@
 const CONFIG = Object.freeze({
   canvas: { minDevicePixelRatio: 1, maxDevicePixelRatio: 2 },
   phase: { start: 'start', playing: 'playing', gameover: 'gameover' },
-  world: { cols: 54, rows: 34, tile: 44, islandX: 4, islandY: 10, islandW: 28, islandH: 18, coastX: 34, coastY: 5, coastW: 16, coastH: 24, safeX: 14, safeY: 18, villageEntryX: 14, villageEntryY: 17 },
+  world: { cols: 80, rows: 34, tile: 44, islandX: 4, islandY: 10, islandW: 28, islandH: 18, coastX: 34, coastY: 5, coastW: 16, coastH: 24, safeX: 14, safeY: 18, villageEntryX: 14, villageEntryY: 17, secondIslandX: 62, secondIslandY: 11, secondIslandW: 13, secondIslandH: 11, deepSeaX: 48, deepSeaY: 5, deepSeaW: 10, deepSeaH: 24 },
   expansion: { startX: 6, startY: 12, startW: 20, startH: 13, regionX: 5, regionY: 11, regionW: 26, regionH: 16 },
   CLEARING: { BASE_COST: 260, COST_STEP: 75, RADIUS: 1 },
   map: {
@@ -23,7 +23,7 @@ const CONFIG = Object.freeze({
       { cx: 18, cy: 25, radiusX: 3, radiusY: 2, softness: 2 }
     ]
   },
-  tileState: { terrainWater: 'water', terrainLand: 'land', terrainOutside: 'outside', buildBlocked: 'blocked', buildable: 'buildable', obstacleGrass: 'grass', obstacleTree: 'tree', obstacleRock: 'rock' },
+  tileState: { terrainWater: 'shallowWater', terrainShallowWater: 'shallowWater', terrainDeepWater: 'deepWater', terrainLand: 'land', terrainRoad: 'road', terrainOutside: 'outside', buildBlocked: 'blocked', buildable: 'buildable', obstacleGrass: 'grass', obstacleTree: 'tree', obstacleRock: 'rock' },
   village: { roadY: 17, roadX: 14, roadStartX: 7, roadEndX: 24, roadStartY: 17, roadEndY: 24, defaults: [
     { type: 'inn', x: 8, y: 15, directionIndex: 2 },
     { type: 'restaurant', x: 14, y: 15, directionIndex: 2 },
@@ -33,7 +33,8 @@ const CONFIG = Object.freeze({
   ] },
   camera: { x: 240, y: 280, zoom: 0.86, minZoom: 0.45, maxZoom: 1.8, panSpeed: 520, wheelStep: 0.1, buttonStep: 0.16, dragButton: 0 },
   SAVE_KEY: 'seal-island-economy-save',
-  SAVE_VERSION: 14,
+  SAVE_VERSION: 15,
+  OCEAN_EXPANSION: { deepWaterHpDrainPerSecond: 2, deepWaterRetreatHpRatio: 0.35, deepWaterBlockedUntilBossDefeated: false, secondIslandUnlockRequiresBoss: true, safeRetreatSearchRadius: 12, secondIslandMinWidth: 12, secondIslandMinHeight: 10, deepSeaWidthTiles: 10, shallowBandWidthTiles: 4 },
   AUTO_SAVE_INTERVAL_MS: 30000,
   MAX_LOGS: 7,
   resident: { defaultName: '島のあざらし' },
@@ -224,12 +225,12 @@ const CONFIG = Object.freeze({
   seal: { maxHp: 130, attack: 18, defense: 5, baseSpeed: 50, roadSpeedMultiplier: 1.55, lowHpRatio: 0.4, innHpThreshold: 0.45, mediumHpRatio: 0.72, mediumInnChance: 0.35, mealsBeforeInnSoftLimit: 2, mealsInnChanceBoost: 0.35, fallenRecoveryPerSecond: 3, standHpRatio: 0.36, restTargetRatio: 0.88, contactDistance: 15, rescueScanDistance: 380, spendSeconds: 1.4, restSeconds: 1, startG: 0, spread: 24, huntDurationLimit: 42, noMonsterExploreSeconds: 8, favorHuntDurationBonus: 0.35, maxFavorHuntDurationBonus: 8, carriedGReturnThreshold: 56, carriedGReturnChance: 0.35, wanderSeconds: 2.5, levelExp: 48, levelHpGain: 10, levelAttackGain: 2, favorDefeat: 2, favorLevelUp: 4, favorFacilityUse: 1, favorRescued: 3, facilityChoiceWeights: { inn: 1.2, restaurant: 1.0, manjuShop: 1.05, blacksmith: 0.8 }, blacksmithAttackChance: 0.45, blacksmithAttackGain: 1 },
   LEVEL_UP: { healToFull: false, addMaxHpIncreaseToCurrentHp: false },
   GIANT_ENEMY_SAFETY: { passiveToSeals: true, aggroRadius: 5, chaseRadius: 7, leashRadius: 10, entranceSafeRadius: 8, avoidEntranceRadius: 10, minSpawnDistanceFromEntrance: 12, noAutoEngageBySeals: true, returnStepRatio: 0.08 },
-  GIANT_ENEMY: { spawnCheckFrames: 3600, maxActive: 1, clickRadius: 64, scale: 2.2, recommendedPartySize: 5, maxParticipants: 5, minHpRatioToJoin: 0.5, eventDurationFrames: 18000, huntStartDelayFrames: 30, rewardFame: 80, fallbackSpawnMarginTiles: 3, defeatFadeFrames: 180, definitions: [{ id: 'giant_crab', name: '巨大カニ', level: 20, hp: 500, power: 300, defense: 8, rewardGold: 500, rewardFame: 80, firstClearUnlocks: ['crab_king_spear'], imageKey: 'monsters.giant_crab' }] },
+  GIANT_ENEMY: { spawnCheckFrames: 3600, maxActive: 1, clickRadius: 64, seaBossAggroRadius: 170, seaBossHp: 680, seaBossAttack: 34, seaBossPower: 340, seaBossDefense: 10, seaBossLevel: 24, seaBossRewardGold: 800, scale: 2.2, recommendedPartySize: 5, maxParticipants: 5, minHpRatioToJoin: 0.5, eventDurationFrames: 18000, huntStartDelayFrames: 30, rewardFame: 80, fallbackSpawnMarginTiles: 3, defeatFadeFrames: 180, definitions: [{ id: 'giant_crab', name: '巨大カニ', level: 20, hp: 500, power: 300, defense: 8, rewardGold: 500, rewardFame: 80, firstClearUnlocks: ['crab_king_spear'], imageKey: 'monsters.giant_crab' }] },
   monster: { cap: 7, spawnInterval: 2.4, hp: 64, attack: 13, defense: 3, rewardG: 28, rewardExp: 16, contactDistance: 18, states: { idle: 'idle', patrol: 'patrol', engaged: 'engaged' }, territory: { reactionRadius: 145, leashRadius: 170, groupRadius: 120 }, movement: { idleSecondsMin: 0.8, idleSecondsMax: 1.8, patrolSecondsMin: 1.2, patrolSecondsMax: 2.8, patrolSpeed: 18, engagedSpeed: 10, wanderRadius: 85, edgePadding: 12, retargetDistance: 10 }, visuals: { territoryAlpha: 0.1, engagedLineAlpha: 0.36, groupRingAlpha: 0.18, stateDotRadius: 3 } },
   combat: { sealAttackSeconds: 0.75, monsterAttackSeconds: 1.0, minDamage: 1 },
   SKIRMISH: { triggerRadius: 145, joinRadius: 160, leashRadius: 240, maxSealParticipants: 3, maxEnemyParticipants: 3, battleTickFrames: 30, slotRadius: 34, giantSlotRadius: 52, joinCheckIntervalFrames: 20, staleCombatTimeoutFrames: 600, slotMoveStepRatio: 0.5, localSnapRadius: 72 },
   SKIRMISH_MOVEMENT: { approachSpeedMultiplier: 0.65, maxApproachStep: 1.2, snapDistance: 3, smoothing: 0.12, emergencySnapDistance: 120, emergencySnapFrames: 180 },
   COMBAT_STUCK: { contactRadius: 24, forcedEngageFrames: 20, stuckMoveEpsilon: 0.2, stuckFramesLimit: 45, separateDistance: 28, maxResolveAttempts: 6 },
-  render: { corridor: 'rgba(236,220,149,.28)', blockedPatchOverlay: 'rgba(20,70,30,.18)', gridLine: 'rgba(255,255,255,.13)', island: '#79b85c', buildableLand: '#8dcc68', blockedLand: '#4e7f3d', outside: '#1b90a9', water: '#126d8b', beach: '#d9c887', boundary: 'rgba(255,255,255,.46)', road: '#b28a56', invalid: 'rgba(255,50,50,.45)', valid: 'rgba(80,255,140,.35)', roadPreviewValid: 'rgba(204,255,88,.44)', roadPreviewInvalid: 'rgba(255,72,72,.52)', roadPreviewDelete: 'rgba(255,132,48,.52)', roadPreviewDeleteInvalid: 'rgba(255,95,95,.24)', roadPreviewStart: 'rgba(255,255,255,.9)', shadow: 'rgba(0,0,0,.24)', font: '13px system-ui', bigFont: '18px system-ui', minimapW: 220, minimapH: 128, boundaryDash: 0.35, boundaryGap: 0.18, boundaryLine: 3, obstacle: { center: 0.5, shadowX: 2, shadowY: 10, shadowW: 14, shadowH: 6, grassLine: 3, grassBaseY: 10, grassReachX: 13, grassTipY: -2, grassReachY: 8, trunkX: 4, trunkY: 0, trunkW: 8, trunkH: 15, treeRadius: 15, treeY: -5, rockY: 4, rockW: 15, rockH: 11, rockTilt: -0.35 } },
+  render: { deepWater: '#063f68', shallowWater: '#1b90a9', corridor: 'rgba(236,220,149,.28)', blockedPatchOverlay: 'rgba(20,70,30,.18)', gridLine: 'rgba(255,255,255,.13)', island: '#79b85c', buildableLand: '#8dcc68', blockedLand: '#4e7f3d', outside: '#1b90a9', water: '#126d8b', beach: '#d9c887', boundary: 'rgba(255,255,255,.46)', road: '#b28a56', invalid: 'rgba(255,50,50,.45)', valid: 'rgba(80,255,140,.35)', roadPreviewValid: 'rgba(204,255,88,.44)', roadPreviewInvalid: 'rgba(255,72,72,.52)', roadPreviewDelete: 'rgba(255,132,48,.52)', roadPreviewDeleteInvalid: 'rgba(255,95,95,.24)', roadPreviewStart: 'rgba(255,255,255,.9)', shadow: 'rgba(0,0,0,.24)', font: '13px system-ui', bigFont: '18px system-ui', minimapW: 220, minimapH: 128, boundaryDash: 0.35, boundaryGap: 0.18, boundaryLine: 3, obstacle: { center: 0.5, shadowX: 2, shadowY: 10, shadowW: 14, shadowH: 6, grassLine: 3, grassBaseY: 10, grassReachX: 13, grassTipY: -2, grassReachY: 8, trunkX: 4, trunkY: 0, trunkW: 8, trunkH: 15, treeRadius: 15, treeY: -5, rockY: 4, rockW: 15, rockH: 11, rockTilt: -0.35 } },
   RENDER: { ENTITIES: { sealSpriteScale: 1.5, sealSizeClassScale: { normal: 1, giant: 2 }, monsterSpriteScale: 1.3, sealShadowScale: 0.9, monsterShadowScale: 0.75, nameFontSize: 11, hpBarWidthScale: 0.9, hpBarHeight: 5, labelOffsetY: -8, hpOffsetY: 6, selectedRingScale: 1.25, shadowOffsetYScale: 0.32, shadowWidthScale: 0.34, shadowHeightScale: 0.14, selectedRingOffsetYScale: 0.3, selectedRingWidthScale: 0.36, selectedRingHeightScale: 0.18, outlineWidth: 3, selectedRingLineWidth: 4 } }
 });

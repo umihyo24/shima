@@ -29,6 +29,7 @@ function createNewGameState() {
     stats: { monthlyHunts: 0, monthlyKnownnessGained: 0, monthlyPlayerIncome: 0 },
     frameTemps: { occupied: new Set(), usableFacilities: [], toRemoveMonsters: [] },
     warnings: { visitorSpawnBlocked: false },
+    oceanProgress: createOceanProgress(),
     lastTime: performance.now()
   };
 }
@@ -287,16 +288,24 @@ function clampInteger(value, min, max, fallback) {
   return Math.trunc(clampNumber(value, min, max, fallback));
 }
 
+function createOceanProgress(source = {}) {
+  return {
+    deepSeaBossDefeated: source?.deepSeaBossDefeated === true,
+    secondIslandDiscovered: source?.secondIslandDiscovered === true,
+    safeRouteUnlocked: source?.safeRouteUnlocked === true
+  };
+}
+
 function normalizeTiles(tiles) {
   if (!Array.isArray(tiles) || tiles.length <= 0) return generateInitialMap();
   const fallback = generateInitialMap();
   return Array.from({ length: CONFIG.world.rows }, (_, y) => Array.from({ length: CONFIG.world.cols }, (_, x) => {
     const source = tiles?.[y]?.[x] ?? fallback[y][x];
-    const terrainValues = [CONFIG.tileState.terrainWater, CONFIG.tileState.terrainLand, CONFIG.tileState.terrainOutside];
+    const terrainValues = [CONFIG.tileState.terrainWater, CONFIG.tileState.terrainShallowWater, CONFIG.tileState.terrainDeepWater, CONFIG.tileState.terrainLand, CONFIG.tileState.terrainRoad, CONFIG.tileState.terrainOutside, 'water'];
     const buildValues = [CONFIG.tileState.buildBlocked, CONFIG.tileState.buildable];
     const obstacleValues = [null, CONFIG.tileState.obstacleGrass, CONFIG.tileState.obstacleTree, CONFIG.tileState.obstacleRock];
     return {
-      terrain: terrainValues.includes(source?.terrain) ? source.terrain : fallback[y][x].terrain,
+      terrain: (source?.terrain === 'water' ? CONFIG.tileState.terrainWater : (terrainValues.includes(source?.terrain) ? source.terrain : fallback[y][x].terrain)),
       buildState: buildValues.includes(source?.buildState) ? source.buildState : fallback[y][x].buildState,
       obstacle: obstacleValues.includes(source?.obstacle ?? null) ? (source?.obstacle ?? null) : fallback[y][x].obstacle,
       unlocked: source?.unlocked === true
@@ -980,12 +989,16 @@ function initGame(residentName) {
   gameState.world.objects = [];
   gameState.world.nextObjectId = 1;
   gameState.monsters = [];
+  gameState.giantEnemies = [];
+  gameState.giantEnemyFirstClears = {};
+  gameState.oceanProgress = createOceanProgress();
   gameState.visitorProfiles = createDefaultVisitorProfiles();
   gameState.relicInventory = [];
   gameState.dungeons = [];
   gameState.dungeonProgress = normalizeDungeonProgress(null);
   gameState.facilityProgress = {};
   updateDungeonUnlocks();
+  ensureSeaBoss();
   gameState.shopCatalog = { unlockedItemIds: [], discoveredAt: {} };
   gameState.ui.selectedSealId = null;
   gameState.ui.selectedPersonRosterId = null;
@@ -1036,6 +1049,7 @@ function worldToGrid(x, y) {
 
 function inRect(gx, gy, x, y, w, h) { return gx >= x && gy >= y && gx < x + w && gy < y + h; }
 function isInExpansionRegion(gx, gy) { return inRect(gx, gy, CONFIG.expansion.regionX, CONFIG.expansion.regionY, CONFIG.expansion.regionW, CONFIG.expansion.regionH); }
+function isInBuildableRegion(gx, gy) { return isInExpansionRegion(gx, gy) || isSecondIslandTile(gx, gy); }
 function isInStartingVillage(gx, gy) { return inRect(gx, gy, CONFIG.expansion.startX, CONFIG.expansion.startY, CONFIG.expansion.startW, CONFIG.expansion.startH); }
 
 function generateInitialMap() {
@@ -1050,6 +1064,7 @@ function createWorldTiles() {
 
 function createTile(x, y) {
   const state = CONFIG.tileState;
+  if (isDeepSeaTile(x, y)) return { terrain: state.terrainDeepWater, buildState: state.buildBlocked, obstacle: null, unlocked: false };
   if (isCoastTile(x, y)) return { terrain: state.terrainOutside, buildState: state.buildBlocked, obstacle: null, unlocked: false };
   if (!isIslandTile(x, y)) return { terrain: state.terrainWater, buildState: state.buildBlocked, obstacle: null, unlocked: false };
   const startsBuildable = isInStartingVillage(x, y) || !isInExpansionRegion(x, y) || !isUndevelopedPatchTile(x, y);
@@ -1170,9 +1185,9 @@ function canPlaceAt(tileX, tileY, objectDef, directionIndex = gameState.ui?.dire
     for (let x = tileX; x < tileX + w; x += 1) {
       const tile = getTile(x, y);
       if (!tile) return { ok: false, reason: 'マップ外です。' };
-      if (tile?.terrain === CONFIG.tileState.terrainWater) return { ok: false, reason: '水上には配置できません。' };
+      if (tile?.terrain === CONFIG.tileState.terrainWater || tile?.terrain === CONFIG.tileState.terrainShallowWater || tile?.terrain === CONFIG.tileState.terrainDeepWater) return { ok: false, reason: '水上には配置できません。' };
       if (tile?.terrain === CONFIG.tileState.terrainOutside) return { ok: false, reason: '外の冒険エリアには配置できません。' };
-      if (!isInExpansionRegion(x, y)) return { ok: false, reason: '村の開拓範囲外です。' };
+      if (!isInBuildableRegion(x, y)) return { ok: false, reason: '村の開拓範囲外です。' };
       if (!isBuildableTile(x, y)) return { ok: false, reason: '未開拓または障害物がある土地です。' };
       if (objectAt(x, y, { excludeId: options?.ignoreFacilityId ?? options?.excludeId ?? null })) return { ok: false, reason: '他の物があります。' };
       if (tool?.kind !== 'road' && roadAt(x, y)) return { ok: false, reason: '道路の上には置けません。' };
@@ -1186,7 +1201,7 @@ function canClearAt(tileX, tileY) {
   const cost = getClearingCost();
   if (!tile) return { ok: false, reason: 'マップ外です。' };
   if (tile?.terrain !== CONFIG.tileState.terrainLand) return { ok: false, reason: '水辺や外の冒険エリアは開拓できません。' };
-  if (!isInExpansionRegion(tileX, tileY)) return { ok: false, reason: '村の開拓範囲外です。' };
+  if (!isInBuildableRegion(tileX, tileY)) return { ok: false, reason: '村の開拓範囲外です。' };
   if (!isBlockedLandTile(tileX, tileY)) return { ok: false, reason: 'ここはすでに建設可能、または開拓対象外です。' };
   if (gameState.player.g < cost) return { ok: false, reason: `${cost}G必要です。` };
   return { ok: true, reason: '' };
@@ -1210,7 +1225,7 @@ function clearLandAt(tileX, tileY) {
     const x = entry?.x ?? 0;
     const y = entry?.y ?? 0;
     const tile = entry?.tile;
-    if (tile?.terrain !== CONFIG.tileState.terrainLand || !isInExpansionRegion(x, y) || objectAt(x, y) || roadAt(x, y) || isProtectedCorridorTile(x, y)) continue;
+    if (tile?.terrain !== CONFIG.tileState.terrainLand || !isInBuildableRegion(x, y) || objectAt(x, y) || roadAt(x, y) || isProtectedCorridorTile(x, y)) continue;
     tile.buildState = CONFIG.tileState.buildable;
     tile.obstacle = null;
     tile.unlocked = true;
@@ -1222,7 +1237,18 @@ function clearLandAt(tileX, tileY) {
   return true;
 }
 
-function isIslandTile(gx, gy) { return inRect(gx, gy, CONFIG.world.islandX, CONFIG.world.islandY, CONFIG.world.islandW, CONFIG.world.islandH); }
+function isIslandTile(gx, gy) { return isFirstIslandTile(gx, gy) || isSecondIslandTile(gx, gy); }
+function isFirstIslandTile(gx, gy) { return inRect(gx, gy, CONFIG.world.islandX, CONFIG.world.islandY, CONFIG.world.islandW, CONFIG.world.islandH); }
+function isSecondIslandTile(gx, gy) {
+  const cx = CONFIG.world.secondIslandX + CONFIG.world.secondIslandW / 2;
+  const cy = CONFIG.world.secondIslandY + CONFIG.world.secondIslandH / 2;
+  const nx = (gx - cx) / Math.max(CONFIG.OCEAN_EXPANSION.secondIslandMinWidth / 2, CONFIG.world.secondIslandW / 2);
+  const ny = (gy - cy) / Math.max(CONFIG.OCEAN_EXPANSION.secondIslandMinHeight / 2, CONFIG.world.secondIslandH / 2);
+  const wobble = ((gx * 17 + gy * 31) % 5) * 0.025;
+  return nx * nx + ny * ny <= 1 + wobble;
+}
+function isDeepSeaTile(gx, gy) { return inRect(gx, gy, CONFIG.world.deepSeaX, CONFIG.world.deepSeaY, CONFIG.OCEAN_EXPANSION.deepSeaWidthTiles, CONFIG.world.deepSeaH); }
+function isSafeWaterOrLandTile(gx, gy) { const terrain = getTile(gx, gy)?.terrain; return terrain === CONFIG.tileState.terrainLand || terrain === CONFIG.tileState.terrainOutside || terrain === CONFIG.tileState.terrainWater || terrain === CONFIG.tileState.terrainShallowWater || terrain === CONFIG.tileState.terrainRoad; }
 function isCoastTile(gx, gy) { return inRect(gx, gy, CONFIG.world.coastX, CONFIG.world.coastY, CONFIG.world.coastW, CONFIG.world.coastH); }
 function roadAt(gx, gy) { return gameState.world.roads.some(r => r?.x === gx && r?.y === gy); }
 function hasRoadAt(x, y) { return roadAt(x, y); }
@@ -1748,7 +1774,8 @@ function isPassableTile(gx, gy, options = {}) {
   const tile = getTile(gx, gy);
   if (!tile) return false;
   if (objectAt(gx, gy)) return false;
-  if (tile.terrain === CONFIG.tileState.terrainWater) return options.allowWater === true;
+  if (tile.terrain === CONFIG.tileState.terrainWater || tile.terrain === CONFIG.tileState.terrainShallowWater) return options.allowWater === true;
+  if (tile.terrain === CONFIG.tileState.terrainDeepWater) return options.allowWater === true && CONFIG.OCEAN_EXPANSION?.deepWaterBlockedUntilBossDefeated !== true;
   if (tile.terrain === CONFIG.tileState.terrainOutside) return true;
   return tile.terrain === CONFIG.tileState.terrainLand
     && tile.buildState === CONFIG.tileState.buildable
@@ -2375,7 +2402,7 @@ function getVisitorSeaExitPoint() {
 
 function isWaterWorldPoint(point) {
   const tile = worldToGrid(point?.x, point?.y);
-  return getTile(tile.x, tile.y)?.terrain === CONFIG.tileState.terrainWater;
+  return [CONFIG.tileState.terrainWater, CONFIG.tileState.terrainShallowWater, CONFIG.tileState.terrainDeepWater].includes(getTile(tile.x, tile.y)?.terrain);
 }
 
 function findNearestPassableSpawnPoint(preferredPoint) {
