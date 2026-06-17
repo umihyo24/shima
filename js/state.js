@@ -610,6 +610,8 @@ function normalizeSeal(s, index) {
     y: safeFiniteNumber(s?.y, entry.y),
     hp: safeFiniteNumber(s?.hp, CONFIG.seal.maxHp, 0),
     recoverySource: s?.recoverySource ? String(s.recoverySource) : '',
+    recoveryFacilityId: s?.recoveryFacilityId ? String(s.recoveryFacilityId) : null,
+    recoveryDestination: s?.recoveryDestination ? { x: safeFiniteNumber(s.recoveryDestination?.x, entry.x), y: safeFiniteNumber(s.recoveryDestination?.y, entry.y) } : null,
     carriedBySealId: s?.carriedBySealId ? String(s.carriedBySealId) : null,
     maxHp: safeFiniteNumber(s?.maxHp, CONFIG.seal.maxHp, 1),
     attack: safeFiniteNumber(s?.attack, CONFIG.seal.attack, 0),
